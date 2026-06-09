@@ -948,13 +948,15 @@ class App(ctk.CTk):
         self.nav_dws_jms.grid(row=4, column=0, padx=18, pady=6, sticky="ew")
         self.nav_output = ctk.CTkButton(sidebar, text="▤  จัดการไฟล์", height=44, anchor="w", fg_color="#1f2937", command=lambda: self.show_page("output_manager"))
         self.nav_output.grid(row=5, column=0, padx=18, pady=6, sticky="ew")
-        self.nav_controller = ctk.CTkButton(sidebar, text="🤖  Bot Controller", height=44, anchor="w", fg_color="#1f2937", command=lambda: self.show_page("controller"))
-        self.nav_controller.grid(row=6, column=0, padx=18, pady=6, sticky="ew")
+        self.nav_dws_plan = ctk.CTkButton(sidebar, text="▦  DWS PLAN", height=44, anchor="w", fg_color="#1f2937", command=lambda: self.show_page("dws_plan"))
+        self.nav_dws_plan.grid(row=6, column=0, padx=18, pady=6, sticky="ew")
+        self.nav_jms_user = ctk.CTkButton(sidebar, text="👤  JMS USER", height=44, anchor="w", fg_color="#1f2937", command=lambda: self.show_page("jms_user"))
+        self.nav_jms_user.grid(row=7, column=0, padx=18, pady=6, sticky="ew")
         self.nav_settings = ctk.CTkButton(sidebar, text="⚙  ตั้งค่า", height=44, anchor="w", fg_color="#1f2937", command=lambda: self.show_page("settings"))
-        self.nav_settings.grid(row=7, column=0, padx=18, pady=6, sticky="ew")
+        self.nav_settings.grid(row=8, column=0, padx=18, pady=6, sticky="ew")
 
         self.side_hint = ctk.CTkLabel(sidebar, text="ลำดับงาน: DWS → Excel → Feishu", text_color="#64748b", wraplength=180, justify="left")
-        self.side_hint.grid(row=8, column=0, padx=20, pady=16, sticky="sw")
+        self.side_hint.grid(row=9, column=0, padx=20, pady=16, sticky="sw")
         self.status_pill = ctk.CTkLabel(sidebar, text="Idle", fg_color="#123524", text_color="#5dff9e", corner_radius=18, height=36, font=ctk.CTkFont(size=13, weight="bold"))
         self.status_pill.grid(row=10, column=0, padx=18, pady=(8, 20), sticky="ew")
 
@@ -969,8 +971,9 @@ class App(ctk.CTk):
             "workbooks": self.build_workbooks_page(self.content),
             "dws_jms": self.build_dws_jms_page(self.content),
             "output_manager": self.build_output_manager_page(self.content),
+            "dws_plan": self.build_dws_plan_page(self.content),
+            "jms_user": self.build_jms_user_page(self.content),
             "settings": self.build_settings_page(self.content),
-            "controller": self.build_controller_page(self.content),
         }
         self.show_page("home")
 
@@ -1172,75 +1175,21 @@ class App(ctk.CTk):
         return page
 
     def build_dws_jms_page(self, master):
-        # Scrollable page: Data Export has many fields, so it must remain usable
-        # even when the window is locked to the compact War Room size.
         page = ctk.CTkScrollableFrame(master, fg_color="#0f172a", corner_radius=0)
         page.grid_columnconfigure(0, weight=1)
-        self.header(page, "ส่งออกข้อมูล", "ตั้งค่าการดึงข้อมูล DWS/JMS และทดสอบการทำงานก่อนส่งเข้า Excel/Feishu").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
-
-        panel = self.make_card(page, "#111827", 22)
-        panel.grid(row=1, column=0, padx=24, pady=6, sticky="ew")
-        for i in range(4):
-            panel.grid_columnconfigure(i, weight=1 if i in (1, 3) else 0)
-        ctk.CTkLabel(panel, text="ตั้งค่าการดึงข้อมูล", text_color="#f8fafc", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=4, padx=18, pady=(12, 4), sticky="w")
-        ctk.CTkLabel(panel, text="กำหนดตำแหน่งเก็บไฟล์, Token และจำนวนข้อมูลที่โหลดต่อครั้ง", text_color="#94a3b8").grid(row=1, column=0, columnspan=4, padx=18, pady=(0, 4), sticky="w")
-        self.raw_path_entry = self.path_row_wide(panel, 2, "ตำแหน่งเก็บ Excel", self.browse_folder)
-        self.dws_url = self.setting_row_wide(panel, 3, "URL ระบบ DWS")
-        self.dws_token = self.setting_row_wide(panel, 4, "DWS Token")
-        self.jms_token = self.setting_row_wide(panel, 5, "Token JMS")
-        self.download_size_entry = self.setting_row_wide(panel, 6, "จำนวนรายการต่อรอบ")
-
-        self.send_dws_file_var = ctk.BooleanVar(value=False)
-        self.send_auto_file_var = ctk.BooleanVar(value=False)
-        self.send_dwspda_file_var = ctk.BooleanVar(value=False)
-        self.send_realtime_file_var = ctk.BooleanVar(value=False)
+        self.header(page, "ส่งออกข้อมูล", "ทดสอบและสั่งดึงข้อมูล DWS/JMS ก่อนส่งเข้า Excel/Feishu (ตั้งค่าทั้งหมดอยู่ในแท็บตั้งค่า)").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
 
         tests = self.make_card(page, "#020617", 22)
-        tests.grid(row=2, column=0, padx=24, pady=(6, 24), sticky="ew")
+        tests.grid(row=1, column=0, padx=24, pady=(6, 24), sticky="ew")
         tests.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(tests, text="ทดสอบการทำงาน", font=ctk.CTkFont(size=17, weight="bold"), text_color="#e2e8f0").grid(row=0, column=0, padx=16, pady=(12, 2), sticky="w")
-        ctk.CTkLabel(tests, text="เลือกช่วงเวลาสำหรับทดสอบ แล้วรันแยกทีละขั้นได้ | Auto และ Run Now จะอิงเวลาจากหน้าหลัก", text_color="#94a3b8").grid(row=1, column=0, padx=16, pady=(0, 8), sticky="w")
+        ctk.CTkLabel(tests, text="รันแยกทีละขั้นได้ | Auto และ Run Now จะอิงเวลาจากหน้าหลัก", text_color="#94a3b8").grid(row=1, column=0, padx=16, pady=(0, 8), sticky="w")
 
-        hours = [f"{i:02}:00" for i in range(24)]
-        date_frame = ctk.CTkFrame(tests, fg_color="#0b1220", corner_radius=16, border_width=1, border_color="#17233a")
-        date_frame.grid(row=2, column=0, padx=16, pady=(0, 8), sticky="ew")
-        date_frame.grid_columnconfigure(1, weight=1)  # Start Date
-        date_frame.grid_columnconfigure(5, weight=1)  # End Date
-        ctk.CTkLabel(date_frame, text="Start", text_color="#dbeafe", width=56, anchor="w").grid(row=0, column=0, padx=(14, 8), pady=10, sticky="w")
-        self.start_date = DateEntry(
-            date_frame,
-            width=28,
-            date_pattern="yyyy-mm-dd",
-            state="readonly",
-            font=("Segoe UI", 15)
-        )
-        self.start_date.grid(row=0, column=1, padx=(4, 8), pady=10, sticky="we")
-        self.start_hour = ctk.CTkOptionMenu(date_frame, values=hours, width=94, command=lambda _: self.save_config())
-        self.start_hour.grid(row=0, column=2, padx=(4, 18), pady=10, sticky="w")
         ctk.CTkLabel(
-            date_frame,
-            text="→",
-            text_color="#38bdf8",
-            width=30,
-            anchor="center",
-            font=ctk.CTkFont(size=20, weight="bold")
-        ).grid(
-            row=0,
-            column=3,
-            padx=12,
-            pady=10
-        )
-        ctk.CTkLabel(date_frame, text="End", text_color="#dbeafe", width=46, anchor="w").grid(row=0, column=4, padx=(18, 8), pady=10, sticky="e")
-        self.end_date = DateEntry(
-            date_frame,
-            width=28,
-            date_pattern="yyyy-mm-dd",
-            state="readonly",
-            font=("Segoe UI", 15)
-        )
-        self.end_date.grid(row=0, column=5, padx=(4, 8), pady=10, sticky="we")
-        self.end_hour = ctk.CTkOptionMenu(date_frame, values=hours, width=94, command=lambda _: self.save_config())
-        self.end_hour.grid(row=0, column=6, padx=(4, 14), pady=10, sticky="w")
+            tests,
+            text="ช่วงเวลา, URL, Token, จำนวนรายการ และชื่อไฟล์ตั้งค่าได้จากแท็บตั้งค่า",
+            text_color="#fbbf24",
+        ).grid(row=2, column=0, padx=16, pady=(0, 8), sticky="w")
 
         grid = ctk.CTkFrame(tests, fg_color="transparent")
         grid.grid(row=3, column=0, padx=8, pady=6, sticky="ew")
@@ -1359,56 +1308,41 @@ class App(ctk.CTk):
     def build_output_manager_page(self, master):
         page = ctk.CTkScrollableFrame(master, fg_color="#0f172a", corner_radius=0)
         page.grid_columnconfigure(0, weight=1)
-        self.header(page, "จัดการไฟล์", "รวมชื่อไฟล์ Excel ที่สร้าง และไฟล์ Excel ที่ใช้งานไว้ในที่เดียว").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
-
-        files = self.make_card(page, "#111827", 22)
-        files.grid(row=1, column=0, padx=24, pady=6, sticky="ew")
-        files.grid_columnconfigure(1, weight=1)
-        files.grid_columnconfigure(4, weight=1)
-        ctk.CTkLabel(
-            files,
-            text="ชื่อไฟล์ Excel ที่สร้าง",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#f8fafc",
-        ).grid(row=0, column=0, columnspan=6, padx=16, pady=(10, 2), sticky="w")
-        ctk.CTkLabel(
-            files,
-            text="กำหนดชื่อไฟล์ .xlsx ที่ระบบสร้างจาก DWS/JMS และเลือกได้ว่าจะให้แนบไฟล์ Excel ไปกับ Feishu หรือไม่",
-            text_color="#94a3b8",
-            wraplength=920,
-            justify="left",
-        ).grid(row=1, column=0, columnspan=6, padx=16, pady=(0, 6), sticky="w")
-
-        self.name_dws = self.dws_excel_file_row(files, 2, 0, "ไฟล์ DWS", self.send_dws_file_var)
-        self.name_auto = self.dws_excel_file_row(files, 2, 3, "ไฟล์ JMS Auto", self.send_auto_file_var)
-        self.name_dwspda = self.dws_excel_file_row(files, 3, 0, "ไฟล์ JMS PDA", self.send_dwspda_file_var)
-        self.name_realtime_db = self.dws_excel_file_row(files, 3, 3, "ไฟล์ Realtime DB", self.send_realtime_file_var)
+        self.header(page, "จัดการไฟล์", "ดูไฟล์ Excel ที่ใช้งานในระบบ ส่วนการตั้งค่าชื่อไฟล์และการแนบไฟล์ย้ายไปแท็บตั้งค่าแล้ว").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
 
         self.workspace_output_frame = ctk.CTkFrame(page, fg_color="#0b1220", corner_radius=18, border_width=1, border_color="#17233a")
-        self.workspace_output_frame.grid(row=2, column=0, padx=24, pady=(8, 24), sticky="ew")
+        self.workspace_output_frame.grid(row=1, column=0, padx=24, pady=(8, 24), sticky="ew")
         self.workspace_output_frame.grid_columnconfigure(0, weight=1)
         self.workspace_output_rows = []
         self.refresh_workspace_output_names()
         return page
 
-    def build_controller_page(self, master):
+    def build_dws_plan_page(self, master):
         page = ctk.CTkFrame(master, fg_color="#0f172a")
         page.grid_columnconfigure(0, weight=1)
         page.grid_rowconfigure(1, weight=1)
         self.header(
             page,
-            "Bot Main Controller",
-            "รวมโปรแกรม Feishu Bot / JMS User / DWS Plan มาไว้ใน bot_main.py โดยใช้ config.ini ชุดเดียวกัน",
+            "DWS PLAN",
+            "ควบคุมการเปลี่ยนแพลนและตรวจสถานะเครื่อง DWS จาก bot_main.py",
         ).grid(row=0, column=0, padx=24, pady=(22, 12), sticky="ew")
+        body = ctk.CTkFrame(page, fg_color="#0f172a")
+        body.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        self.build_controller_dws_tab(body)
+        return page
 
-        tabs = ctk.CTkTabview(page, fg_color="#0b1220", segmented_button_fg_color="#111827")
-        tabs.grid(row=1, column=0, padx=24, pady=(0, 18), sticky="nsew")
-        self.controller_tab_dws = tabs.add("DWS Plan")
-        self.controller_tab_jms = tabs.add("JMS User")
-        self.controller_tab_setting = tabs.add("Controller Setting")
-        self.build_controller_dws_tab(self.controller_tab_dws)
-        self.build_controller_jms_tab(self.controller_tab_jms)
-        self.build_controller_setting_tab(self.controller_tab_setting)
+    def build_jms_user_page(self, master):
+        page = ctk.CTkFrame(master, fg_color="#0f172a")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(1, weight=1)
+        self.header(
+            page,
+            "JMS USER",
+            "เปิด/ปิดการประมวลผลคำสั่งรีรหัสและปลดล็อค user จาก Feishu",
+        ).grid(row=0, column=0, padx=24, pady=(22, 12), sticky="ew")
+        body = ctk.CTkFrame(page, fg_color="#0f172a")
+        body.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        self.build_controller_jms_tab(body)
         return page
 
     def build_controller_dws_tab(self, tab):
@@ -1478,38 +1412,6 @@ class App(ctk.CTk):
         self.jms_log("[SYSTEM] JMS TAB READY")
         self.update_jms_ui()
 
-    def build_controller_setting_tab(self, tab):
-        tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(1, weight=1)
-        info = self.make_card(tab, "#111827", 18)
-        info.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
-        info.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(info, text="Shared Feishu", text_color="#f8fafc", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, padx=16, pady=(14, 2), sticky="w")
-        ctk.CTkLabel(info, text="App ID / App Secret ใช้ค่าเดียวกับหน้าตั้งค่าเดิม ส่วนด้านล่างเป็นค่าเพิ่มของ Bot Controller", text_color="#94a3b8").grid(row=1, column=0, columnspan=2, padx=16, pady=(0, 8), sticky="w")
-        self.bot_name_entry = self.controller_setting_entry(info, 2, "BOT_NAME")
-        self.bot_port_entry = self.controller_setting_entry(info, 3, "BOT_PORT")
-        self.verify_token_entry = self.controller_setting_entry(info, 4, "VERIFY_TOKEN")
-        self.ngrok_url_entry = self.controller_setting_entry(info, 5, "NGROK_URL")
-        self.auth_token_entry = self.controller_setting_entry(info, 6, "AUTH_TOKEN")
-
-        clients = self.make_card(tab, "#020617", 18)
-        clients.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nsew")
-        clients.grid_columnconfigure(0, weight=1)
-        clients.grid_rowconfigure(1, weight=1)
-        ctk.CTkLabel(clients, text="DWS Client Configuration", text_color="#f8fafc", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, padx=14, pady=(12, 6), sticky="w")
-        self.controller_client_frame = ctk.CTkScrollableFrame(clients, fg_color="#050b16", corner_radius=12)
-        self.controller_client_frame.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
-        self.controller_client_rows = []
-        self.render_controller_client_settings()
-        ctk.CTkButton(tab, text="💾 บันทึก Controller Config", height=38, fg_color="#334155", hover_color="#475569", command=self.save_all).grid(row=2, column=0, padx=10, pady=(0, 10), sticky="e")
-
-    def controller_setting_entry(self, parent, row, label):
-        ctk.CTkLabel(parent, text=label, text_color="#cbd5e1", width=130, anchor="w").grid(row=row, column=0, padx=(16, 8), pady=8, sticky="w")
-        ent = ctk.CTkEntry(parent, show="*" if "TOKEN" in label or "SECRET" in label else "")
-        ent.grid(row=row, column=1, padx=(8, 16), pady=8, sticky="ew")
-        self.bind_clean_entry(ent, collapse_internal_spaces=("TOKEN" in label or "PORT" in label))
-        return ent
-
     def render_controller_client_settings(self):
         if not hasattr(self, "controller_client_frame"):
             return
@@ -1533,9 +1435,9 @@ class App(ctk.CTk):
         self.controller_client_frame.grid_columnconfigure(1, weight=1)
 
     def build_settings_page(self, master):
-        page = ctk.CTkFrame(master, fg_color="#0f172a")
+        page = ctk.CTkScrollableFrame(master, fg_color="#0f172a", corner_radius=0)
         page.grid_columnconfigure(0, weight=1)
-        self.header(page, "ตั้งค่า", "ตั้งค่าโฟลเดอร์เก็บรูป และข้อมูลเชื่อมต่อ Feishu").grid(row=0, column=0, padx=24, pady=(22, 12), sticky="ew")
+        self.header(page, "ตั้งค่า", "รวม config ทั้งหมดไว้ที่นี่: Feishu, DWS/JMS Export, ชื่อไฟล์, DWS PLAN และ JMS USER").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
 
         path = self.make_card(page, "#111827", 22)
         path.grid(row=1, column=0, padx=24, pady=8, sticky="ew")
@@ -1546,18 +1448,73 @@ class App(ctk.CTk):
         feishu = self.make_card(page, "#111827", 22)
         feishu.grid(row=2, column=0, padx=24, pady=8, sticky="ew")
         feishu.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(feishu, text="ตั้งค่า Feishu (Chat ID Mode)", text_color="#f8fafc", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 0), sticky="w")
-        ctk.CTkLabel(feishu, text="ใช้ App ID / App Secret / Chat ID สำหรับส่งเข้า Feishu", text_color="#94a3b8").grid(row=1, column=0, columnspan=2, padx=16, pady=(4, 6), sticky="w")
+        ctk.CTkLabel(feishu, text="ตั้งค่า Feishu กลาง", text_color="#f8fafc", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 0), sticky="w")
+        ctk.CTkLabel(feishu, text="App ID / App Secret ใช้ร่วมกันทั้งส่งรูป, Feishu webhook, DWS PLAN และ JMS USER", text_color="#94a3b8").grid(row=1, column=0, columnspan=2, padx=16, pady=(4, 6), sticky="w")
         self.app_id_entry = self.setting_row(feishu, 2, "App ID")
         self.app_secret_entry = self.setting_row(feishu, 3, "App Secret")
         self.chat_id_entry = self.setting_row(feishu, 4, "Chat ID")
+        self.bot_name_entry = self.setting_row(feishu, 5, "BOT_NAME")
+        self.bot_port_entry = self.setting_row(feishu, 6, "BOT_PORT")
+        self.verify_token_entry = self.setting_row(feishu, 7, "VERIFY_TOKEN")
+        self.ngrok_url_entry = self.setting_row(feishu, 8, "NGROK_URL")
+        self.auth_token_entry = self.setting_row(feishu, 9, "AUTH_TOKEN")
 
-        tips = self.make_card(page, "#08111f", 22)
-        tips.grid(row=3, column=0, padx=24, pady=8, sticky="ew")
-        ctk.CTkLabel(tips, text="Tip: โฟลเดอร์เก็บรูปคือปลายทางรูปที่สร้างจาก Excel ส่วนโฟลเดอร์เก็บ Excel อยู่ในหน้าส่งออกข้อมูล", text_color="#94a3b8").grid(row=0, column=0, padx=16, pady=14, sticky="w")
+        export = self.make_card(page, "#111827", 22)
+        export.grid(row=3, column=0, padx=24, pady=8, sticky="ew")
+        for i in range(4):
+            export.grid_columnconfigure(i, weight=1 if i in (1, 3) else 0)
+        ctk.CTkLabel(export, text="ตั้งค่า DWS/JMS Export", text_color="#f8fafc", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, columnspan=4, padx=18, pady=(16, 4), sticky="w")
+        ctk.CTkLabel(export, text="ย้ายมาจากแท็บส่งออกข้อมูล: ตำแหน่งเก็บ Excel, URL, Token, จำนวนรายการ และช่วงเวลาทดสอบ", text_color="#94a3b8").grid(row=1, column=0, columnspan=4, padx=18, pady=(0, 4), sticky="w")
+        self.raw_path_entry = self.path_row_wide(export, 2, "ตำแหน่งเก็บ Excel", self.browse_folder)
+        self.dws_url = self.setting_row_wide(export, 3, "URL ระบบ DWS")
+        self.dws_token = self.setting_row_wide(export, 4, "DWS Token")
+        self.jms_token = self.setting_row_wide(export, 5, "Token JMS")
+        self.download_size_entry = self.setting_row_wide(export, 6, "จำนวนรายการต่อรอบ")
 
-        self.btn_save_settings = ctk.CTkButton(page, text="💾 บันทึกการตั้งค่า", height=40, fg_color="#334155", hover_color="#475569", command=self.save_all)
-        self.btn_save_settings.grid(row=4, column=0, padx=24, pady=16, sticky="e")
+        hours = [f"{i:02}:00" for i in range(24)]
+        date_frame = ctk.CTkFrame(export, fg_color="#0b1220", corner_radius=16, border_width=1, border_color="#17233a")
+        date_frame.grid(row=7, column=0, columnspan=4, padx=16, pady=(8, 14), sticky="ew")
+        date_frame.grid_columnconfigure(1, weight=1)
+        date_frame.grid_columnconfigure(5, weight=1)
+        ctk.CTkLabel(date_frame, text="Start", text_color="#dbeafe", width=56, anchor="w").grid(row=0, column=0, padx=(14, 8), pady=10, sticky="w")
+        self.start_date = DateEntry(date_frame, width=28, date_pattern="yyyy-mm-dd", state="readonly", font=("Segoe UI", 15))
+        self.start_date.grid(row=0, column=1, padx=(4, 8), pady=10, sticky="we")
+        self.start_hour = ctk.CTkOptionMenu(date_frame, values=hours, width=94, command=lambda _: self.save_config())
+        self.start_hour.grid(row=0, column=2, padx=(4, 18), pady=10, sticky="w")
+        ctk.CTkLabel(date_frame, text="→", text_color="#38bdf8", width=30, anchor="center", font=ctk.CTkFont(size=20, weight="bold")).grid(row=0, column=3, padx=12, pady=10)
+        ctk.CTkLabel(date_frame, text="End", text_color="#dbeafe", width=46, anchor="w").grid(row=0, column=4, padx=(18, 8), pady=10, sticky="e")
+        self.end_date = DateEntry(date_frame, width=28, date_pattern="yyyy-mm-dd", state="readonly", font=("Segoe UI", 15))
+        self.end_date.grid(row=0, column=5, padx=(4, 8), pady=10, sticky="we")
+        self.end_hour = ctk.CTkOptionMenu(date_frame, values=hours, width=94, command=lambda _: self.save_config())
+        self.end_hour.grid(row=0, column=6, padx=(4, 14), pady=10, sticky="w")
+
+        files = self.make_card(page, "#111827", 22)
+        files.grid(row=4, column=0, padx=24, pady=8, sticky="ew")
+        files.grid_columnconfigure(1, weight=1)
+        files.grid_columnconfigure(4, weight=1)
+        ctk.CTkLabel(files, text="ชื่อไฟล์ Excel ที่สร้าง", font=ctk.CTkFont(size=17, weight="bold"), text_color="#f8fafc").grid(row=0, column=0, columnspan=6, padx=16, pady=(16, 2), sticky="w")
+        ctk.CTkLabel(files, text="ย้ายมาจากแท็บจัดการไฟล์: กำหนดชื่อไฟล์ .xlsx และเลือกแนบไฟล์ Excel ไปกับ Feishu", text_color="#94a3b8", wraplength=920, justify="left").grid(row=1, column=0, columnspan=6, padx=16, pady=(0, 6), sticky="w")
+        self.send_dws_file_var = ctk.BooleanVar(value=False)
+        self.send_auto_file_var = ctk.BooleanVar(value=False)
+        self.send_dwspda_file_var = ctk.BooleanVar(value=False)
+        self.send_realtime_file_var = ctk.BooleanVar(value=False)
+        self.name_dws = self.dws_excel_file_row(files, 2, 0, "ไฟล์ DWS", self.send_dws_file_var)
+        self.name_auto = self.dws_excel_file_row(files, 2, 3, "ไฟล์ JMS Auto", self.send_auto_file_var)
+        self.name_dwspda = self.dws_excel_file_row(files, 3, 0, "ไฟล์ JMS PDA", self.send_dwspda_file_var)
+        self.name_realtime_db = self.dws_excel_file_row(files, 3, 3, "ไฟล์ Realtime DB", self.send_realtime_file_var)
+
+        clients = self.make_card(page, "#111827", 22)
+        clients.grid(row=5, column=0, padx=24, pady=8, sticky="ew")
+        clients.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(clients, text="ตั้งค่า DWS PLAN Clients", text_color="#f8fafc", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 4), sticky="w")
+        ctk.CTkLabel(clients, text="IP/Port สำหรับหน้า DWS PLAN และ Controller API", text_color="#94a3b8").grid(row=1, column=0, padx=16, pady=(0, 6), sticky="w")
+        self.controller_client_frame = ctk.CTkFrame(clients, fg_color="#050b16", corner_radius=12)
+        self.controller_client_frame.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
+        self.controller_client_rows = []
+        self.render_controller_client_settings()
+
+        self.btn_save_settings = ctk.CTkButton(page, text="💾 บันทึกการตั้งค่าทั้งหมด", height=40, fg_color="#334155", hover_color="#475569", command=self.save_all)
+        self.btn_save_settings.grid(row=6, column=0, padx=24, pady=(8, 24), sticky="e")
         return page
 
     def path_row(self, parent, row, label, browse_func):
@@ -1583,14 +1540,15 @@ class App(ctk.CTk):
         for p in self.pages.values():
             p.grid_remove()
         self.pages[name].grid(row=0, column=0, sticky="nsew")
-        for btn in [self.nav_home, self.nav_workbooks, self.nav_dws_jms, self.nav_output, self.nav_controller, self.nav_settings]:
+        for btn in [self.nav_home, self.nav_workbooks, self.nav_dws_jms, self.nav_output, self.nav_dws_plan, self.nav_jms_user, self.nav_settings]:
             btn.configure(fg_color="#1f2937")
         {
             "home": self.nav_home,
             "workbooks": self.nav_workbooks,
             "dws_jms": self.nav_dws_jms,
             "output_manager": self.nav_output,
-            "controller": self.nav_controller,
+            "dws_plan": self.nav_dws_plan,
+            "jms_user": self.nav_jms_user,
             "settings": self.nav_settings,
         }[name].configure(fg_color="#2563eb")
 
