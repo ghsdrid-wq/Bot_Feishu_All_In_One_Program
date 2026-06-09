@@ -8,6 +8,9 @@ import threading
 import configparser
 from datetime import datetime, timedelta
 from typing import Dict, List
+from concurrent.futures import ThreadPoolExecutor
+from collections import deque
+
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -15,6 +18,12 @@ from tkcalendar import DateEntry
 
 import requests
 import pandas as pd
+from flask import Flask, request, jsonify
+from waitress import serve
+
+from controller.controller_api import register_controller, start_api
+from core.jms_api import search_user, reset_app_password, reset_jms_password, enable_user
+from core.logger import write_log
 
 from Createphoto import (
     run_create,
@@ -33,6 +42,11 @@ DEFAULT_FEISHU = {
     "APP_ID": "",
     "APP_SECRET": "",
     "CHAT_ID": "",
+    "VERIFY_TOKEN": "mytoken",
+    "BOT_PORT": "7000",
+    "NGROK_URL": "",
+    "AUTH_TOKEN": "",
+    "BOT_NAME": "BOT_JMSKKN",
 }
 
 DEFAULT_PATH = {
@@ -65,6 +79,201 @@ DEFAULT_DWS_JMS = {
     "send_dwspda_file": "false",
     "send_realtime_file": "false",
 }
+
+
+DEFAULT_CONTROLLER_CLIENTS = {
+    "DWS1": ("10.30.32.32", "4000"),
+    "DWS2": ("10.30.32.33", "4000"),
+    "DWS3": ("10.30.32.34", "4000"),
+    "DWS4": ("10.30.32.35", "4000"),
+    "DWS5": ("10.30.32.36", "4000"),
+    "DWS6": ("10.30.32.37", "4000"),
+    "DWS7": ("10.30.32.38", "4000"),
+    "DWS8": ("10.30.32.39", "4000"),
+    "DWS9-11": ("10.30.32.10", "4001"),
+}
+
+
+bot_app = Flask(__name__)
+controller_instance = None
+
+
+def get_controller_feishu_value(key: str, default: str = "") -> str:
+    app = controller_instance
+    if app is None:
+        return default
+    return app.get_feishu_config_value(key, default)
+
+
+def get_tenant_access_token():
+    try:
+        app_id = get_controller_feishu_value("APP_ID").strip()
+        app_secret = get_controller_feishu_value("APP_SECRET").strip()
+        response = requests.post(
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            json={"app_id": app_id, "app_secret": app_secret},
+            timeout=10,
+        )
+        data = response.json()
+        return data.get("tenant_access_token")
+    except Exception as e:
+        print(e)
+        return None
+
+
+def reply_feishu_message(message_id, text):
+    token = get_tenant_access_token()
+    if not token:
+        return False
+    url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {"content": json.dumps({"text": text}), "msg_type": "text"}
+    response = requests.post(url, headers=headers, json=payload, timeout=10)
+    return response.status_code == 200
+
+
+@bot_app.route("/status")
+def bot_status():
+    return jsonify({"success": True, "status": "online", "message": "Feishu Bot Online"})
+
+
+@bot_app.route("/switch_plan", methods=["POST"])
+def bot_switch_plan():
+    data = request.get_json(silent=True) or {}
+    plan = data.get("plan", "").strip()
+    if not plan:
+        return jsonify({"success": False, "message": "Plan Empty"})
+    if controller_instance:
+        controller_instance.switch_plan(plan)
+    return jsonify({"success": True, "message": f"Switching to {plan}"})
+
+
+@bot_app.route("/feishu_event", methods=["POST"])
+def feishu_event():
+    app = controller_instance
+    if app is None:
+        return jsonify({"success": False, "message": "controller_not_ready"})
+
+    data = request.get_json(silent=True) or {}
+    if "challenge" in data:
+        return jsonify({"challenge": data["challenge"]})
+
+    event_id = data.get("header", {}).get("event_id")
+    if event_id:
+        if event_id in app.processed_events:
+            app.jms_log(f"[SKIP DUPLICATE] {event_id}")
+            return jsonify({"success": True, "message": "duplicate_skip"})
+        app.processed_events.append(event_id)
+
+    event = data.get("event", {})
+    message = event.get("message", {})
+    chat_id = message.get("chat_id")
+    message_id = message.get("message_id")
+    parent_id = message.get("parent_id")
+    root_id = message.get("root_id")
+    content_raw = message.get("content", "{}")
+
+    try:
+        content_json = json.loads(content_raw)
+        text = content_json.get("text", "").strip().replace("\\n", "\n")
+        if message.get("chat_type") != "p2p":
+            mentions = message.get("mentions", [])
+            bot_name = get_controller_feishu_value("BOT_NAME", "BOT_JMSKKN").strip().lower()
+            bot_mentioned = any(mention.get("name", "").strip().lower() == bot_name for mention in mentions)
+            if not bot_mentioned:
+                return jsonify({"status": "skip_no_mention"})
+    except Exception:
+        return jsonify({"success": False})
+
+    app.add_log(f"[FEISHU] {text}")
+
+    def send_help():
+        reply_feishu_message(
+            message_id,
+            "คำสั่งไม่ถูกต้อง ตรวจสอบใหม่อีกครั้ง\n\n"
+            "รีเซ็ตรหัส:\n"
+            "@BOT รีรหัส app 999004T000XX\n"
+            "@BOT รีรหัส jms 999004T000XX\n\n"
+            "รหัสล็อค:\n"
+            "@BOT ปลดล็อค 999004T000XX\n\n"
+            "เปลี่ยนแพลน:\n"
+            "@BOT เปลี่ยนแพลนบ่าย\n"
+            "@BOT เปลี่ยนแพลนดึก",
+        )
+
+    command_keywords = [
+        "รีapp", "รี app", "รีแอพ", "รี แอพ", "รีรหัสapp", "รีรหัส app",
+        "รีรหัสแอพ", "รีรหัส แอพ", "รีแอป", "รี แอป", "รีรหัสแอป",
+        "รีรหัส แอป", "รีเซ็ตapp", "reset app", "reset password app",
+        "รีแอพให้หน่อย", "รีรหัสแอพให้หน่อย", "รีรหัสpda",
+        "รีรหัสpdaให้หน่อย", "รีรหัส pda ให้หน่อย", "รีjms", "รีรหัสjms",
+        "รีรหัส jms", "รี jms", "รีเซ็ตjms", "reset jms", "reset password jms",
+        "รี jms ให้หน่อย", "รีรหัส jms ให้หน่อย", "เปิดยูส", "เปิด user",
+        "enable", "เปิดใช้งาน", "ปลดล็อค", "ปลดล้อค", "unlock", "ระงับ",
+        "โดนระงับ", "เข้าไม่ได้", "ใช้งานไม่ได้", "ปลด user", "เปิดรหัส",
+        "เปิดไอดี", "dwsa", "กะบ่าย", "แพลนบ่าย", "เปลี่ยนกะบ่าย",
+        "เปลี่ยนแพลนบ่าย", "dwsb", "กะดึก", "แพลนดึก", "เปลี่ยนกะดึก",
+        "เปลี่ยนแพลนดึก",
+    ]
+
+    command_lines = []
+    lines = [line.strip() for line in text.splitlines() if line.strip()] or [text]
+    current_command = []
+    for line in lines:
+        lower_line = line.lower()
+        has_keyword = any(keyword in lower_line for keyword in command_keywords)
+        has_user = bool(re.search(r"\b(?:\d{8}|[0-9A-Z]{10,20})\b", line.upper()))
+        if has_keyword:
+            if current_command:
+                command_lines.append("\n".join(current_command))
+            current_command = [line]
+            continue
+        if has_user:
+            current_command = [line] if not current_command else current_command + [line]
+    if current_command:
+        command_lines.append("\n".join(current_command))
+    if not command_lines:
+        command_lines = [text]
+
+    processed_any = False
+    for command_text in command_lines:
+        merged_text = " ".join(command_text.splitlines())
+        command_lower = merged_text.lower()
+        normalized_command_lower = re.sub(r"\s+", " ", command_lower).strip()
+        try:
+            handled = app.handle_jms_command(command_text, chat_id, message_id, parent_id, root_id)
+        except Exception as e:
+            print("JMS ERROR:", e)
+            app.jms_log(f"[ERROR] {e}")
+            return jsonify({"success": False, "error": str(e)})
+        if handled:
+            processed_any = True
+            continue
+
+        target_plan = None
+        if re.search(r"(เปลี่ยน|สลับ).*(บ่าย|dwsa)", normalized_command_lower):
+            target_plan = "DWSA"
+        elif re.search(r"(เปลี่ยน|สลับ).*(ดึก|dwsb)", normalized_command_lower):
+            target_plan = "DWSB"
+
+        if target_plan:
+            app.switch_plan(target_plan)
+            reply_feishu_message(
+                message_id,
+                f"PLAN : {target_plan}\nดำเนินการเปลี่ยนแพลนเสร็จเรียบร้อย\nปิดโปรแกรมแล้วเข้าใหม่อีกครั้ง",
+            )
+            app.add_log(f"[FEISHU] SWITCH -> {target_plan}")
+            processed_any = True
+            continue
+
+        if "/status" in command_lower:
+            reply_feishu_message(message_id, "🟢 Controller Online")
+            processed_any = True
+
+    if processed_any:
+        return jsonify({"success": True, "message": "handled"})
+    send_help()
+    return jsonify({"success": True, "message": "ignored"})
 
 
 def as_bool(value: str, default: bool = False) -> bool:
@@ -558,13 +767,23 @@ class App(ctk.CTk):
         self.button_color_map = {}
         self.stop_requested = False
         self.next_run = None
+        self.controller_clients = []
+        self.dynamic_plans = []
+        self.bot_running = False
+        self.jms_running = False
+        self.processed_events = deque(maxlen=1000)
+        self.bot_thread = None
+        self.load_controller_clients()
+        self.load_dynamic_plans()
 
         self.build_ui()
         self.load_values_to_ui()
 
         threading.Thread(target=self.worker_loop, daemon=True).start()
         threading.Thread(target=self.watchdog, daemon=True).start()
+        self.start_controller_api()
         self.after(1000, self.update_clock)
+        self.after(2500, self.refresh_status)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def ensure_config(self):
@@ -578,6 +797,13 @@ class App(ctk.CTk):
         for old_key in (("WEB" + chr(72) + "OOK"), "SECRET"):
             if "FEISHU" in self.config and old_key in self.config["FEISHU"]:
                 self.config.remove_option("FEISHU", old_key)
+        for name, (ip, port) in DEFAULT_CONTROLLER_CLIENTS.items():
+            if name not in self.config:
+                self.config[name] = {}
+            if not self.config[name].get("IP"):
+                self.config[name]["IP"] = ip
+            if not self.config[name].get("PORT"):
+                self.config[name]["PORT"] = port
         if "WORKBOOKS" not in self.config:
             self.config["WORKBOOKS"] = {"items": ""}
         if "EXPORTS" not in self.config:
@@ -632,6 +858,25 @@ class App(ctk.CTk):
             self.config["FEISHU"]["APP_SECRET"] = entry_value(self.app_secret_entry, collapse_internal_spaces=True)
             if hasattr(self, "chat_id_entry"):
                 self.config["FEISHU"]["CHAT_ID"] = entry_value(self.chat_id_entry, collapse_internal_spaces=True)
+            for attr, key in [
+                ("bot_port_entry", "BOT_PORT"),
+                ("bot_name_entry", "BOT_NAME"),
+                ("verify_token_entry", "VERIFY_TOKEN"),
+                ("ngrok_url_entry", "NGROK_URL"),
+                ("auth_token_entry", "AUTH_TOKEN"),
+            ]:
+                if hasattr(self, attr):
+                    self.config["FEISHU"][key] = entry_value(
+                        getattr(self, attr),
+                        collapse_internal_spaces=("TOKEN" in key or key in {"BOT_PORT"}),
+                    )
+            if hasattr(self, "controller_client_rows"):
+                for row in self.controller_client_rows:
+                    section = row["name"]
+                    if section not in self.config:
+                        self.config[section] = {}
+                    self.config[section]["IP"] = clean_input_value(row["ip_entry"].get())
+                    self.config[section]["PORT"] = clean_input_value(row["port_entry"].get(), collapse_internal_spaces=True)
             for old_key in (("WEB" + chr(72) + "OOK"), "SECRET"):
                 self.config.remove_option("FEISHU", old_key)
             if "DWS_JMS" not in self.config:
@@ -666,6 +911,8 @@ class App(ctk.CTk):
             self.config["DWS_JMS"]["start_hour"] = self.start_hour.get()
             self.config["DWS_JMS"]["end_hour"] = self.end_hour.get()
         save_config(self.config)
+        if hasattr(self, "controller_client_rows"):
+            self.load_controller_clients()
 
     def save_config_debounced(self):
         if self._save_job:
@@ -701,11 +948,15 @@ class App(ctk.CTk):
         self.nav_dws_jms.grid(row=4, column=0, padx=18, pady=6, sticky="ew")
         self.nav_output = ctk.CTkButton(sidebar, text="▤  จัดการไฟล์", height=44, anchor="w", fg_color="#1f2937", command=lambda: self.show_page("output_manager"))
         self.nav_output.grid(row=5, column=0, padx=18, pady=6, sticky="ew")
+        self.nav_dws_plan = ctk.CTkButton(sidebar, text="▦  DWS PLAN", height=44, anchor="w", fg_color="#1f2937", command=lambda: self.show_page("dws_plan"))
+        self.nav_dws_plan.grid(row=6, column=0, padx=18, pady=6, sticky="ew")
+        self.nav_jms_user = ctk.CTkButton(sidebar, text="👤  JMS USER", height=44, anchor="w", fg_color="#1f2937", command=lambda: self.show_page("jms_user"))
+        self.nav_jms_user.grid(row=7, column=0, padx=18, pady=6, sticky="ew")
         self.nav_settings = ctk.CTkButton(sidebar, text="⚙  ตั้งค่า", height=44, anchor="w", fg_color="#1f2937", command=lambda: self.show_page("settings"))
-        self.nav_settings.grid(row=6, column=0, padx=18, pady=6, sticky="ew")
+        self.nav_settings.grid(row=8, column=0, padx=18, pady=6, sticky="ew")
 
         self.side_hint = ctk.CTkLabel(sidebar, text="ลำดับงาน: DWS → Excel → Feishu", text_color="#64748b", wraplength=180, justify="left")
-        self.side_hint.grid(row=8, column=0, padx=20, pady=16, sticky="sw")
+        self.side_hint.grid(row=9, column=0, padx=20, pady=16, sticky="sw")
         self.status_pill = ctk.CTkLabel(sidebar, text="Idle", fg_color="#123524", text_color="#5dff9e", corner_radius=18, height=36, font=ctk.CTkFont(size=13, weight="bold"))
         self.status_pill.grid(row=10, column=0, padx=18, pady=(8, 20), sticky="ew")
 
@@ -720,6 +971,8 @@ class App(ctk.CTk):
             "workbooks": self.build_workbooks_page(self.content),
             "dws_jms": self.build_dws_jms_page(self.content),
             "output_manager": self.build_output_manager_page(self.content),
+            "dws_plan": self.build_dws_plan_page(self.content),
+            "jms_user": self.build_jms_user_page(self.content),
             "settings": self.build_settings_page(self.content),
         }
         self.show_page("home")
@@ -922,75 +1175,21 @@ class App(ctk.CTk):
         return page
 
     def build_dws_jms_page(self, master):
-        # Scrollable page: Data Export has many fields, so it must remain usable
-        # even when the window is locked to the compact War Room size.
         page = ctk.CTkScrollableFrame(master, fg_color="#0f172a", corner_radius=0)
         page.grid_columnconfigure(0, weight=1)
-        self.header(page, "ส่งออกข้อมูล", "ตั้งค่าการดึงข้อมูล DWS/JMS และทดสอบการทำงานก่อนส่งเข้า Excel/Feishu").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
-
-        panel = self.make_card(page, "#111827", 22)
-        panel.grid(row=1, column=0, padx=24, pady=6, sticky="ew")
-        for i in range(4):
-            panel.grid_columnconfigure(i, weight=1 if i in (1, 3) else 0)
-        ctk.CTkLabel(panel, text="ตั้งค่าการดึงข้อมูล", text_color="#f8fafc", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, columnspan=4, padx=18, pady=(12, 4), sticky="w")
-        ctk.CTkLabel(panel, text="กำหนดตำแหน่งเก็บไฟล์, Token และจำนวนข้อมูลที่โหลดต่อครั้ง", text_color="#94a3b8").grid(row=1, column=0, columnspan=4, padx=18, pady=(0, 4), sticky="w")
-        self.raw_path_entry = self.path_row_wide(panel, 2, "ตำแหน่งเก็บ Excel", self.browse_folder)
-        self.dws_url = self.setting_row_wide(panel, 3, "URL ระบบ DWS")
-        self.dws_token = self.setting_row_wide(panel, 4, "DWS Token")
-        self.jms_token = self.setting_row_wide(panel, 5, "Token JMS")
-        self.download_size_entry = self.setting_row_wide(panel, 6, "จำนวนรายการต่อรอบ")
-
-        self.send_dws_file_var = ctk.BooleanVar(value=False)
-        self.send_auto_file_var = ctk.BooleanVar(value=False)
-        self.send_dwspda_file_var = ctk.BooleanVar(value=False)
-        self.send_realtime_file_var = ctk.BooleanVar(value=False)
+        self.header(page, "ส่งออกข้อมูล", "ทดสอบและสั่งดึงข้อมูล DWS/JMS ก่อนส่งเข้า Excel/Feishu (ตั้งค่าทั้งหมดอยู่ในแท็บตั้งค่า)").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
 
         tests = self.make_card(page, "#020617", 22)
-        tests.grid(row=2, column=0, padx=24, pady=(6, 24), sticky="ew")
+        tests.grid(row=1, column=0, padx=24, pady=(6, 24), sticky="ew")
         tests.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(tests, text="ทดสอบการทำงาน", font=ctk.CTkFont(size=17, weight="bold"), text_color="#e2e8f0").grid(row=0, column=0, padx=16, pady=(12, 2), sticky="w")
-        ctk.CTkLabel(tests, text="เลือกช่วงเวลาสำหรับทดสอบ แล้วรันแยกทีละขั้นได้ | Auto และ Run Now จะอิงเวลาจากหน้าหลัก", text_color="#94a3b8").grid(row=1, column=0, padx=16, pady=(0, 8), sticky="w")
+        ctk.CTkLabel(tests, text="รันแยกทีละขั้นได้ | Auto และ Run Now จะอิงเวลาจากหน้าหลัก", text_color="#94a3b8").grid(row=1, column=0, padx=16, pady=(0, 8), sticky="w")
 
-        hours = [f"{i:02}:00" for i in range(24)]
-        date_frame = ctk.CTkFrame(tests, fg_color="#0b1220", corner_radius=16, border_width=1, border_color="#17233a")
-        date_frame.grid(row=2, column=0, padx=16, pady=(0, 8), sticky="ew")
-        date_frame.grid_columnconfigure(1, weight=1)  # Start Date
-        date_frame.grid_columnconfigure(5, weight=1)  # End Date
-        ctk.CTkLabel(date_frame, text="Start", text_color="#dbeafe", width=56, anchor="w").grid(row=0, column=0, padx=(14, 8), pady=10, sticky="w")
-        self.start_date = DateEntry(
-            date_frame,
-            width=28,
-            date_pattern="yyyy-mm-dd",
-            state="readonly",
-            font=("Segoe UI", 15)
-        )
-        self.start_date.grid(row=0, column=1, padx=(4, 8), pady=10, sticky="we")
-        self.start_hour = ctk.CTkOptionMenu(date_frame, values=hours, width=94, command=lambda _: self.save_config())
-        self.start_hour.grid(row=0, column=2, padx=(4, 18), pady=10, sticky="w")
         ctk.CTkLabel(
-            date_frame,
-            text="→",
-            text_color="#38bdf8",
-            width=30,
-            anchor="center",
-            font=ctk.CTkFont(size=20, weight="bold")
-        ).grid(
-            row=0,
-            column=3,
-            padx=12,
-            pady=10
-        )
-        ctk.CTkLabel(date_frame, text="End", text_color="#dbeafe", width=46, anchor="w").grid(row=0, column=4, padx=(18, 8), pady=10, sticky="e")
-        self.end_date = DateEntry(
-            date_frame,
-            width=28,
-            date_pattern="yyyy-mm-dd",
-            state="readonly",
-            font=("Segoe UI", 15)
-        )
-        self.end_date.grid(row=0, column=5, padx=(4, 8), pady=10, sticky="we")
-        self.end_hour = ctk.CTkOptionMenu(date_frame, values=hours, width=94, command=lambda _: self.save_config())
-        self.end_hour.grid(row=0, column=6, padx=(4, 14), pady=10, sticky="w")
+            tests,
+            text="ช่วงเวลา, URL, Token, จำนวนรายการ และชื่อไฟล์ตั้งค่าได้จากแท็บตั้งค่า",
+            text_color="#fbbf24",
+        ).grid(row=2, column=0, padx=16, pady=(0, 8), sticky="w")
 
         grid = ctk.CTkFrame(tests, fg_color="transparent")
         grid.grid(row=3, column=0, padx=8, pady=6, sticky="ew")
@@ -1109,42 +1308,136 @@ class App(ctk.CTk):
     def build_output_manager_page(self, master):
         page = ctk.CTkScrollableFrame(master, fg_color="#0f172a", corner_radius=0)
         page.grid_columnconfigure(0, weight=1)
-        self.header(page, "จัดการไฟล์", "รวมชื่อไฟล์ Excel ที่สร้าง และไฟล์ Excel ที่ใช้งานไว้ในที่เดียว").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
-
-        files = self.make_card(page, "#111827", 22)
-        files.grid(row=1, column=0, padx=24, pady=6, sticky="ew")
-        files.grid_columnconfigure(1, weight=1)
-        files.grid_columnconfigure(4, weight=1)
-        ctk.CTkLabel(
-            files,
-            text="ชื่อไฟล์ Excel ที่สร้าง",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#f8fafc",
-        ).grid(row=0, column=0, columnspan=6, padx=16, pady=(10, 2), sticky="w")
-        ctk.CTkLabel(
-            files,
-            text="กำหนดชื่อไฟล์ .xlsx ที่ระบบสร้างจาก DWS/JMS และเลือกได้ว่าจะให้แนบไฟล์ Excel ไปกับ Feishu หรือไม่",
-            text_color="#94a3b8",
-            wraplength=920,
-            justify="left",
-        ).grid(row=1, column=0, columnspan=6, padx=16, pady=(0, 6), sticky="w")
-
-        self.name_dws = self.dws_excel_file_row(files, 2, 0, "ไฟล์ DWS", self.send_dws_file_var)
-        self.name_auto = self.dws_excel_file_row(files, 2, 3, "ไฟล์ JMS Auto", self.send_auto_file_var)
-        self.name_dwspda = self.dws_excel_file_row(files, 3, 0, "ไฟล์ JMS PDA", self.send_dwspda_file_var)
-        self.name_realtime_db = self.dws_excel_file_row(files, 3, 3, "ไฟล์ Realtime DB", self.send_realtime_file_var)
+        self.header(page, "จัดการไฟล์", "ดูไฟล์ Excel ที่ใช้งานในระบบ ส่วนการตั้งค่าชื่อไฟล์และการแนบไฟล์ย้ายไปแท็บตั้งค่าแล้ว").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
 
         self.workspace_output_frame = ctk.CTkFrame(page, fg_color="#0b1220", corner_radius=18, border_width=1, border_color="#17233a")
-        self.workspace_output_frame.grid(row=2, column=0, padx=24, pady=(8, 24), sticky="ew")
+        self.workspace_output_frame.grid(row=1, column=0, padx=24, pady=(8, 24), sticky="ew")
         self.workspace_output_frame.grid_columnconfigure(0, weight=1)
         self.workspace_output_rows = []
         self.refresh_workspace_output_names()
         return page
 
-    def build_settings_page(self, master):
+    def build_dws_plan_page(self, master):
         page = ctk.CTkFrame(master, fg_color="#0f172a")
         page.grid_columnconfigure(0, weight=1)
-        self.header(page, "ตั้งค่า", "ตั้งค่าโฟลเดอร์เก็บรูป และข้อมูลเชื่อมต่อ Feishu").grid(row=0, column=0, padx=24, pady=(22, 12), sticky="ew")
+        page.grid_rowconfigure(1, weight=1)
+        self.header(
+            page,
+            "DWS PLAN",
+            "ควบคุมการเปลี่ยนแพลนและตรวจสถานะเครื่อง DWS จาก bot_main.py",
+        ).grid(row=0, column=0, padx=24, pady=(22, 12), sticky="ew")
+        body = ctk.CTkFrame(page, fg_color="#0f172a")
+        body.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        self.build_controller_dws_tab(body)
+        return page
+
+    def build_jms_user_page(self, master):
+        page = ctk.CTkFrame(master, fg_color="#0f172a")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(1, weight=1)
+        self.header(
+            page,
+            "JMS USER",
+            "เปิด/ปิดการประมวลผลคำสั่งรีรหัสและปลดล็อค user จาก Feishu",
+        ).grid(row=0, column=0, padx=24, pady=(22, 12), sticky="ew")
+        body = ctk.CTkFrame(page, fg_color="#0f172a")
+        body.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        self.build_controller_jms_tab(body)
+        return page
+
+    def build_controller_dws_tab(self, tab):
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+        tab.grid_rowconfigure(2, weight=1)
+
+        control = self.make_card(tab, "#111827", 18)
+        control.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+        control.grid_columnconfigure(4, weight=1)
+        self.controller_plan_entry = ctk.CTkEntry(control, placeholder_text="DWSA / DWSB", width=180)
+        self.controller_plan_entry.grid(row=0, column=0, padx=(16, 8), pady=14, sticky="w")
+        ctk.CTkButton(control, text="Change", width=96, fg_color="#334155", hover_color="#475569", command=self.change_plan_from_entry).grid(row=0, column=1, padx=6, pady=14)
+        ctk.CTkButton(control, text="Refresh Status", width=130, fg_color="#334155", hover_color="#475569", command=self.refresh_status).grid(row=0, column=2, padx=6, pady=14)
+        self.btn_start_bot = ctk.CTkButton(control, text="START BOT", width=120, fg_color="#16a34a", hover_color="#15803d", command=self.start_feishu_bot)
+        self.btn_stop_bot = ctk.CTkButton(control, text="STOP BOT", width=120, fg_color="#dc2626", hover_color="#b91c1c", command=self.stop_feishu_bot)
+        self.btn_start_bot.grid(row=0, column=3, padx=6, pady=14)
+        self.bot_status_label = ctk.CTkLabel(control, text="Bot : OFFLINE", text_color="#f87171", font=ctk.CTkFont(size=13, weight="bold"))
+        self.bot_status_label.grid(row=0, column=4, padx=14, pady=14, sticky="w")
+
+        table_card = self.make_card(tab, "#020617", 18)
+        table_card.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nsew")
+        table_card.grid_columnconfigure(0, weight=1)
+        table_card.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(table_card, text="DWS Client Status", text_color="#f8fafc", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, padx=14, pady=(12, 6), sticky="w")
+        self.controller_status_frame = ctk.CTkScrollableFrame(table_card, fg_color="#050b16", corner_radius=12)
+        self.controller_status_frame.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        for col in range(6):
+            self.controller_status_frame.grid_columnconfigure(col, weight=1 if col in {1, 5} else 0)
+
+        log_card = self.make_card(tab, "#020617", 18)
+        log_card.grid(row=2, column=0, padx=10, pady=(0, 10), sticky="nsew")
+        log_card.grid_columnconfigure(0, weight=1)
+        log_card.grid_rowconfigure(1, weight=1)
+        top = ctk.CTkFrame(log_card, fg_color="transparent")
+        top.grid(row=0, column=0, padx=14, pady=(12, 6), sticky="ew")
+        top.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(top, text="Controller Logs", text_color="#f8fafc", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(top, text="Clear", width=70, fg_color="#334155", hover_color="#475569", command=lambda: self.controller_log_box.delete("1.0", "end")).grid(row=0, column=1, sticky="e")
+        self.controller_log_box = ctk.CTkTextbox(log_card, fg_color="#050b16", text_color="#a7f3d0", font=("Consolas", 11), corner_radius=12)
+        self.controller_log_box.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        self.update_bot_ui()
+
+    def build_controller_jms_tab(self, tab):
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+        control = self.make_card(tab, "#111827", 18)
+        control.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+        self.btn_start_jms = ctk.CTkButton(control, text="START BOT", width=120, fg_color="#16a34a", hover_color="#15803d", command=self.start_jms_placeholder)
+        self.btn_stop_jms = ctk.CTkButton(control, text="STOP BOT", width=120, fg_color="#dc2626", hover_color="#b91c1c", command=self.stop_jms_placeholder)
+        self.btn_start_jms.grid(row=0, column=0, padx=(16, 8), pady=14)
+        self.jms_status_label = ctk.CTkLabel(control, text="Bot : OFFLINE", text_color="#f87171", font=ctk.CTkFont(size=13, weight="bold"))
+        self.jms_status_label.grid(row=0, column=1, padx=14, pady=14, sticky="w")
+        ctk.CTkLabel(control, text="เมื่อเปิด JMS Bot แล้ว คำสั่งรีรหัส/ปลดล็อคจาก Feishu จะถูกประมวลผล", text_color="#94a3b8").grid(row=0, column=2, padx=14, pady=14, sticky="w")
+
+        log_card = self.make_card(tab, "#020617", 18)
+        log_card.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nsew")
+        log_card.grid_columnconfigure(0, weight=1)
+        log_card.grid_rowconfigure(1, weight=1)
+        top = ctk.CTkFrame(log_card, fg_color="transparent")
+        top.grid(row=0, column=0, padx=14, pady=(12, 6), sticky="ew")
+        top.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(top, text="JMS Logs", text_color="#f8fafc", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(top, text="Clear", width=70, fg_color="#334155", hover_color="#475569", command=lambda: self.jms_log_text.delete("1.0", "end")).grid(row=0, column=1, sticky="e")
+        self.jms_log_text = ctk.CTkTextbox(log_card, fg_color="#050b16", text_color="#a7f3d0", font=("Consolas", 11), corner_radius=12)
+        self.jms_log_text.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        self.jms_log("[SYSTEM] JMS TAB READY")
+        self.update_jms_ui()
+
+    def render_controller_client_settings(self):
+        if not hasattr(self, "controller_client_frame"):
+            return
+        for widget in self.controller_client_frame.winfo_children():
+            widget.destroy()
+        self.controller_client_rows.clear()
+        headers = ["PC Name", "IP Address", "Port"]
+        for col, title in enumerate(headers):
+            ctk.CTkLabel(self.controller_client_frame, text=title, text_color="#94a3b8", font=ctk.CTkFont(weight="bold")).grid(row=0, column=col, padx=8, pady=(8, 4), sticky="w")
+        for idx, client in enumerate(self.controller_clients, start=1):
+            ctk.CTkLabel(self.controller_client_frame, text=client["name"], text_color="#dbeafe").grid(row=idx, column=0, padx=8, pady=5, sticky="w")
+            ip_entry = ctk.CTkEntry(self.controller_client_frame, width=180)
+            ip_entry.insert(0, client["ip"])
+            ip_entry.grid(row=idx, column=1, padx=8, pady=5, sticky="ew")
+            port_entry = ctk.CTkEntry(self.controller_client_frame, width=90)
+            port_entry.insert(0, str(client["port"]))
+            port_entry.grid(row=idx, column=2, padx=8, pady=5, sticky="w")
+            self.bind_clean_entry(ip_entry)
+            self.bind_clean_entry(port_entry, collapse_internal_spaces=True, digits_only=True)
+            self.controller_client_rows.append({"name": client["name"], "ip_entry": ip_entry, "port_entry": port_entry})
+        self.controller_client_frame.grid_columnconfigure(1, weight=1)
+
+    def build_settings_page(self, master):
+        page = ctk.CTkScrollableFrame(master, fg_color="#0f172a", corner_radius=0)
+        page.grid_columnconfigure(0, weight=1)
+        self.header(page, "ตั้งค่า", "รวม config ทั้งหมดไว้ที่นี่: Feishu, DWS/JMS Export, ชื่อไฟล์, DWS PLAN และ JMS USER").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
 
         path = self.make_card(page, "#111827", 22)
         path.grid(row=1, column=0, padx=24, pady=8, sticky="ew")
@@ -1155,18 +1448,73 @@ class App(ctk.CTk):
         feishu = self.make_card(page, "#111827", 22)
         feishu.grid(row=2, column=0, padx=24, pady=8, sticky="ew")
         feishu.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(feishu, text="ตั้งค่า Feishu (Chat ID Mode)", text_color="#f8fafc", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 0), sticky="w")
-        ctk.CTkLabel(feishu, text="ใช้ App ID / App Secret / Chat ID สำหรับส่งเข้า Feishu", text_color="#94a3b8").grid(row=1, column=0, columnspan=2, padx=16, pady=(4, 6), sticky="w")
+        ctk.CTkLabel(feishu, text="ตั้งค่า Feishu กลาง", text_color="#f8fafc", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 0), sticky="w")
+        ctk.CTkLabel(feishu, text="App ID / App Secret ใช้ร่วมกันทั้งส่งรูป, Feishu webhook, DWS PLAN และ JMS USER", text_color="#94a3b8").grid(row=1, column=0, columnspan=2, padx=16, pady=(4, 6), sticky="w")
         self.app_id_entry = self.setting_row(feishu, 2, "App ID")
         self.app_secret_entry = self.setting_row(feishu, 3, "App Secret")
         self.chat_id_entry = self.setting_row(feishu, 4, "Chat ID")
+        self.bot_name_entry = self.setting_row(feishu, 5, "BOT_NAME")
+        self.bot_port_entry = self.setting_row(feishu, 6, "BOT_PORT")
+        self.verify_token_entry = self.setting_row(feishu, 7, "VERIFY_TOKEN")
+        self.ngrok_url_entry = self.setting_row(feishu, 8, "NGROK_URL")
+        self.auth_token_entry = self.setting_row(feishu, 9, "AUTH_TOKEN")
 
-        tips = self.make_card(page, "#08111f", 22)
-        tips.grid(row=3, column=0, padx=24, pady=8, sticky="ew")
-        ctk.CTkLabel(tips, text="Tip: โฟลเดอร์เก็บรูปคือปลายทางรูปที่สร้างจาก Excel ส่วนโฟลเดอร์เก็บ Excel อยู่ในหน้าส่งออกข้อมูล", text_color="#94a3b8").grid(row=0, column=0, padx=16, pady=14, sticky="w")
+        export = self.make_card(page, "#111827", 22)
+        export.grid(row=3, column=0, padx=24, pady=8, sticky="ew")
+        for i in range(4):
+            export.grid_columnconfigure(i, weight=1 if i in (1, 3) else 0)
+        ctk.CTkLabel(export, text="ตั้งค่า DWS/JMS Export", text_color="#f8fafc", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, columnspan=4, padx=18, pady=(16, 4), sticky="w")
+        ctk.CTkLabel(export, text="ย้ายมาจากแท็บส่งออกข้อมูล: ตำแหน่งเก็บ Excel, URL, Token, จำนวนรายการ และช่วงเวลาทดสอบ", text_color="#94a3b8").grid(row=1, column=0, columnspan=4, padx=18, pady=(0, 4), sticky="w")
+        self.raw_path_entry = self.path_row_wide(export, 2, "ตำแหน่งเก็บ Excel", self.browse_folder)
+        self.dws_url = self.setting_row_wide(export, 3, "URL ระบบ DWS")
+        self.dws_token = self.setting_row_wide(export, 4, "DWS Token")
+        self.jms_token = self.setting_row_wide(export, 5, "Token JMS")
+        self.download_size_entry = self.setting_row_wide(export, 6, "จำนวนรายการต่อรอบ")
 
-        self.btn_save_settings = ctk.CTkButton(page, text="💾 บันทึกการตั้งค่า", height=40, fg_color="#334155", hover_color="#475569", command=self.save_all)
-        self.btn_save_settings.grid(row=4, column=0, padx=24, pady=16, sticky="e")
+        hours = [f"{i:02}:00" for i in range(24)]
+        date_frame = ctk.CTkFrame(export, fg_color="#0b1220", corner_radius=16, border_width=1, border_color="#17233a")
+        date_frame.grid(row=7, column=0, columnspan=4, padx=16, pady=(8, 14), sticky="ew")
+        date_frame.grid_columnconfigure(1, weight=1)
+        date_frame.grid_columnconfigure(5, weight=1)
+        ctk.CTkLabel(date_frame, text="Start", text_color="#dbeafe", width=56, anchor="w").grid(row=0, column=0, padx=(14, 8), pady=10, sticky="w")
+        self.start_date = DateEntry(date_frame, width=28, date_pattern="yyyy-mm-dd", state="readonly", font=("Segoe UI", 15))
+        self.start_date.grid(row=0, column=1, padx=(4, 8), pady=10, sticky="we")
+        self.start_hour = ctk.CTkOptionMenu(date_frame, values=hours, width=94, command=lambda _: self.save_config())
+        self.start_hour.grid(row=0, column=2, padx=(4, 18), pady=10, sticky="w")
+        ctk.CTkLabel(date_frame, text="→", text_color="#38bdf8", width=30, anchor="center", font=ctk.CTkFont(size=20, weight="bold")).grid(row=0, column=3, padx=12, pady=10)
+        ctk.CTkLabel(date_frame, text="End", text_color="#dbeafe", width=46, anchor="w").grid(row=0, column=4, padx=(18, 8), pady=10, sticky="e")
+        self.end_date = DateEntry(date_frame, width=28, date_pattern="yyyy-mm-dd", state="readonly", font=("Segoe UI", 15))
+        self.end_date.grid(row=0, column=5, padx=(4, 8), pady=10, sticky="we")
+        self.end_hour = ctk.CTkOptionMenu(date_frame, values=hours, width=94, command=lambda _: self.save_config())
+        self.end_hour.grid(row=0, column=6, padx=(4, 14), pady=10, sticky="w")
+
+        files = self.make_card(page, "#111827", 22)
+        files.grid(row=4, column=0, padx=24, pady=8, sticky="ew")
+        files.grid_columnconfigure(1, weight=1)
+        files.grid_columnconfigure(4, weight=1)
+        ctk.CTkLabel(files, text="ชื่อไฟล์ Excel ที่สร้าง", font=ctk.CTkFont(size=17, weight="bold"), text_color="#f8fafc").grid(row=0, column=0, columnspan=6, padx=16, pady=(16, 2), sticky="w")
+        ctk.CTkLabel(files, text="ย้ายมาจากแท็บจัดการไฟล์: กำหนดชื่อไฟล์ .xlsx และเลือกแนบไฟล์ Excel ไปกับ Feishu", text_color="#94a3b8", wraplength=920, justify="left").grid(row=1, column=0, columnspan=6, padx=16, pady=(0, 6), sticky="w")
+        self.send_dws_file_var = ctk.BooleanVar(value=False)
+        self.send_auto_file_var = ctk.BooleanVar(value=False)
+        self.send_dwspda_file_var = ctk.BooleanVar(value=False)
+        self.send_realtime_file_var = ctk.BooleanVar(value=False)
+        self.name_dws = self.dws_excel_file_row(files, 2, 0, "ไฟล์ DWS", self.send_dws_file_var)
+        self.name_auto = self.dws_excel_file_row(files, 2, 3, "ไฟล์ JMS Auto", self.send_auto_file_var)
+        self.name_dwspda = self.dws_excel_file_row(files, 3, 0, "ไฟล์ JMS PDA", self.send_dwspda_file_var)
+        self.name_realtime_db = self.dws_excel_file_row(files, 3, 3, "ไฟล์ Realtime DB", self.send_realtime_file_var)
+
+        clients = self.make_card(page, "#111827", 22)
+        clients.grid(row=5, column=0, padx=24, pady=8, sticky="ew")
+        clients.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(clients, text="ตั้งค่า DWS PLAN Clients", text_color="#f8fafc", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 4), sticky="w")
+        ctk.CTkLabel(clients, text="IP/Port สำหรับหน้า DWS PLAN และ Controller API", text_color="#94a3b8").grid(row=1, column=0, padx=16, pady=(0, 6), sticky="w")
+        self.controller_client_frame = ctk.CTkFrame(clients, fg_color="#050b16", corner_radius=12)
+        self.controller_client_frame.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
+        self.controller_client_rows = []
+        self.render_controller_client_settings()
+
+        self.btn_save_settings = ctk.CTkButton(page, text="💾 บันทึกการตั้งค่าทั้งหมด", height=40, fg_color="#334155", hover_color="#475569", command=self.save_all)
+        self.btn_save_settings.grid(row=6, column=0, padx=24, pady=(8, 24), sticky="e")
         return page
 
     def path_row(self, parent, row, label, browse_func):
@@ -1192,9 +1540,17 @@ class App(ctk.CTk):
         for p in self.pages.values():
             p.grid_remove()
         self.pages[name].grid(row=0, column=0, sticky="nsew")
-        for btn in [self.nav_home, self.nav_workbooks, self.nav_dws_jms, self.nav_output, self.nav_settings]:
+        for btn in [self.nav_home, self.nav_workbooks, self.nav_dws_jms, self.nav_output, self.nav_dws_plan, self.nav_jms_user, self.nav_settings]:
             btn.configure(fg_color="#1f2937")
-        {"home": self.nav_home, "workbooks": self.nav_workbooks, "dws_jms": self.nav_dws_jms, "output_manager": self.nav_output, "settings": self.nav_settings}[name].configure(fg_color="#2563eb")
+        {
+            "home": self.nav_home,
+            "workbooks": self.nav_workbooks,
+            "dws_jms": self.nav_dws_jms,
+            "output_manager": self.nav_output,
+            "dws_plan": self.nav_dws_plan,
+            "jms_user": self.nav_jms_user,
+            "settings": self.nav_settings,
+        }[name].configure(fg_color="#2563eb")
 
     def load_values_to_ui(self):
         self.out_entry.insert(0, self.config["PATH"].get("output_dir", ""))
@@ -1205,6 +1561,15 @@ class App(ctk.CTk):
         self.app_secret_entry.insert(0, self.config["FEISHU"].get("APP_SECRET", ""))
         if hasattr(self, "chat_id_entry"):
             self.chat_id_entry.insert(0, self.config["FEISHU"].get("CHAT_ID", ""))
+        for attr, key in [
+            ("bot_port_entry", "BOT_PORT"),
+            ("bot_name_entry", "BOT_NAME"),
+            ("verify_token_entry", "VERIFY_TOKEN"),
+            ("ngrok_url_entry", "NGROK_URL"),
+            ("auth_token_entry", "AUTH_TOKEN"),
+        ]:
+            if hasattr(self, attr):
+                getattr(self, attr).insert(0, self.config["FEISHU"].get(key, DEFAULT_FEISHU.get(key, "")))
         dws = self.config["DWS_JMS"] if "DWS_JMS" in self.config else {}
         if hasattr(self, "raw_path_entry"):
             self.raw_path_entry.insert(0, dws.get("raw_path", "") or self.config["PATH"].get("output_dir", ""))
@@ -2666,6 +3031,274 @@ class App(ctk.CTk):
         self.set_status("Stopped", "#fecaca", "#4c1118")
         self.set_ui_running(False)
         self.write_log("All running tasks stopped", level="WARN")
+
+    def get_feishu_config_value(self, key: str, default: str = "") -> str:
+        entry_map = {
+            "APP_ID": "app_id_entry",
+            "APP_SECRET": "app_secret_entry",
+            "CHAT_ID": "chat_id_entry",
+            "BOT_PORT": "bot_port_entry",
+            "BOT_NAME": "bot_name_entry",
+            "VERIFY_TOKEN": "verify_token_entry",
+            "NGROK_URL": "ngrok_url_entry",
+            "AUTH_TOKEN": "auth_token_entry",
+        }
+        attr = entry_map.get(key)
+        if attr and hasattr(self, attr):
+            return entry_value(getattr(self, attr), collapse_internal_spaces=(key in {"APP_ID", "APP_SECRET", "CHAT_ID", "AUTH_TOKEN", "BOT_PORT"}))
+        if "FEISHU" in self.config:
+            return self.config["FEISHU"].get(key, default)
+        return default
+
+    def add_log(self, message):
+        self.write_log(message)
+        box = getattr(self, "controller_log_box", None)
+        if box is not None:
+            box.insert("end", f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
+            box.see("end")
+
+    def jms_log(self, message):
+        box = getattr(self, "jms_log_text", None)
+        if box is not None:
+            box.insert("end", f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
+            box.see("end")
+        else:
+            self.write_log(message)
+
+    def load_controller_clients(self):
+        self.controller_clients = []
+        for section in self.config.sections():
+            if not section.startswith("DWS") or not self.config.has_option(section, "IP"):
+                continue
+            try:
+                port = self.config.getint(section, "PORT")
+            except Exception:
+                port = int(DEFAULT_CONTROLLER_CLIENTS.get(section, ("", "4000"))[1])
+            self.controller_clients.append({
+                "name": section,
+                "ip": self.config.get(section, "IP", fallback=DEFAULT_CONTROLLER_CLIENTS.get(section, ("", ""))[0]),
+                "port": port,
+            })
+        self.controller_clients.sort(key=lambda c: list(DEFAULT_CONTROLLER_CLIENTS).index(c["name"]) if c["name"] in DEFAULT_CONTROLLER_CLIENTS else 999)
+
+    def load_dynamic_plans(self):
+        self.dynamic_plans.clear()
+        for client in self.controller_clients:
+            try:
+                response = requests.get(f"http://{client['ip']}:{client['port']}/plans", timeout=3)
+                data = response.json()
+                if data.get("success"):
+                    for plan in data.get("plans", []):
+                        if plan not in self.dynamic_plans:
+                            self.dynamic_plans.append(plan)
+                    return
+            except Exception:
+                pass
+        self.dynamic_plans = ["DWSA", "DWSB"]
+
+    def start_controller_api(self):
+        global controller_instance
+        controller_instance = self
+        try:
+            register_controller(self)
+            threading.Thread(target=start_api, daemon=True).start()
+            self.add_log("[SYSTEM] Controller API Started : 6100")
+        except Exception as e:
+            self.add_log(f"[ERROR] Controller API failed -> {e}")
+
+    def update_bot_ui(self):
+        if not hasattr(self, "btn_start_bot"):
+            return
+        if self.bot_running:
+            self.btn_start_bot.grid_remove()
+            self.btn_stop_bot.grid(row=0, column=3, padx=6, pady=14)
+            self.bot_status_label.configure(text="Bot : ONLINE", text_color="#86efac")
+        else:
+            self.btn_stop_bot.grid_remove()
+            self.btn_start_bot.grid(row=0, column=3, padx=6, pady=14)
+            self.bot_status_label.configure(text="Bot : OFFLINE", text_color="#f87171")
+
+    def update_jms_ui(self):
+        if not hasattr(self, "btn_start_jms"):
+            return
+        if self.jms_running:
+            self.btn_start_jms.grid_remove()
+            self.btn_stop_jms.grid(row=0, column=0, padx=(16, 8), pady=14)
+            self.jms_status_label.configure(text="Bot : ONLINE", text_color="#86efac")
+        else:
+            self.btn_stop_jms.grid_remove()
+            self.btn_start_jms.grid(row=0, column=0, padx=(16, 8), pady=14)
+            self.jms_status_label.configure(text="Bot : OFFLINE", text_color="#f87171")
+
+    def refresh_status(self):
+        if not hasattr(self, "controller_status_frame"):
+            return
+        threading.Thread(target=self.refresh_status_thread, daemon=True).start()
+
+    def refresh_status_thread(self):
+        rows = []
+        for client in self.controller_clients:
+            try:
+                response = requests.get(f"http://{client['ip']}:{client['port']}/status", timeout=3)
+                data = response.json()
+                rows.append({
+                    "pc": client["name"],
+                    "ip": client["ip"],
+                    "port": client["port"],
+                    "status": "ONLINE" if data.get("success") else "ERROR",
+                    "plan": data.get("current_plan", "-"),
+                    "message": data.get("message", ""),
+                })
+            except Exception as e:
+                rows.append({"pc": client["name"], "ip": client["ip"], "port": client["port"], "status": "OFFLINE", "plan": "-", "message": str(e)})
+        self.after(0, lambda: self.render_controller_status(rows))
+
+    def render_controller_status(self, rows):
+        frame = getattr(self, "controller_status_frame", None)
+        if frame is None:
+            return
+        for widget in frame.winfo_children():
+            widget.destroy()
+        headers = [("pc", "PC"), ("ip", "IP Address"), ("port", "Port"), ("status", "Status"), ("plan", "Current Plan"), ("message", "Message")]
+        for col, (_, title) in enumerate(headers):
+            ctk.CTkLabel(frame, text=title, text_color="#94a3b8", font=ctk.CTkFont(weight="bold")).grid(row=0, column=col, padx=8, pady=(8, 5), sticky="w")
+        for idx, row in enumerate(rows, start=1):
+            status_color = "#86efac" if row["status"] == "ONLINE" else "#f87171"
+            values = [row["pc"], row["ip"], row["port"], row["status"], row["plan"], row["message"]]
+            for col, value in enumerate(values):
+                color = status_color if col == 3 else "#dbeafe"
+                ctk.CTkLabel(frame, text=str(value), text_color=color, anchor="w").grid(row=idx, column=col, padx=8, pady=4, sticky="ew")
+
+    def switch_single_client(self, client, target_plan):
+        try:
+            response = requests.post(f"http://{client['ip']}:{client['port']}/switch_plan", json={"plan": target_plan}, timeout=5)
+            data = response.json()
+            if data.get("success"):
+                self.add_log(f"[OK] {client['name']} -> {target_plan}")
+            else:
+                self.add_log(f"[FAIL] {client['name']} -> {data.get('message')}")
+        except Exception as e:
+            self.add_log(f"[ERROR] {client['name']} -> {e}")
+
+    def switch_plan_thread(self, target_plan):
+        self.add_log(f"[SYSTEM] SWITCH PLAN -> {target_plan}")
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            for client in self.controller_clients:
+                executor.submit(self.switch_single_client, client, target_plan)
+        self.refresh_status()
+
+    def switch_plan(self, target_plan):
+        threading.Thread(target=self.switch_plan_thread, args=(target_plan,), daemon=True).start()
+
+    def change_plan_from_entry(self):
+        target_plan = self.controller_plan_entry.get().strip() if hasattr(self, "controller_plan_entry") else ""
+        if not target_plan:
+            self.add_log("[ERROR] PLAN EMPTY")
+            return
+        self.switch_plan(target_plan)
+
+    def start_jms_placeholder(self):
+        self.jms_running = True
+        self.update_jms_ui()
+        self.jms_log("[SYSTEM] JMS BOT ONLINE")
+
+    def stop_jms_placeholder(self):
+        self.jms_running = False
+        self.update_jms_ui()
+        self.jms_log("[SYSTEM] JMS BOT OFFLINE")
+
+    def run_feishu_server(self):
+        try:
+            port = int(self.get_feishu_config_value("BOT_PORT", "7000"))
+        except Exception:
+            port = 7000
+        self.add_log(f"[SYSTEM] Feishu Server Running : {port}")
+        serve(bot_app, host="0.0.0.0", port=port, threads=20)
+
+    def start_feishu_bot(self):
+        if self.bot_running:
+            return
+        self.save_config()
+        self.bot_running = True
+        self.bot_thread = threading.Thread(target=self.run_feishu_server, daemon=True)
+        self.bot_thread.start()
+        self.update_bot_ui()
+        self.add_log("[SYSTEM] Feishu Bot Started")
+
+    def stop_feishu_bot(self):
+        self.bot_running = False
+        self.update_bot_ui()
+        self.add_log("[SYSTEM] Bot Marked As Offline")
+        self.add_log("[INFO] Restart program to fully stop server")
+
+    def handle_jms_command(self, text, chat_id, message_id, parent_id=None, root_id=None):
+        if not self.jms_running:
+            return False
+        lower_text = text.lower()
+        normalized_lower_text = re.sub(r"\s+", " ", lower_text).strip()
+        app_keywords = ["รีapp", "รี app", "รีแอพ", "รี แอพ", "รีรหัสapp", "รีรหัส app", "รีรหัสแอพ", "รีรหัส แอพ", "รีแอป", "รี แอป", "รีรหัสแอป", "รีรหัส แอป", "รีเซ็ตapp", "reset app", "reset password app", "รีแอพให้หน่อย", "รีรหัสแอพให้หน่อย", "รีรหัสpda", "รีรหัสpdaให้หน่อย", "รีรหัส pda ให้หน่อย"]
+        jms_keywords = ["รีjms", "รีรหัสjms", "รีรหัส jms", "รี jms", "รีเซ็ตjms", "reset jms", "reset password jms", "รี jms ให้หน่อย", "รีรหัส jms ให้หน่อย"]
+        enable_keywords = ["เปิดยูส", "เปิด user", "enable", "เปิดใช้งาน", "ปลดล็อค", "ปลดล้อค", "unlock", "ระงับ", "โดนระงับ", "เข้าไม่ได้", "ใช้งานไม่ได้", "ปลด user", "เปิดรหัส", "เปิดไอดี"]
+        staff_list = list(dict.fromkeys(re.findall(r"\b(?:\d{8}|[0-9A-Z]{10,20})\b", text.upper())))
+        command_type = None
+        if any(keyword in lower_text or keyword in normalized_lower_text for keyword in app_keywords):
+            command_type = "APP"
+        elif any(keyword in lower_text or keyword in normalized_lower_text for keyword in jms_keywords):
+            command_type = "JMS"
+        elif any(keyword in lower_text or keyword in normalized_lower_text for keyword in enable_keywords):
+            command_type = "ENABLE"
+        elif staff_list and any(keyword in lower_text or keyword in normalized_lower_text for keyword in ["ล็อค", "ล๊อค", "โดนล็อค", "โดนล๊อค", "locked", "ระงับ", "โดนระงับ", "เข้าไม่ได้", "ใช้งานไม่ได้", "ปลดล็อค", "ปลดล้อค", "unlock", "รหัสปิด"]):
+            command_type = "ENABLE"
+        else:
+            return False
+        if not staff_list:
+            reply_feishu_message(message_id, "❌ ไม่พบ USER")
+            return True
+
+        success_text, fail_text = [], []
+        for staff_no in staff_list:
+            try:
+                self.jms_log(f"[SEARCH] {staff_no}")
+                user = search_user(staff_no)
+                if not user or not isinstance(user, dict):
+                    fail_text.append(f"{staff_no} : ไม่พบ USER")
+                    continue
+                user_id = user.get("id")
+                user_name = user.get("name")
+                if not user_id:
+                    fail_text.append(f"{staff_no} : USER DATA INVALID")
+                    continue
+                if command_type == "APP":
+                    new_password = reset_app_password(user_id)
+                    success_text.append(f"Name : {user_name}\nUser : {staff_no}\nAPP Password : {new_password}")
+                    self.jms_log(f"[RESET APP] {staff_no}")
+                    write_log(status="SUCCESS", user=staff_no, name=user_name, action="APP", detail=f"PASSWORD : {new_password}")
+                elif command_type == "JMS":
+                    new_password = reset_jms_password(user_id)
+                    success_text.append(f"Name : {user_name}\nUser : {staff_no}\nJMS Password : {new_password}")
+                    self.jms_log(f"[RESET JMS] {staff_no}")
+                    write_log(status="SUCCESS", user=staff_no, name=user_name, action="JMS", detail=f"PASSWORD : {new_password}")
+                elif command_type == "ENABLE":
+                    enable_user(user)
+                    success_text.append(f"Name : {user_name}\nUser : {staff_no}\nStatus : เปิดใช้งาน")
+                    self.jms_log(f"[ENABLE USER] {staff_no}")
+                    write_log(status="SUCCESS", user=staff_no, name=user_name, action="ENABLE", detail="USER ENABLED")
+            except Exception as e:
+                fail_text.append(f"{staff_no} : {str(e)}")
+                self.jms_log(f"[ERROR] {staff_no} -> {e}")
+                write_log(status="FAILED", user=staff_no, action=command_type, detail=str(e))
+
+        final_message = ""
+        if success_text:
+            final_message += "ดำเนินการเสร็จเรียบร้อย\n\n" + "\n\n".join(success_text)
+        if fail_text:
+            final_message += "\n\n⚠ FAILED\n\n" + "\n".join(fail_text)
+        if len(final_message) > 3000:
+            for i in range(0, len(final_message), 3000):
+                reply_feishu_message(message_id, final_message[i:i + 3000])
+        else:
+            reply_feishu_message(message_id, final_message)
+        return True
 
     def on_close(self):
         self.stop_all()
