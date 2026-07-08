@@ -6,7 +6,7 @@ import gc
 import configparser
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional, Dict
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import pythoncom
 import win32com.client as win32
@@ -15,8 +15,41 @@ import win32gui
 import win32con
 import win32process
 
-LogFunc = Optional[Callable[[str], None]]
-RunFunc = Optional[Callable[[], bool]]
+LogFunc = Callable[[str], None]
+RunFunc = Callable[[], bool]
+
+
+def get_excel_pid(excel: Any) -> Optional[int]:
+    """คืน PID ของ Excel instance ที่บอทสร้างเอง (ผ่าน Hwnd)
+    ไว้ใช้ปิดแบบเจาะจงตัวเดียว ไม่แตะ Excel ที่ผู้ใช้เปิดอยู่"""
+    try:
+        hwnd = excel.Hwnd
+        _tid, pid = win32process.GetWindowThreadProcessId(hwnd)
+        return int(pid) or None
+    except Exception:
+        return None
+
+
+def kill_excel_pid_if_alive(pid: Optional[int], log: Optional[LogFunc] = None) -> None:
+    """Force-close เฉพาะ Excel PID ของบอทเอง ถ้ายังค้างอยู่หลัง Quit()
+    (ปลอดภัย — ไม่ปิด Excel ตัวอื่นของผู้ใช้). ถ้า process ปิดไปแล้ว taskkill
+    จะคืน non-zero เฉยๆ ไม่ทำอะไร"""
+    if not pid:
+        return
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+            text=True,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
+        )
+        if result.returncode == 0 and log:
+            log(f"[CLEANUP] Force-closed leftover Excel PID {pid}")
+    except Exception as e:
+        if log:
+            log(f"[CLEANUP] taskkill Excel PID {pid} failed: {e}")
+
 
 def hide_excel_from_taskbar():
     def callback(hwnd, _):
@@ -54,8 +87,11 @@ def load_config() -> configparser.ConfigParser:
 
 
 def save_config(config: configparser.ConfigParser) -> None:
-    with open(resource_path("config.ini"), "w", encoding="utf-8") as f:
+    config_path = resource_path("config.ini")
+    tmp_path = f"{config_path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         config.write(f)
+    os.replace(tmp_path, config_path)
 
 
 @dataclass
@@ -117,11 +153,11 @@ def get_business_date(start_hour: int) -> str:
     return target_date.strftime("%Y-%m-%d")
 
 
-def update_excel_date(wb, start_hour: int, log: LogFunc = None) -> None:
+def update_excel_date(wb, start_hour: int, log: Optional[LogFunc] = None) -> None:
     try:
-        ws = wb.Worksheets(1)
+        ws = excel_call(lambda: wb.Worksheets(1), log, "open first worksheet", timeout=120)
         date_str = get_business_date(start_hour)
-        ws.Range("A2").Value = date_str
+        excel_call(lambda: setattr(ws.Range("A2"), "Value", date_str), log, "set A2 date", timeout=120)
         if log:
             log(f"[DATE SET] A2 = {date_str}")
     except Exception as e:
@@ -131,7 +167,7 @@ def update_excel_date(wb, start_hour: int, log: LogFunc = None) -> None:
             print(e)
 
 
-def delete_columns_by_start(wb, start_hour: int, target_sheets: List[str], log: LogFunc = None) -> int:
+def delete_columns_by_start(wb, start_hour: int, target_sheets: List[str], log: Optional[LogFunc] = None) -> int:
     """Original delete logic preserved: delete C until mapped column, backward."""
     try:
         hour_to_col = {
@@ -146,9 +182,9 @@ def delete_columns_by_start(wb, start_hour: int, target_sheets: List[str], log: 
 
         deleted_count = delete_until - 3
         for sheet in target_sheets:
-            ws = wb.Worksheets(sheet)
+            ws = excel_call(lambda s=sheet: wb.Worksheets(s), log, f"open worksheet {sheet}", timeout=120)
             for col in range(delete_until - 1, 2, -1):
-                ws.Columns(col).Delete(Shift=-4159)
+                excel_call(lambda c=col: ws.Columns(c).Delete(Shift=-4159), log, f"delete column {sheet}:{col}", timeout=180)
             if log:
                 log(f"[DELETE] {sheet} {deleted_count} cols")
         return deleted_count
@@ -228,7 +264,7 @@ def migrate_old_export_config(config: configparser.ConfigParser) -> None:
         ("DWS_PDA", "DWS", "DWS_PDA_SHEET", "DWS_PDA_RANGE", "DWS_PDA_FILE", True),
         ("REALTIME_DB", "DWS", "REALTIME_DB_SHEET", "REALTIME_DB_RANGE", "REALTIME_DB_FILE", False),
     ]
-    old = config["EXPORT"] if "EXPORT" in config else {}
+    old = config["EXPORT"] if "EXPORT" in config else None
     fallback = {
         "AUTO_SHEET": "Autoformat", "AUTO_RANGE": "A1:AK39", "AUTO_FILE": "AUTOREALTIME.png",
         "DWSREALTIME_SHEET": "DWSREALTIME", "DWSREALTIME_RANGE": "A1:AE16", "DWSREALTIME_FILE": "DWSREALTIME.png",
@@ -236,6 +272,11 @@ def migrate_old_export_config(config: configparser.ConfigParser) -> None:
         "DWS_PDA_SHEET": "DWS PDA", "DWS_PDA_RANGE": "A1:AC15", "DWS_PDA_FILE": "DWS_PDA.png",
         "REALTIME_DB_SHEET": "Sheet1", "REALTIME_DB_RANGE": "A1:Z50", "REALTIME_DB_FILE": "REALTIME_DB.png",
     }
+
+    def old_value(key: str) -> str:
+        if old is None:
+            return fallback[key]
+        return old[key] if key in old else fallback[key]
 
     export_names = []
     for name, workbook_key, sheet_key, range_key, file_key, delete_flag in defaults:
@@ -247,9 +288,9 @@ def migrate_old_export_config(config: configparser.ConfigParser) -> None:
             "enabled": "true",
             "send_enabled": "true",
             "workbook": workbook_key,
-            "sheet": old.get(sheet_key, fallback[sheet_key]) if hasattr(old, "get") else fallback[sheet_key],
-            "range": old.get(range_key, fallback[range_key]) if hasattr(old, "get") else fallback[range_key],
-            "file": old.get(file_key, fallback[file_key]) if hasattr(old, "get") else fallback[file_key],
+            "sheet": old_value(sheet_key),
+            "range": old_value(range_key),
+            "file": old_value(file_key),
             "delete_by_start": "true" if delete_flag else "false",
         }
     config["EXPORTS"] = {"items": ",".join(export_names)}
@@ -305,7 +346,7 @@ def get_export_items(config: Optional[configparser.ConfigParser] = None, only_en
     return items
 
 
-def wait_excel(excel, is_running: RunFunc, write: Callable[[str], None], timeout: int = 120) -> None:
+def wait_excel(excel, is_running: Optional[RunFunc], write: LogFunc, timeout: int = 120) -> None:
     start = time.time()
     last_log = time.time()
     while True:
@@ -317,10 +358,13 @@ def wait_excel(excel, is_running: RunFunc, write: Callable[[str], None], timeout
             write("Waiting Excel...")
             last_log = time.time()
         try:
-            if excel.CalculateState == 0:
+            if excel_call(lambda: excel.CalculateState, write, "check calculation state", timeout=30, delay=0.5) == 0:
                 break
-        except Exception:
-            break
+        except Exception as error:
+            if _is_excel_busy_error(error) or "Excel busy timeout during check calculation state" in str(error):
+                continue
+            else:
+                break
         time.sleep(0.5)
 
 
@@ -344,6 +388,37 @@ def _pump_excel_messages(seconds: float = 0.5) -> None:
         except Exception:
             pass
         time.sleep(0.05)
+
+
+def _is_excel_busy_error(error: Exception) -> bool:
+    text = str(error).lower()
+    if "call was rejected by callee" in text:
+        return True
+    if "rejected by callee" in text:
+        return True
+    if "-2147418111" in text or "-2147417846" in text:
+        return True
+    return False
+
+
+def excel_call(action: Callable[[], Any], write: Optional[LogFunc], label: str, timeout: int = 180, delay: float = 0.7) -> Any:
+    start = time.time()
+    last_log = 0.0
+    attempt = 0
+    while True:
+        if time.time() - start > timeout:
+            raise Exception(f"Excel busy timeout during {label}")
+        attempt += 1
+        try:
+            return action()
+        except Exception as error:
+            if not _is_excel_busy_error(error):
+                raise
+            now = time.time()
+            if write and now - last_log >= 5:
+                write(f"[WAIT EXCEL] {label} busy retry {attempt}")
+                last_log = now
+            _pump_excel_messages(delay)
 
 
 
@@ -416,7 +491,7 @@ def _safe_delete(path: str) -> None:
         pass
 
 
-def run_create(*args, save_dir: Optional[str] = None, log: LogFunc = None, is_running: RunFunc = None) -> None:
+def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = None, is_running: Optional[RunFunc] = None) -> None:
     """Workbook Manager version compatible with bot_main_war_room_v7.
 
     Important fix:
@@ -449,14 +524,16 @@ def run_create(*args, save_dir: Optional[str] = None, log: LogFunc = None, is_ru
     start_hour = int(get_time_config().get("start_hour", 15))
     pythoncom.CoInitialize()
 
-    excel = None
-    opened: Dict[str, object] = {}
+    excel: Any = None
+    excel_pid: Optional[int] = None
+    opened: Dict[str, Optional[Any]] = {}
 
     try:
         for i in range(3):
             try:
                 excel = win32.DispatchEx("Excel.Application")
                 excel.DisplayAlerts = False
+                excel_pid = get_excel_pid(excel)
 
                 # Do not use excel.Visible=False or minimized mode here.
                 # CopyPicture can export a fully white image without a real
@@ -474,31 +551,36 @@ def run_create(*args, save_dir: Optional[str] = None, log: LogFunc = None, is_ru
         if not excel:
             raise Exception("Excel failed to start")
 
+        excel_app = cast(Any, excel)
+
         def export_range_as_image(wb, item: ExportItem, rng: str) -> None:
-            ws = wb.Worksheets(item.sheet)
-            target = ws.Range(rng)
+            workbook = cast(Any, wb)
+            ws = cast(Any, excel_call(lambda: workbook.Worksheets(item.sheet), write, f"open export sheet {item.sheet}", timeout=180))
+            target = cast(Any, excel_call(lambda: ws.Range(rng), write, f"select export range {item.sheet}!{rng}", timeout=180))
 
-            _move_excel_offscreen(excel)
-            ws.Activate()
-            target.Select()
-            excel.ScreenUpdating = True
+            _move_excel_offscreen(excel_app)
+            excel_call(lambda: ws.Activate(), write, f"activate sheet {item.sheet}", timeout=120)
+            excel_call(lambda: target.Select(), write, f"select range {item.sheet}!{rng}", timeout=120)
+            excel_app.ScreenUpdating = True
 
             try:
-                excel.ActiveWindow.Zoom = 100
-                excel.ActiveWindow.ScrollRow = max(1, target.Row)
-                excel.ActiveWindow.ScrollColumn = max(1, target.Column)
+                active_window = cast(Any, excel_call(lambda: excel_app.ActiveWindow, write, "get active window", timeout=60))
+                excel_call(lambda: setattr(active_window, "Zoom", 100), write, "set zoom", timeout=60)
+                target_row = excel_call(lambda: target.Row, write, "get range row", timeout=60)
+                target_col = excel_call(lambda: target.Column, write, "get range column", timeout=60)
+                excel_call(lambda: setattr(active_window, "ScrollRow", max(1, target_row)), write, "set scroll row", timeout=60)
+                excel_call(lambda: setattr(active_window, "ScrollColumn", max(1, target_col)), write, "set scroll column", timeout=60)
             except Exception:
                 pass
 
             try:
-                ws.Cells.Font.Name = "Microsoft YaHei"
+                excel_call(lambda: setattr(ws.Cells.Font, "Name", "Microsoft YaHei"), write, f"set font {item.sheet}", timeout=60)
             except Exception:
                 pass
 
-            # Make sure formulas and UI drawing have settled.
             try:
-                excel.CalculateFull()
-                ws.Calculate()
+                excel_call(lambda: excel_app.CalculateFull(), write, "calculate full", timeout=240)
+                excel_call(lambda: ws.Calculate(), write, f"calculate sheet {item.sheet}", timeout=180)
             except Exception:
                 pass
 
@@ -514,8 +596,6 @@ def run_create(*args, save_dir: Optional[str] = None, log: LogFunc = None, is_ru
             _safe_delete(path)
             _safe_delete(tmp_path)
 
-            # Try multiple CopyPicture modes. Some sheets/ranges work better
-            # with screen appearance, some with printer appearance.
             copy_modes = [
                 (1, 2, "screen-picture"),
                 (2, 2, "printer-picture"),
@@ -530,49 +610,55 @@ def run_create(*args, save_dir: Optional[str] = None, log: LogFunc = None, is_ru
                     return
 
                 appearance, fmt, mode_name = copy_modes[(attempt - 1) % len(copy_modes)]
-                chart = None
+                chart: Any = None
 
                 try:
                     write(f"[EXPORT] {item.name}: {item.sheet}!{rng} attempt {attempt} ({mode_name})")
 
-                    _move_excel_offscreen(excel)
-                    ws.Activate()
-                    target.Select()
+                    _move_excel_offscreen(excel_app)
+                    excel_call(lambda: ws.Activate(), write, f"activate sheet {item.sheet}", timeout=120)
+                    excel_call(lambda: target.Select(), write, f"select range {item.sheet}!{rng}", timeout=120)
                     _pump_excel_messages(0.4)
 
-                    target.CopyPicture(Appearance=appearance, Format=fmt)
+                    excel_call(lambda a=appearance, f=fmt: target.CopyPicture(Appearance=a, Format=f), write, f"copy picture {item.name}", timeout=180)
                     _pump_excel_messages(0.8)
 
-                    # Put the chart near the selected range, not at 0,0.
-                    # Some Excel builds export blank charts when the temporary
-                    # chart is off-screen or created before clipboard render.
-                    chart = ws.ChartObjects().Add(
-                        target.Left,
-                        target.Top,
-                        max(float(target.Width) + 8, 120),
-                        max(float(target.Height) + 8, 80),
-                    )
-                    chart.Activate()
+                    target_left = excel_call(lambda: target.Left, write, "get target left", timeout=60)
+                    target_top = excel_call(lambda: target.Top, write, "get target top", timeout=60)
+                    target_width = excel_call(lambda: target.Width, write, "get target width", timeout=60)
+                    target_height = excel_call(lambda: target.Height, write, "get target height", timeout=60)
+                    chart_objects = cast(Any, excel_call(lambda: ws.ChartObjects(), write, f"get chart objects {item.sheet}", timeout=120))
+                    chart = cast(Any, excel_call(
+                        lambda: chart_objects.Add(
+                            target_left,
+                            target_top,
+                            max(float(target_width) + 8, 120),
+                            max(float(target_height) + 8, 80),
+                        ),
+                        write,
+                        f"create chart {item.name}",
+                        timeout=180,
+                    ))
+                    excel_call(lambda: chart.Activate(), write, f"activate chart {item.name}", timeout=120)
                     _pump_excel_messages(0.3)
 
-                    chart.Chart.Paste()
+                    excel_call(lambda: chart.Chart.Paste(), write, f"paste chart {item.name}", timeout=180)
                     _pump_excel_messages(0.8)
 
                     try:
-                        shape_count = chart.Chart.Shapes.Count
+                        shape_count = excel_call(lambda: chart.Chart.Shapes.Count, write, f"count chart shapes {item.name}", timeout=60)
                     except Exception:
                         shape_count = 1
 
                     if shape_count < 1:
                         raise Exception("Paste produced 0 chart shapes")
 
-                    # Keep chart border/background from affecting the exported range.
                     try:
-                        chart.Chart.ChartArea.Border.LineStyle = 0
+                        excel_call(lambda: setattr(chart.Chart.ChartArea.Border, "LineStyle", 0), write, f"clear chart border {item.name}", timeout=60)
                     except Exception:
                         pass
 
-                    ok = chart.Chart.Export(tmp_path, "PNG")
+                    ok = excel_call(lambda: chart.Chart.Export(tmp_path, "PNG"), write, f"export chart {item.name}", timeout=180)
                     _pump_excel_messages(0.4)
 
                     if ok is False or not os.path.exists(tmp_path):
@@ -594,7 +680,8 @@ def run_create(*args, save_dir: Optional[str] = None, log: LogFunc = None, is_ru
                 finally:
                     try:
                         if chart is not None:
-                            chart.Delete()
+                            target_chart = chart
+                            excel_call(lambda: target_chart.Delete(), write, f"delete temp chart {item.name}", timeout=60)
                     except Exception:
                         pass
 
@@ -611,29 +698,36 @@ def run_create(*args, save_dir: Optional[str] = None, log: LogFunc = None, is_ru
 
             write(f"[OPEN] {wb_item.display_name}")
 
-            wb = excel.Workbooks.Open(
-                wb_item.path,
-                UpdateLinks=0,
-                ReadOnly=False,
-                IgnoreReadOnlyRecommended=True,
-            )
-            _move_excel_offscreen(excel)
+            wb = cast(Any, excel_call(
+                lambda: excel_app.Workbooks.Open(
+                    wb_item.path,
+                    UpdateLinks=0,
+                    ReadOnly=False,
+                    IgnoreReadOnlyRecommended=True,
+                ),
+                write,
+                f"open workbook {wb_item.display_name}",
+                timeout=240,
+            ))
+            _move_excel_offscreen(excel_app)
             opened[wb_item.key] = wb
             hide_excel_from_taskbar()
             update_excel_date(wb, start_hour, log=write)
 
-            delete_sheets = [x.sheet for x in group if x.delete_by_start]
-            deleted_cols = delete_columns_by_start(wb, start_hour, delete_sheets, log=write) if delete_sheets else 0
-
-            wb.Saved = True
-            wb.RefreshAll()
+            excel_call(lambda: setattr(wb, "Saved", True), write, f"mark workbook saved {wb_item.display_name}", timeout=60)
+            excel_call(lambda target=wb: getattr(target, "RefreshAll")(), write, f"refresh query {wb_item.display_name}", timeout=240)
 
             try:
-                excel.CalculateUntilAsyncQueriesDone()
+                excel_call(lambda: excel_app.CalculateUntilAsyncQueriesDone(), write, f"wait async query {wb_item.display_name}", timeout=900)
             except Exception:
                 pass
 
-            wait_excel(excel, keep_running, write, timeout=180)
+            wait_excel(excel_app, keep_running, write, timeout=900)
+            _pump_excel_messages(1.0)
+
+            delete_sheets = [x.sheet for x in group if x.delete_by_start]
+            deleted_cols = delete_columns_by_start(wb, start_hour, delete_sheets, log=write) if delete_sheets else 0
+            wait_excel(excel_app, keep_running, write, timeout=300)
             _pump_excel_messages(1.0)
 
             for item in group:
@@ -647,26 +741,33 @@ def run_create(*args, save_dir: Optional[str] = None, log: LogFunc = None, is_ru
                 export_range_as_image(wb, item, rng)
 
             time.sleep(0.5)
-            wb.Close(False)
+            excel_call(lambda target=wb: getattr(target, "Close")(False), write, f"close workbook {wb_item.display_name}", timeout=180)
             opened[wb_item.key] = None
 
     finally:
         for wb in list(opened.values()):
             try:
                 if wb:
-                    wb.Close(False)
+                    excel_call(lambda target=wb: getattr(target, "Close")(False), write, "close workbook cleanup", timeout=120)
             except Exception:
                 pass
 
         try:
             if excel:
                 time.sleep(0.5)
-                excel.Quit()
+                excel_call(lambda: excel.Quit(), write, "quit excel", timeout=120)
         except Exception:
             pass
 
+        # ปล่อย COM reference ก่อน เพื่อให้ Quit() ปิดได้สมบูรณ์
+        excel = None
         gc.collect()
         pythoncom.CoUninitialize()
+
+        # Safety net: ถ้า Excel instance ของบอทยังค้าง (Quit ไม่หมด/hang)
+        # ค่อย force-close เฉพาะ PID นั้น — ไม่แตะ Excel ตัวอื่นของผู้ใช้
+        time.sleep(0.5)
+        kill_excel_pid_if_alive(excel_pid, write)
 
 
 if __name__ == "__main__":
