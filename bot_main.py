@@ -22,7 +22,7 @@ import requests
 import pymysql
 import openpyxl
 from flask import Flask, request, jsonify
-from waitress import serve
+from waitress import create_server
 
 from controller.controller_api import register_controller, start_api
 from core.jms_api import search_user, reset_app_password, reset_jms_password, enable_user
@@ -1143,6 +1143,7 @@ class App(ctk.CTk):
         self.system_alert_last_sent = {}
         self.log_flush_batch_size = 200
         self.bot_thread = None
+        self.bot_server = None
         self.load_controller_clients()
         self.load_dynamic_plans()
 
@@ -4519,24 +4520,35 @@ class App(ctk.CTk):
             port = int(self.get_feishu_config_value("BOT_PORT", "7000"))
         except Exception:
             port = 7000
-        self.add_log(f"[SYSTEM] Feishu Server Running : {port}")
         try:
-            serve(bot_app, host="0.0.0.0", port=port, threads=20)
+            self.bot_server = create_server(bot_app, host="0.0.0.0", port=port, threads=20)
         except Exception as e:
             self.bot_running = False
             self.bot_thread = None
-            self.add_log(f"[ERROR] Feishu Server stopped -> {e}")
+            self.bot_server = None
+            self.add_log(f"[ERROR] Feishu Server failed to start -> {e}")
+            self.run_on_ui_thread(self.update_bot_ui)
+            return
+        self.add_log(f"[SYSTEM] Feishu Server Running : {port}")
+        try:
+            self.bot_server.run()
+        except Exception as e:
+            if self.bot_running:
+                self.add_log(f"[ERROR] Feishu Server stopped -> {e}")
+        finally:
+            self.bot_server = None
+            self.bot_thread = None
             self.run_on_ui_thread(self.update_bot_ui)
 
     def start_feishu_bot(self):
         if self.bot_running:
             return
+        # Wait for a previous server thread to fully release the port before rebinding.
+        old_thread = self.bot_thread
+        if old_thread is not None and old_thread.is_alive():
+            old_thread.join(timeout=2)
         self.save_config()
         self.bot_running = True
-        if self.bot_thread is not None and self.bot_thread.is_alive():
-            self.update_bot_ui()
-            self.add_log("[SYSTEM] Feishu Bot Re-enabled")
-            return
         self.bot_thread = threading.Thread(target=self.run_feishu_server, daemon=True)
         self.bot_thread.start()
         self.update_bot_ui()
@@ -4544,9 +4556,15 @@ class App(ctk.CTk):
 
     def stop_feishu_bot(self):
         self.bot_running = False
+        server = self.bot_server
+        if server is not None:
+            try:
+                server.close()
+            except Exception as e:
+                self.add_log(f"[WARN] Error closing Feishu Server -> {e}")
+        self.bot_server = None
         self.update_bot_ui()
-        self.add_log("[SYSTEM] Bot Marked As Offline")
-        self.add_log("[INFO] Restart program to fully stop server")
+        self.add_log("[SYSTEM] Feishu Bot Stopped")
 
     def handle_jms_command(self, text, chat_id, message_id, parent_id=None, root_id=None):
         lower_text = text.lower()

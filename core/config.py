@@ -61,6 +61,10 @@ config.read(CONFIG_FILE, encoding="utf-8")
 
 def get_config():
 
+    # Re-read from disk on every call so edits made while the app is running
+    # are picked up immediately instead of staying frozen at import time.
+    config.read(CONFIG_FILE, encoding="utf-8")
+
     return {
         "APP_ID": config["FEISHU"].get(
             "APP_ID",
