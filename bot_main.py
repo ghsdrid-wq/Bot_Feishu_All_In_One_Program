@@ -151,6 +151,10 @@ SYSTEM_ALERT_CHAT_ID = "oc_3b94544c4b8d3fa5d9dc98bd500830aa"
 # นาทีที่ตรวจ token เชิงรุกในแต่ละชั่วโมง (แก้ได้ที่นี่)
 TOKEN_HEALTHCHECK_MINUTES = (20, 40)
 
+# ข้อความเก่าเกินกว่านี้ (วินาที) จะถูกข้าม — ป้องกันบอทตอบย้อนหลังตอน app เพิ่งกลับมา
+# online แล้ว Feishu redeliver event ที่ค้างไว้ทั้งกอง (0 = ปิดการเช็ก)
+MESSAGE_MAX_AGE_SECONDS = 300  # 5 นาที
+
 DEFAULT_FEISHU = {
     "APP_ID": "",
     "APP_SECRET": "",
@@ -535,6 +539,20 @@ def feishu_event():
     parent_id = message.get("parent_id")
     root_id = message.get("root_id")
     content_raw = message.get("content", "{}")
+
+    # ข้ามข้อความที่เก่าเกิน MESSAGE_MAX_AGE_SECONDS — กันบอทตอบ backlog ย้อนหลัง
+    # ตอน app เพิ่งกลับมา online (processed_events เป็น in-memory จึงลืม event เก่า
+    # หลังรีสตาร์ต แล้ว Feishu redeliver ที่ค้างมาทั้งกอง). create_time = epoch ms (string).
+    if MESSAGE_MAX_AGE_SECONDS:
+        create_time_ms = message.get("create_time")
+        if create_time_ms:
+            try:
+                age = time.time() - int(create_time_ms) / 1000
+                if age > MESSAGE_MAX_AGE_SECONDS:
+                    app.jms_log(f"[SKIP OLD] age={int(age)}s message_id={message_id}")
+                    return jsonify({"success": True, "message": "too_old"})
+            except (TypeError, ValueError):
+                pass  # อ่าน create_time ไม่ได้ → ปล่อยผ่านตามปกติ (ไม่ทิ้งข้อความ)
 
     try:
         content_json = json.loads(content_raw)
