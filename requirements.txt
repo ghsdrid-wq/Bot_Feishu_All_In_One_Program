@@ -1,0 +1,10 @@
+customtkinter
+tkcalendar
+requests
+flask
+waitress
+pywin32
+Pillow
+pymysql
+openpyxl
+pyinstaller

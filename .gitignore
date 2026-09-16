@@ -1,0 +1,19 @@
+# Local configuration and runtime output
+config.ini
+*.log
+build_log.txt
+__pycache__/
+
+# Generated packages and build intermediates
+build/
+dist/
+*.spec
+*.rar
+*.zip
+*.bin
+
+# Historical backups, reports, and investigation artifacts
+Backup/
+Handoff/
+0Excel-Report/
+_analysis_v7_extract/
