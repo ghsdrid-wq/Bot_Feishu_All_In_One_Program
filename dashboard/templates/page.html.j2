@@ -1,0 +1,491 @@
+{% import "_macros.html.j2" as m with context %}<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>สรุปยอด KKN — {{ title_date }}</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink-2:#52514e;
+    --muted:#898781; --grid:#e1e0d9; --rule:#c3c2b7; --border:rgba(11,11,11,0.10);
+    --series-1:#2a78d6; --series-2:#eb6834;
+    --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;
+    --q1:#cde2fb; --q2:#9ec5f4; --q3:#6da7ec; --q4:#3987e5; --q5:#256abf;
+    --q1-ink:#0b0b0b; --q2-ink:#0b0b0b; --q3-ink:#0b0b0b; --q4-ink:#fff; --q5-ink:#fff;
+    --down-bg:#fbe3e3; --accent:#2a78d6;
+    --ok-bg:#d8f0d8;    --ok-ink:#14530f;
+    --near-bg:#fdefcd;  --near-ink:#6b4a00;
+    --under-bg:#fbdede; --under-ink:#8f1f1f;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink-2:#c3c2b7;
+    --muted:#898781; --grid:#2c2c2a; --rule:#383835; --border:rgba(255,255,255,0.10);
+    --series-1:#3987e5; --series-2:#d95926;
+    --q1:#104281; --q2:#184f95; --q3:#1c5cab; --q4:#256abf; --q5:#3987e5;
+    --q1-ink:#fff; --q2-ink:#fff; --q3-ink:#fff; --down-bg:#4a1f1f; --accent:#3987e5;
+    --ok-bg:#12340f;    --ok-ink:#7fdc7f;
+    --near-bg:#3d2f06;  --near-ink:#f5cd6a;
+    --under-bg:#451717; --under-ink:#f19a9a;
+  } }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink-2:#c3c2b7;
+    --muted:#898781; --grid:#2c2c2a; --rule:#383835; --border:rgba(255,255,255,0.10);
+    --series-1:#3987e5; --series-2:#d95926;
+    --q1:#104281; --q2:#184f95; --q3:#1c5cab; --q4:#256abf; --q5:#3987e5;
+    --q1-ink:#fff; --q2-ink:#fff; --q3-ink:#fff; --down-bg:#4a1f1f; --accent:#3987e5;
+    --ok-bg:#12340f;    --ok-ink:#7fdc7f;
+    --near-bg:#3d2f06;  --near-ink:#f5cd6a;
+    --under-bg:#451717; --under-ink:#f19a9a;
+  }
+
+  * { box-sizing:border-box; }
+  body {
+    margin:0; padding:18px 16px 26px; background:var(--page); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI","Noto Sans Thai",sans-serif;
+    font-size:13px; line-height:1.45;
+  }
+  .wrap { max-width:1400px; margin:0 auto; }
+  header { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
+  h1 { font-size:19px; font-weight:650; margin:0; letter-spacing:-0.01em; }
+  .sub { color:var(--ink-2); }
+  .stamp { margin-left:auto; color:var(--muted); font-size:12px; }
+
+  /* ---------- tabs ---------- */
+  .tabs { display:flex; gap:2px; border-bottom:1px solid var(--border); margin-bottom:14px; flex-wrap:wrap; }
+  .tabs a {
+    padding:7px 14px; font-size:13px; font-weight:550; color:var(--ink-2);
+    text-decoration:none; border-bottom:2px solid transparent; margin-bottom:-1px;
+  }
+  .tabs a:hover { color:var(--ink); }
+  .tabs a.on { color:var(--accent); border-bottom-color:var(--accent); }
+  .panel { display:none; }
+  .panel.on { display:block; }
+
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+  .card h2 { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 10px; }
+  .h2-sub { text-transform:none; letter-spacing:0; color:var(--ink-2); font-weight:500; margin-left:9px; }
+
+  /* ---------- แถบสถานะ ---------- */
+  .alerts { margin-bottom:12px; display:flex; flex-direction:column; gap:6px; }
+  .alert {
+    display:flex; align-items:baseline; gap:10px; padding:9px 13px;
+    border-radius:8px; border:1px solid var(--border); font-size:13.5px;
+    background:var(--surface);
+  }
+  .alert .ico {
+    flex:none; width:19px; height:19px; border-radius:99px; color:#fff;
+    font-size:12px; line-height:19px; text-align:center; font-weight:700;
+    align-self:center;
+  }
+  .alert .msg { font-weight:550; }
+  .alert .act { margin-left:auto; color:var(--muted); font-size:12px; text-align:right; }
+  .alert.critical { border-left:4px solid var(--critical); }
+  .alert.critical .ico { background:var(--critical); }
+  .alert.critical .msg { color:var(--critical); }
+  .alert.warning  { border-left:4px solid var(--warning); }
+  .alert.warning .ico { background:var(--warning); color:#3a2a00; }
+  .alert.good     { border-left:4px solid var(--good); }
+  .alert.good .ico { background:var(--good); }
+  .alert.good .msg { color:var(--good); }
+
+  /* ---------- KPI แถวใหม่: ตัวเลขหลักตัวเดียวเด่น + 4 ตัวรอง ---------- */
+  .kpi-row { display:grid; grid-template-columns:minmax(300px,1.15fr) 2.6fr; gap:10px; margin-bottom:12px; }
+  .kpi-side { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .kpi-hero {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:10px; padding:14px 16px; border-top:4px solid var(--muted);
+  }
+  .kpi-hero.ok    { border-top-color:var(--good); }
+  .kpi-hero.near  { border-top-color:var(--warning); }
+  .kpi-hero.under { border-top-color:var(--critical); }
+  .kpi-hero .label { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .kpi-hero .value { font-size:44px; font-weight:680; letter-spacing:-.03em; line-height:1.05; margin-top:2px; }
+  .kpi-hero .value .unit { font-size:15px; font-weight:500; color:var(--muted); margin-left:7px; letter-spacing:0; }
+  .kpi-hero .meter { height:7px; border-radius:99px; background:var(--grid); margin:9px 0 5px; overflow:hidden; }
+  .kpi-hero .meter span { display:block; height:100%; border-radius:99px; background:var(--muted); }
+  .kpi-hero.ok    .meter span { background:var(--good); }
+  .kpi-hero.near  .meter span { background:var(--warning); }
+  .kpi-hero.under .meter span { background:var(--critical); }
+  .kpi-hero .note { font-size:12px; color:var(--ink-2); }
+  .kpi-hero .note b { font-size:14px; }
+  .dim { color:var(--muted); font-weight:400; }
+  .good { color:#006300; } .bad { color:var(--critical); }
+
+  /* ---------- KPI ---------- */
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin-bottom:12px; }
+  .kpi { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+  .kpi .label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .kpi .value { font-size:26px; font-weight:640; letter-spacing:-.02em; margin-top:3px; }
+  .kpi .value.small { font-size:17px; }
+  .kpi .value .of { font-size:17px; color:var(--muted); }
+  .kpi .note { font-size:11.5px; color:var(--ink-2); margin-top:2px; }
+  .kpi.hero .value { font-size:34px; }
+  .pill { display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600;
+          padding:1px 7px; border-radius:99px; border:1px solid var(--border); }
+  .pill.good { color:#006300; background:rgba(12,163,12,.12); }
+  .pill.warning { color:#7a5200; background:rgba(250,178,25,.18); }
+  .pill.critical { color:#8f1f1f; background:rgba(208,59,59,.14); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    .pill.good{color:#0ca30c} .pill.warning{color:#fab219} .pill.critical{color:#e66767}
+  } }
+  :root[data-theme="dark"] .pill.good{color:#0ca30c}
+  :root[data-theme="dark"] .pill.warning{color:#fab219}
+  :root[data-theme="dark"] .pill.critical{color:#e66767}
+
+  /* ---------- overview cards ---------- */
+  .ov-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(255px,1fr)); gap:12px; margin-bottom:12px; }
+  .ov { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; }
+  .ov .head { display:flex; justify-content:space-between; align-items:baseline; }
+  .ov .name { font-size:13px; font-weight:600; }
+  .ov .unit { font-size:11px; color:var(--muted); }
+  .ov .big { font-size:31px; font-weight:640; letter-spacing:-.02em; margin:4px 0 1px; }
+  .ov .shifts { font-size:11.5px; color:var(--ink-2); }
+  .ov .shifts b { font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .ov .spark { margin:9px 0 7px; }
+  .ov-meter { height:6px; border-radius:99px; background:var(--grid); margin:7px 0 4px; overflow:hidden; }
+  .ov-meter span { display:block; height:100%; border-radius:99px; background:var(--muted); }
+  .ov-meter.ok span { background:var(--good); }
+  .ov-meter.near span { background:var(--warning); }
+  .ov-meter.under span { background:var(--critical); }
+  .ov .foot { margin-top:auto; padding-top:8px; border-top:1px solid var(--grid); font-size:11.5px; color:var(--ink-2); }
+  .ov .foot .row { display:flex; justify-content:space-between; gap:8px; padding:1.5px 0; }
+  .ov .foot .row span:last-child { font-variant-numeric:tabular-nums; color:var(--ink); }
+  .ov.empty-src { opacity:.55; }
+  .ov a.more { font-size:11.5px; color:var(--accent); text-decoration:none; margin-top:7px; display:inline-block; }
+
+  /* ---------- chart ---------- */
+  .legend { display:flex; gap:14px; align-items:center; font-size:12px; color:var(--ink-2); }
+  .swatch { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:5px; vertical-align:-1px; }
+  .chart-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px; }
+  .chart-head h2 { margin:0; }
+
+  /* ---------- table ---------- */
+  .tscroll {
+    overflow-x:auto;
+    overscroll-behavior-x:contain;      /* ปัดสุดขอบแล้วไม่ไปดึงหน้าเว็บทั้งหน้าต่อ */
+    -webkit-overflow-scrolling:touch;   /* ปัดนิ้วบนมือถือให้มี momentum */
+    cursor:grab;
+    scrollbar-width:thin;
+  }
+  .tscroll.dragging { cursor:grabbing; user-select:none; }
+  .tscroll::-webkit-scrollbar { height:9px; }
+  .tscroll::-webkit-scrollbar-thumb { background:var(--rule); border-radius:99px; }
+  .tscroll::-webkit-scrollbar-track { background:transparent; }
+
+  table { border-collapse:separate; border-spacing:2px; width:100%; }
+  th, td { font-variant-numeric:tabular-nums; }
+  thead th { font-size:10.5px; font-weight:500; color:var(--muted); padding:2px 0; text-align:center; }
+  thead th.name-col, tbody th { text-align:left; }
+  tbody th { font-size:12px; font-weight:550; color:var(--ink-2); padding-right:8px; white-space:nowrap; }
+
+  /* ตรึงคอลัมน์ชื่อจุดไว้ — เลื่อนไปขวาสุดแล้วยังรู้ว่าแถวไหนเป็นของเครื่องอะไร
+     box-shadow ปิดช่องว่าง 2px ของ border-spacing ไม่ให้เห็นตัวเลขลอดออกมา */
+  thead th.name-col, tbody th {
+    position:sticky; left:0; z-index:2;
+    background:var(--surface);
+    box-shadow:5px 0 0 var(--surface), 6px 0 0 var(--border);
+    min-width:94px; padding-right:12px;
+  }
+  thead th.name-col { z-index:3; }
+  td.cell { text-align:center; font-size:11px; padding:3px 2px; border-radius:3px; min-width:40px; color:var(--ink); }
+  /* สีช่อง = เทียบเป้า ไม่ใช่ขนาดยอด — ตัวเลขยังอยู่ครบ สีจึงไม่ใช่ช่องทางเดียว */
+  .cell-nodata  { background:transparent; color:var(--muted); }
+  .cell-zero    { background:var(--grid); color:var(--muted); }
+  .cell-partial { background:var(--grid); color:var(--ink-2); }
+  .cell-ok      { background:var(--ok-bg);    color:var(--ok-ink);    font-weight:600; }
+  .cell-near    { background:var(--near-bg);  color:var(--near-ink);  font-weight:600; }
+  .cell-under   { background:var(--under-bg); color:var(--under-ink); font-weight:600; }
+  .cell-down    { background:var(--under-bg); color:var(--critical); font-weight:700; box-shadow:inset 0 0 0 1.5px var(--critical); }
+  /* คอลัมน์ชั่วโมงล่าสุด — บอกว่า "ตอนนี้อยู่ตรงไหน" ไม่ต้องไล่นับเอง */
+  td.cell.latest { box-shadow:inset 0 0 0 2px var(--accent); }
+  /* หัวคอลัมน์ชั่วโมงเป็นช่วงเต็ม วางสองบรรทัดเพื่อไม่ให้ตารางกว้างขึ้นเท่าตัว */
+  thead th.hr { line-height:1.15; padding-top:4px; padding-bottom:4px; white-space:nowrap; }
+  thead th.hr span { display:block; }
+  thead th.hr span:last-child { font-size:0.82em; color:var(--muted); font-weight:500; }
+  thead th.hr.latest-col span:last-child { color:var(--accent); }
+  thead th.latest-col { color:var(--accent); font-weight:700; }
+  thead th.latest-col::after { content:" ▾"; }
+  td.num { text-align:right; font-size:11.5px; padding:3px 6px; color:var(--ink-2); white-space:nowrap; }
+  td.num.strong { color:var(--ink); font-weight:600; }
+  .shift-edge { border-left:2px solid var(--rule); }
+  thead th.sub-col { color:var(--ink-2); font-weight:650; }
+  td.num.sub { background:var(--grid); color:var(--ink); font-weight:600; border-radius:3px; }
+  tbody tr.sum th, tbody tr.sum td { border-top:1px solid var(--rule); font-weight:600; color:var(--ink); padding-top:5px; }
+  tbody tr.sum.rate th, tbody tr.sum.rate td { border-top:0; font-weight:500; color:var(--muted); padding-top:0; }
+  tr.offline th, tr.offline td { opacity:.45; }
+  .tag { font-weight:400; color:var(--muted); font-size:10.5px; }
+  .heat-legend { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--muted); margin-top:10px; flex-wrap:wrap; }
+  .heat-legend .box { width:22px; height:11px; border-radius:2px; display:inline-block; margin-right:4px; vertical-align:-1px; }
+  .heat-legend .nodata-box { border:1px dashed var(--rule); }
+  .heat-legend .right { margin-left:auto; }
+
+  /* ---------- ตัวสลับซ่อนจุดที่ไม่มียอด ---------- */
+  .toggle {
+    display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+    font-size:12px; color:var(--ink-2); user-select:none;
+  }
+  .toggle input { accent-color:var(--accent); width:14px; height:14px; cursor:pointer; margin:0; }
+  .toggle .count { color:var(--muted); }
+  .table-card.hide-empty tbody tr.empty-row { display:none; }
+
+  /* ---------- สรุปรายกะ ---------- */
+  .shifts-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .shift-box { border:1px solid var(--border); border-radius:8px; padding:11px 13px; }
+  .shift-box.a { border-left:3px solid var(--series-1); }
+  .shift-box.b { border-left:3px solid var(--series-2); }
+  .sb-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:7px; }
+  .sb-name { font-size:13px; font-weight:650; }
+  .sb-span { font-size:11.5px; color:var(--muted); }
+  .sb-row { display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:2.5px 0; color:var(--ink-2); }
+  .sb-row b { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+  .sb-row.soft { color:var(--muted); font-size:11.5px; }
+  .sb-row.soft b { color:var(--ink-2); font-weight:500; }
+  td.num.soft { font-weight:500; color:var(--ink-2); }
+  td.num.err { color:var(--critical); font-weight:550; }
+  tbody tr.sum.line th, tbody tr.sum.line td { border-top:1px dashed var(--rule); color:var(--ink-2); }
+  tbody tr.sum.line.rate th, tbody tr.sum.line.rate td { border-top:0; color:var(--muted); font-weight:500; }
+  /* หัวชั้น (AP1 / AP2) — คั่นให้เห็นว่าขึ้นสายใหม่ */
+  tbody tr.group-head th {
+    font-size:12.5px; font-weight:700; color:var(--ink);
+    padding-top:9px; padding-bottom:3px;
+  }
+  tbody tr.group-head td {
+    font-size:11px; color:var(--muted); text-align:left;
+    padding:9px 0 3px 10px;   /* เว้นซ้ายให้พ้นเงาของคอลัมน์ที่ตรึงไว้ */
+  }
+  tbody tr.group-head + tr th, tbody tr.group-head + tr td { padding-top:3px; }
+
+  /* ---------- error / health ---------- */
+  /* align-items:start กันการ์ดที่เตี้ยกว่าถูกยืดจนมีที่ว่างท้ายการ์ด */
+  .split { display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start; }
+  .bar-row { display:grid; grid-template-columns:130px 1fr 62px; align-items:center; gap:10px; margin-bottom:7px; font-size:12px; }
+  .bar-track { display:block; background:var(--grid); border-radius:3px; height:9px; overflow:hidden; }
+  .bar-fill { display:block; height:100%; border-radius:3px; min-width:2px; }
+  .bar-row .val { text-align:right; font-variant-numeric:tabular-nums; color:var(--ink-2); }
+  .bar-sub { font-size:11px; color:var(--muted); margin:-3px 0 9px 130px; }
+  .empty { color:var(--muted); font-size:12px; }
+  .health { display:grid; grid-template-columns:repeat(2,1fr); gap:6px 16px; }
+  .health-item { display:flex; align-items:center; gap:7px; font-size:12px; padding:3px 0; }
+  .dot { width:8px; height:8px; border-radius:99px; flex:none; }
+  .dot.online{background:var(--good)} .dot.idle{background:var(--warning)}
+  .dot.stale,.dot.offline{background:var(--critical)} .dot.disabled{background:var(--muted)}
+  .health-item .who { font-weight:550; min-width:62px; }
+  .health-item .what { color:var(--ink-2); font-size:11.5px; }
+  .health-item.disabled { opacity:.5; }
+
+  @media (max-width: 760px) {
+    .split { grid-template-columns:1fr; }
+    .shifts-grid { grid-template-columns:1fr; }
+    .kpi-row { grid-template-columns:1fr; }
+    .kpi-side { grid-template-columns:repeat(2,1fr); }
+    .alert { flex-wrap:wrap; }
+    .alert .act { margin-left:29px; text-align:left; }
+    .health { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>สรุปยอดคลัง KKN</h1>
+    <span class="sub">{{ title_date }} · รอบ 12:00–12:00</span>
+    <span class="stamp">อัปเดต {{ generated_at }}</span>
+  </header>
+
+  {% if not single_tab %}
+  <nav class="tabs">
+    {% for tab in tabs %}
+      <a href="#{{ tab.key }}" data-tab="{{ tab.key }}"
+         class="{% if tab.key == active_tab %}on{% endif %}">{{ tab.title }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+
+  {# ---------------- ภาพรวม ---------------- #}
+  {% if show_overview %}
+  <section class="panel {% if active_tab == 'overview' %}on{% endif %}" id="panel-overview">
+    <div class="alerts">
+      {% for a in overview_alerts %}
+        <div class="alert {{ a.level }}">
+          <span class="ico">{{ a.icon }}</span>
+          <span class="msg">{{ a.text }}</span>
+          {% if a.action %}<span class="act">{{ a.action }}</span>{% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    <div class="ov-grid">
+      {% for src in overview.sources %}
+        <div class="ov {% if not src.has_data %}empty-src{% endif %}">
+          <div class="head">
+            <span class="name">{{ src.title }}</span>
+            <span class="unit">{{ src.unit }}</span>
+          </div>
+          <div class="big">{{ "{:,}".format(src.total) }}</div>
+          {% if src.day_target %}
+            {% set tone = 'ok' if src.achieved_pct >= 100 else ('near' if src.achieved_pct >= 85 else 'under') %}
+            <div class="ov-meter {{ tone }}"><span style="width:{{ [src.achieved_pct, 100]|min }}%"></span></div>
+            <div class="shifts"><b>{{ src.achieved_pct }}%</b> ของเป้า {{ "{:,}".format(src.day_target) }}</div>
+          {% endif %}
+          <div class="shifts">กะ A <b>{{ "{:,}".format(src.shift_a) }}</b> · กะ B <b>{{ "{:,}".format(src.shift_b) }}</b></div>
+
+          <svg class="spark" viewBox="0 0 {{ src.spark.width }} {{ src.spark.height }}"
+               width="100%" height="{{ src.spark.height }}" preserveAspectRatio="none"
+               role="img" aria-label="รูปร่างยอดรายชั่วโมงของ {{ src.title }}">
+            {% for b in src.spark.bars %}
+              <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="1"
+                    fill="{% if b.peak %}var(--accent){% else %}var(--q2){% endif %}"/>
+            {% endfor %}
+          </svg>
+
+          <div class="foot">
+            {% if src.top %}
+              {% for t in src.top[:3] %}
+                <div class="row"><span>{{ t.name }}</span><span>{{ "{:,}".format(t.total) }}</span></div>
+              {% endfor %}
+            {% else %}
+              <div class="row"><span>ยังไม่มีข้อมูลของวันนี้</span><span></span></div>
+            {% endif %}
+            <div class="row" style="color:var(--muted);margin-top:4px">
+              <span>จุดที่เดิน {{ src.active }}/{{ src.expected }}</span>
+              <span style="color:var(--muted)">
+                {%- if src.error_qty %}error {{ src.error_rate_pct }}%{% endif -%}
+              </span>
+            </div>
+            {% if not single_tab %}
+              <a class="more" href="#{{ src.key }}" data-tab="{{ src.key }}">ดูรายละเอียด →</a>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <p class="empty" style="margin:2px 2px 10px">
+      หมายเหตุ: แต่ละแหล่งนับคนละหน่วยและคนละขั้นตอนของงาน
+      (พัสดุชิ้นเดียวถูกนับทั้งตอนคัดแยกและตอนสแกนลงรถ) จึงไม่มียอดรวมทั้งคลัง
+    </p>
+
+    {{ m.health_card(health, health_is_today) }}
+  </section>
+  {% endif %}
+
+  {# ---------------- แท็บรายแหล่ง ---------------- #}
+  {% for p in panels %}
+    <section class="panel {% if active_tab == p.key %}on{% endif %}" id="panel-{{ p.key }}">
+      {{ m.source_panel(p, health) }}
+    </section>
+  {% endfor %}
+
+</div>
+
+<script>
+  // ติ๊กเพื่อซ่อนแถวของจุดที่ไม่มียอดทั้งวัน — ตารางยาว 24-30 แถวแต่เดินจริงไม่ถึงครึ่ง
+  // ยอดรวมท้ายตารางไม่เปลี่ยน เพราะแถวที่ซ่อนมีค่า 0 อยู่แล้ว
+  (function () {
+    var KEY = "dws-dashboard-hide-empty";
+    var saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (e) {}
+
+    function apply(on) {
+      document.querySelectorAll(".table-card").forEach(function (card) {
+        card.classList.toggle("hide-empty", on);
+        var box = card.querySelector(".hide-empty-toggle");
+        if (box) box.checked = on;
+      });
+    }
+    if (saved !== null) apply(saved === "1");
+
+    document.querySelectorAll(".hide-empty-toggle").forEach(function (box) {
+      box.addEventListener("change", function () {
+        apply(box.checked);
+        try { localStorage.setItem(KEY, box.checked ? "1" : "0"); } catch (e) {}
+      });
+    });
+  })();
+</script>
+
+<script>
+  // กดค้างแล้วลากตารางไปซ้ายขวาได้ — บนมือถือเบราว์เซอร์ปัดนิ้วให้อยู่แล้ว
+  // จึงข้าม pointerType === 'touch' ไป ไม่งั้นจะไปทับการปัดของระบบแล้วสะดุด
+  (function () {
+    document.querySelectorAll('.tscroll').forEach(function (el) {
+      var down = false, startX = 0, startLeft = 0, moved = false;
+
+      el.addEventListener('pointerdown', function (ev) {
+        if (ev.pointerType === 'touch' || ev.button !== 0) return;
+        down = true; moved = false;
+        startX = ev.clientX; startLeft = el.scrollLeft;
+        el.classList.add('dragging');
+      });
+
+      el.addEventListener('pointermove', function (ev) {
+        if (!down) return;
+        var dx = ev.clientX - startX;
+        // เผื่อระยะ 3px ก่อน ไม่งั้นคลิกธรรมดาที่มือสั่นนิดเดียวจะกลายเป็นลาก
+        if (!moved && Math.abs(dx) > 3) {
+          moved = true;
+          try { el.setPointerCapture(ev.pointerId); } catch (e) {}
+        }
+        if (moved) { el.scrollLeft = startLeft - dx; ev.preventDefault(); }
+      });
+
+      function release(ev) {
+        if (!down) return;
+        down = false;
+        el.classList.remove('dragging');
+        try { el.releasePointerCapture(ev.pointerId); } catch (e) {}
+      }
+      el.addEventListener('pointerup', release);
+      el.addEventListener('pointercancel', release);
+      el.addEventListener('lostpointercapture', release);
+
+      // กันไม่ให้การลากจบด้วยการ "คลิก" โดนอย่างอื่น
+      el.addEventListener('click', function (ev) {
+        if (moved) { ev.preventDefault(); ev.stopPropagation(); }
+      }, true);
+
+      // เลื่อนล้อเมาส์แนวตั้งบนตาราง = เลื่อนตารางไปซ้ายขวา
+      // (เมาส์ส่วนใหญ่ไม่มีล้อแนวนอน ต้องกด shift ค้างซึ่งคนไม่รู้)
+      el.addEventListener('wheel', function (ev) {
+        if (ev.deltaX !== 0 || ev.shiftKey) return;
+        if (el.scrollWidth <= el.clientWidth) return;
+        var atStart = el.scrollLeft <= 0 && ev.deltaY < 0;
+        var atEnd = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1 && ev.deltaY > 0;
+        if (atStart || atEnd) return;   // สุดขอบแล้วปล่อยให้หน้าเว็บเลื่อนขึ้นลงต่อ
+        el.scrollLeft += ev.deltaY;
+        ev.preventDefault();
+      }, { passive: false });
+    });
+  })();
+</script>
+{% if not single_tab %}
+<script>
+  // สลับแท็บด้วย hash — ทำให้แชร์ลิงก์ตรงแท็บที่ต้องการได้ และ refresh แล้วไม่เด้งกลับ
+  (function () {
+    var links = document.querySelectorAll('[data-tab]');
+    function show(key) {
+      document.querySelectorAll('.panel').forEach(function (el) {
+        el.classList.toggle('on', el.id === 'panel-' + key);
+      });
+      document.querySelectorAll('.tabs a').forEach(function (el) {
+        el.classList.toggle('on', el.dataset.tab === key);
+      });
+    }
+    links.forEach(function (el) {
+      el.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        var key = el.dataset.tab;
+        history.replaceState(null, '', '#' + key);
+        show(key);
+        window.scrollTo({ top: 0 });
+      });
+    });
+    if (location.hash) { show(location.hash.slice(1)); }
+  })();
+</script>
+{% endif %}
+</body>
+</html>

@@ -17,3 +17,10 @@ Backup/
 Handoff/
 0Excel-Report/
 _analysis_v7_extract/
+
+# ผลลัพธ์และข้อมูลของโหมด Dashboard
+out/
+logs/
+metrics/store.db
+metrics/store.db-wal
+metrics/store.db-shm

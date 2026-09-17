@@ -1,0 +1,404 @@
+{# ============================================================
+   macro ของแผงรายแหล่ง — ใช้ซ้ำทุกแท็บ (AutoPacking / DWS / PDA / กระสอบ)
+   p = panel model จาก view.build_view()
+   ============================================================ #}
+
+{# แถบสถานะ — บรรทัดแรกที่ตาไปลง บอกว่า "ต้องทำอะไร" ไม่ใช่ตัวเลขเฉยๆ #}
+{% macro alert_strip(p) %}
+<div class="alerts">
+  {% for a in p.alerts %}
+    <div class="alert {{ a.level }}">
+      <span class="ico">{{ a.icon }}</span>
+      <span class="msg">{{ a.text }}</span>
+      {% if a.action %}<span class="act">{{ a.action }}</span>{% endif %}
+    </div>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+
+{# 5 ตัวเลขหลัก — งานวิจัยหน้างานแนะนำ 5 ตัวพอดี น้อยกว่านี้เปลืองที่ มากกว่านี้ไม่มีตัวไหนเด่น #}
+{% macro kpi_tiles(p) %}
+<div class="kpi-row">
+  <div class="kpi-hero {% if p.kpi.achieved_pct >= 100 %}ok{% elif p.kpi.achieved_pct >= 85 %}near{% else %}under{% endif %}">
+    <div class="label">ยอดรวมทั้งวัน</div>
+    <div class="value">{{ "{:,}".format(p.kpi.total_qty) }}<span class="unit">{{ p.unit }}</span></div>
+    {% if p.kpi.day_target %}
+      <div class="meter"><span style="width:{{ [p.kpi.achieved_pct, 100]|min }}%"></span></div>
+      <div class="note">
+        <b>{{ p.kpi.achieved_pct }}%</b> ของเป้า {{ "{:,}".format(p.kpi.day_target) }}
+        <span class="dim">({{ "{:,}".format(p.kpi.target_per_hour) }} × {{ p.kpi.worked_hours }} ชม.ที่เดินจริง)</span>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="kpi-side">
+    <div class="kpi">
+      <div class="label">กะ A <span class="dim">12:00–01:00</span></div>
+      <div class="value">{{ "{:,}".format(p.kpi.shift_a) }}</div>
+      <div class="note">เฉลี่ย {{ "{:,.0f}".format(p.kpi.shift_a_avg) }} / จุด / ชม.</div>
+    </div>
+    <div class="kpi">
+      <div class="label">กะ B <span class="dim">01:00–12:00</span></div>
+      <div class="value">{{ "{:,}".format(p.kpi.shift_b) }}</div>
+      <div class="note">เฉลี่ย {{ "{:,.0f}".format(p.kpi.shift_b_avg) }} / จุด / ชม.</div>
+    </div>
+    <div class="kpi">
+      <div class="label">จุดที่เดิน</div>
+      <div class="value">{{ p.kpi.active_stations }}<span class="of">/{{ p.kpi.expected_stations }}</span></div>
+      <div class="note">
+        {%- set gone = p.kpi.expected_stations - p.kpi.active_stations -%}
+        {%- if gone %}<span class="bad">ไม่มียอด {{ gone }} จุด</span>
+        {%- else %}<span class="good">ครบทุกจุด</span>{% endif -%}
+      </div>
+    </div>
+    <div class="kpi">
+      <div class="label">พัสดุตก Error</div>
+      <div class="value">{{ "{:,}".format(p.kpi.error_qty) }}</div>
+      <div class="note">
+        <span class="pill {{ p.error_status }}">{{ p.kpi.error_rate_pct }}%</span>
+        <span class="dim">เป้า ≤ 1%</span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+
+{% macro kpi_tiles_old(p) %}
+<div class="kpis">
+  <div class="kpi hero">
+    <div class="label">ยอดรวมทั้งวัน</div>
+    <div class="value">{{ "{:,}".format(p.kpi.total_qty) }}</div>
+    <div class="note">{{ p.unit }}</div>
+  </div>
+  <div class="kpi">
+    <div class="label">กะ A</div>
+    <div class="value">{{ "{:,}".format(p.kpi.shift_a) }}</div>
+    <div class="note">12:00 – 01:00</div>
+  </div>
+  <div class="kpi">
+    <div class="label">กะ B</div>
+    <div class="value">{{ "{:,}".format(p.kpi.shift_b) }}</div>
+    <div class="note">01:00 – 12:00</div>
+  </div>
+  {% if p.kpi.error_qty or p.key in ('AUTOPACK', 'DWS') %}
+  <div class="kpi">
+    <div class="label">ตก Error</div>
+    <div class="value">{{ "{:,}".format(p.kpi.error_qty) }}</div>
+    <div class="note">
+      <span class="pill {{ p.error_status }}">
+        {%- if p.error_status == 'good' %}✓{% elif p.error_status == 'warning' %}!{% else %}✕{% endif %}
+        {{ p.kpi.error_rate_pct }}%</span> ของยอดรวม
+    </div>
+  </div>
+  {% endif %}
+  <div class="kpi">
+    <div class="label">จุดที่เดิน</div>
+    <div class="value">{{ p.kpi.active_stations }}<span class="of">/{{ p.kpi.expected_stations }}</span></div>
+    <div class="note">
+      {%- set idle_count = p.kpi.expected_stations - p.kpi.active_stations -%}
+      {%- if idle_count %}ไม่มียอด {{ idle_count }} จุด
+      {%- elif p.kpi.not_in_service %}ยังไม่ได้ใช้งาน {{ p.kpi.not_in_service }} จุด
+      {%- else %}ครบทุกจุด{% endif -%}
+    </div>
+  </div>
+  <div class="kpi">
+    <div class="label">จุดที่ทำได้มากสุด</div>
+    <div class="value small">{{ p.kpi.best_station }}</div>
+    <div class="note">{{ "{:,}".format(p.kpi.best_qty) }} {{ p.unit }} · เฉลี่ย/จุด {{ "{:,}".format(p.kpi.avg_per_station) }}</div>
+  </div>
+</div>
+{% endmacro %}
+
+
+{% macro hourly_chart(p) %}
+<div class="card">
+  <div class="chart-head">
+    <h2>ยอดรายชั่วโมง</h2>
+    {% if p.lines|length > 1 %}
+    <div class="legend">
+      {% for label in p.line_labels %}
+        <span><span class="swatch" style="background:var(--series-{{ loop.index }})"></span>{{ label }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  <svg viewBox="0 0 {{ p.chart.width }} {{ p.chart.height }}" width="100%" height="{{ p.chart.height }}"
+       role="img" aria-label="ยอดรายชั่วโมงของ {{ p.title }}">
+    {% for tick in p.chart.ticks %}
+      <line x1="{{ p.chart.pad_left }}" y1="{{ tick.y }}" x2="{{ p.chart.width - 8 }}" y2="{{ tick.y }}"
+            stroke="var(--grid)" stroke-width="1"/>
+      <text x="{{ p.chart.pad_left - 8 }}" y="{{ tick.y + 3.5 }}" text-anchor="end"
+            font-size="10" fill="var(--muted)">{{ tick.label }}</text>
+    {% endfor %}
+    {% for bar in p.chart.bars %}
+      {% for seg in bar.segments %}
+        <rect x="{{ seg.x }}" y="{{ seg.y }}" width="{{ seg.w }}" height="{{ seg.h }}"
+              rx="3" fill="var(--series-{{ seg.series }})">
+          <title>{{ seg.label }} · {{ bar.range_label }} น. · {{ "{:,}".format(seg.qty) }} {{ p.unit }}</title>
+        </rect>
+      {% endfor %}
+      {% if bar.show_label %}
+        <text x="{{ bar.label_x }}" y="{{ bar.label_y }}" text-anchor="middle"
+              font-size="10.5" font-weight="600" fill="var(--ink)">{{ "{:,}".format(bar.total) }}</text>
+      {% endif %}
+      <text x="{{ bar.label_x }}" y="{{ p.chart.height - 6 }}" text-anchor="middle"
+            font-size="10" fill="var(--muted)">{{ bar.label }}</text>
+    {% endfor %}
+    <line x1="{{ p.chart.pad_left }}" y1="{{ p.chart.baseline_y }}" x2="{{ p.chart.width - 8 }}"
+          y2="{{ p.chart.baseline_y }}" stroke="var(--rule)" stroke-width="1"/>
+  </svg>
+</div>
+{% endmacro %}
+
+
+{% macro heat_table(p) %}
+{% set empty_rows = p.rows | selectattr('total', 'equalto', 0) | list | length %}
+<div class="card table-card{% if hide_empty %} hide-empty{% endif %}">
+  <div class="chart-head">
+    <h2>ยอดต่อจุด ต่อชั่วโมง
+      {% if p.target.per_hour %}<span class="h2-sub">เป้า {{ "{:,}".format(p.target.per_hour) }} {{ p.target.label }}</span>{% endif %}
+    </h2>
+    {% if empty_rows %}
+      <label class="toggle">
+        <input type="checkbox" class="hide-empty-toggle"{% if hide_empty %} checked{% endif %}>
+        ซ่อนจุดที่ไม่มียอด <span class="count">({{ empty_rows }} จุด)</span>
+      </label>
+    {% endif %}
+  </div>
+  <div class="tscroll">
+  <table>
+    <thead>
+      <tr>
+        <th class="name-col">จุด</th>
+        {% for h in p.hours_a %}<th class="hr {% if h.latest %}latest-col{% endif %}"><span>{{ h.label }}</span><span>{{ h.end_label }}</span></th>{% endfor %}
+        <th class="sub-col">กะ A</th>
+        <th class="sub-col">Avg/ชม.</th>
+        {% for h in p.hours_b %}<th class="hr {% if h.latest %}latest-col{% endif %}"><span>{{ h.label }}</span><span>{{ h.end_label }}</span></th>{% endfor %}
+        <th class="sub-col">กะ B</th>
+        <th class="sub-col">Avg/ชม.</th>
+        <th>รวม</th>
+        <th>ชม.</th>
+        <th>เฉลี่ย</th>
+        <th>สูงสุด</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% set multi = p.groups|length > 1 %}
+      {% for g in p.groups %}
+        {% if multi %}
+          <tr class="group-head"><th>{{ g.label }}</th>
+            <td colspan="{{ p.hours|length + 6 }}">{{ g.active }}/{{ g.stations }} จุดที่เดิน</td></tr>
+        {% endif %}
+        {% for row in g.rows %}
+          <tr class="{% if not row.in_service %}offline {% endif %}{% if row.total == 0 %}empty-row{% endif %}">
+            <th{% if not row.in_service %} title="ยังไม่ได้ใช้งาน"{% endif %}>{{ row.display_name }}</th>
+            {% for cell in row.cells_a %}
+              <td class="cell {{ cell.css }}{% if cell.latest %} latest{% endif %}" title="{{ cell.title }}">{{ cell.text }}</td>
+            {% endfor %}
+            <td class="num sub">{{ "{:,}".format(row.shift_a) }}</td>
+            <td class="num sub soft">{{ "{:,.0f}".format(row.avg_a) if row.avg_a else "–" }}</td>
+            {% for cell in row.cells_b %}
+              <td class="cell {{ cell.css }}{% if cell.latest %} latest{% endif %}" title="{{ cell.title }}">{{ cell.text }}</td>
+            {% endfor %}
+            <td class="num sub">{{ "{:,}".format(row.shift_b) }}</td>
+            <td class="num sub soft">{{ "{:,.0f}".format(row.avg_b) if row.avg_b else "–" }}</td>
+            <td class="num strong">{{ "{:,}".format(row.total) }}</td>
+            <td class="num">{{ row.effective_hours }}</td>
+            <td class="num">{{ "{:,.0f}".format(row.avg_per_hour) }}</td>
+            <td class="num">{{ "{:,}".format(row.peak) }}</td>
+          </tr>
+        {% endfor %}
+        {% if multi %}
+          <tr class="sum line">
+            <th>รวม {{ g.label }}</th>
+            {% for f in g.footer_a %}<td class="num">{{ "{:,}".format(f.total) if f.total else "–" }}</td>{% endfor %}
+            <td class="num sub">{{ "{:,}".format(g.a_total) }}</td>
+            <td class="num sub soft">{{ "{:,.0f}".format(g.avg_a) if g.avg_a else "–" }}</td>
+            {% for f in g.footer_b %}<td class="num">{{ "{:,}".format(f.total) if f.total else "–" }}</td>{% endfor %}
+            <td class="num sub">{{ "{:,}".format(g.b_total) }}</td>
+            <td class="num sub soft">{{ "{:,.0f}".format(g.avg_b) if g.avg_b else "–" }}</td>
+            <td class="num strong">{{ "{:,}".format(g.total) }}</td>
+            <td class="num">{{ g.effective_hours }}</td>
+            <td class="num">{{ "{:,.0f}".format(g.avg_per_hour) }}</td>
+            <td class="num">{{ "{:,}".format(g.peak) }}</td>
+          </tr>
+          <tr class="sum line rate">
+            <th>เฉลี่ย/จุด/ชม. {{ g.label }}</th>
+            {% for f in g.footer_a %}<td class="num">{{ "{:,}".format(f.per_station) if f.per_station else "–" }}</td>{% endfor %}
+            <td class="num sub"></td><td class="num sub"></td>
+            {% for f in g.footer_b %}<td class="num">{{ "{:,}".format(f.per_station) if f.per_station else "–" }}</td>{% endfor %}
+            <td class="num sub"></td><td class="num sub"></td>
+            <td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td>
+          </tr>
+        {% endif %}
+      {% endfor %}
+      <tr class="sum">
+        <th>รวมทุกจุด</th>
+        {% for f in p.footer_a %}<td class="num">{{ "{:,}".format(f.total) if f.total else "–" }}</td>{% endfor %}
+        <td class="num sub">{{ "{:,}".format(p.footer_a_total) }}</td>
+        <td class="num sub soft">{{ "{:,.0f}".format(p.kpi.shift_a_avg) }}</td>
+        {% for f in p.footer_b %}<td class="num">{{ "{:,}".format(f.total) if f.total else "–" }}</td>{% endfor %}
+        <td class="num sub">{{ "{:,}".format(p.footer_b_total) }}</td>
+        <td class="num sub soft">{{ "{:,.0f}".format(p.kpi.shift_b_avg) }}</td>
+        <td class="num strong">{{ "{:,}".format(p.footer_total) }}</td>
+        <td class="num"></td><td class="num"></td><td class="num"></td>
+      </tr>
+      <tr class="sum rate">
+        <th>เฉลี่ย/จุด/ชม.</th>
+        {% for f in p.footer_a %}<td class="num">{{ "{:,}".format(f.per_station) if f.per_station else "–" }}</td>{% endfor %}
+        <td class="num sub"></td><td class="num sub"></td>
+        {% for f in p.footer_b %}<td class="num">{{ "{:,}".format(f.per_station) if f.per_station else "–" }}</td>{% endfor %}
+        <td class="num sub"></td><td class="num sub"></td>
+        <td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="heat-legend">
+    <span>ยอด/ชั่วโมง:</span>
+    {% for bin in p.legend_bins %}
+      <span><span class="box {{ bin.css }}"></span>{{ bin.label }}</span>
+    {% endfor %}
+    <span><span class="box cell-zero"></span>ไม่มียอด</span>
+    <span><span class="box cell-down"></span>เครื่องหยุด</span>
+    <span><span class="box nodata-box"></span>– ไม่มีข้อมูล</span>
+    <span class="right">ชม. = ชั่วโมงทำงานจริง (ยอด ≥ 100)</span>
+  </div>
+</div>
+{% endmacro %}
+
+
+{# สรุปรายกะ — เทียบเท่าตาราง "ยอดเฉลี่ยเครื่องปล่อยพัสดุกะ A และ B" ของรายงานเดิม
+   ชั่วโมงรวม = ผลรวมชั่วโมงทำงานจริงของทุกจุดในกะนั้น (ไม่ใช่ความยาวของกะ) #}
+{% macro shift_cards(p) %}
+<div class="card">
+  <h2>สรุปรายกะ</h2>
+  <div class="shifts-grid">
+    {% for s in [
+      {'name':'กะ A','span':'12:00 – 01:00','qty':p.kpi.shift_a,'hours':p.kpi.shift_a_hours,
+       'avg':p.kpi.shift_a_avg,'best':p.kpi.best_a,'tone':'a'},
+      {'name':'กะ B','span':'01:00 – 12:00','qty':p.kpi.shift_b,'hours':p.kpi.shift_b_hours,
+       'avg':p.kpi.shift_b_avg,'best':p.kpi.best_b,'tone':'b'}] %}
+      <div class="shift-box {{ s.tone }}">
+        <div class="sb-head"><span class="sb-name">{{ s.name }}</span><span class="sb-span">{{ s.span }}</span></div>
+        <div class="sb-row"><span>ยอดปล่อย</span><b>{{ "{:,}".format(s.qty) }} {{ p.unit }}</b></div>
+        <div class="sb-row"><span>ชั่วโมงทำงานรวม</span><b>{{ s.hours }} ชม.</b></div>
+        <div class="sb-row"><span>เฉลี่ย / จุด / ชม.</span><b>{{ "{:,.0f}".format(s.avg) }}</b></div>
+        <div class="sb-row"><span>จุดที่ทำได้มากสุด</span>
+          <b>{{ s.best.station }} · {{ "{:,}".format(s.best.qty) }}</b></div>
+        <div class="sb-row soft"><span>เฉลี่ย/ชม. ของจุดนั้น</span>
+          <b>{{ "{:,.0f}".format(s.best.avg) }}</b></div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endmacro %}
+
+
+{# ตาราง error รายชั่วโมง — การ์ดแท่งบอกแค่ยอดรวม ไม่บอกว่าพีคตอนไหน #}
+{% macro error_table(p) %}
+{% if p.error_table %}
+<div class="card">
+  <h2>พัสดุตก Error รายชั่วโมง</h2>
+  <div class="tscroll">
+    <table>
+      <thead>
+        <tr>
+          <th class="name-col">ช่อง</th>
+          {% for h in p.hours %}<th class="hr"><span>{{ h.label }}</span><span>{{ h.end_label }}</span></th>{% endfor %}
+          <th class="sub-col">รวม</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in p.error_table.rows %}
+          <tr>
+            <th>{{ r.label }}</th>
+            {% for v in r.cells %}
+              <td class="num {% if v %}err{% endif %}">{{ "{:,}".format(v) if v else "–" }}</td>
+            {% endfor %}
+            <td class="num sub">{{ "{:,}".format(r.total) }}</td>
+          </tr>
+        {% endfor %}
+        <tr class="sum">
+          <th>รวม</th>
+          {% for v in p.error_table.total_cells %}
+            <td class="num">{{ "{:,}".format(v) if v else "–" }}</td>
+          {% endfor %}
+          <td class="num sub">{{ "{:,}".format(p.error_table.grand_total) }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  {% if p.error_table.peak_hour is not none %}
+    <div class="heat-legend"><span class="right">ชั่วโมงที่ตก error มากสุดคือ
+      <b>{{ "%02d"|format(p.error_table.peak_hour) }}:00</b></span></div>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+
+{% macro error_card(p) %}
+<div class="card">
+  <h2>พัสดุตก Error แยกตามช่อง</h2>
+  {% if p.errors %}
+    {% for err in p.errors %}
+      <div class="bar-row">
+        <span>{{ err.label }}</span>
+        <span class="bar-track"><span class="bar-fill" style="width:{{ err.bar_pct }}%;background:var(--critical)"></span></span>
+        <span class="val">{{ "{:,}".format(err.total) }}</span>
+      </div>
+      <div class="bar-sub">
+        {% for type, count in err.types %}{{ type }} {{ "{:,}".format(count) }}{% if not loop.last %} · {% endif %}{% endfor %}
+        · {{ err.share_pct }}% ของ error ทั้งหมด
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">ไม่มีพัสดุตก error ในรอบนี้</p>
+  {% endif %}
+</div>
+{% endmacro %}
+
+
+{% macro health_card(health, is_today=True) %}
+<div class="card">
+  <h2>สถานะแหล่งข้อมูลเครื่อง DWS
+    {% if not is_today %}<span class="h2-sub">สถานะ ณ ปัจจุบัน ไม่ใช่ของวันที่กำลังดู</span>{% endif %}
+  </h2>
+  <div class="health">
+    {% for m in health %}
+      <div class="health-item {% if m.health == 'disabled' %}disabled{% endif %}">
+        <span class="dot {{ m.health }}"></span>
+        <span class="who">{{ m.station }}</span>
+        <span class="what">
+          {%- if m.health == 'online' %}ปกติ
+          {%- elif m.health == 'idle' %}ไม่มีพัสดุใหม่
+          {%- elif m.health == 'stale' %}ไฟล์ไม่อัปเดต
+          {%- elif m.health == 'disabled' %}ยังไม่ได้ใช้งาน
+          {%- else %}เข้าไม่ได้{% endif -%}
+        </span>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endmacro %}
+
+
+{% macro source_panel(p, health) %}
+  {{ alert_strip(p) }}
+  {{ kpi_tiles(p) }}
+  {# ตารางขึ้นก่อนกราฟ — คนดูส่วนใหญ่มาหาตัวเลขในตาราง กราฟเป็นของประกอบ #}
+  {{ heat_table(p) }}
+  {{ hourly_chart(p) }}
+  {{ shift_cards(p) }}
+  {{ error_table(p) }}
+  {% set with_health = health and p.show_health %}
+  {% if p.errors or with_health %}
+    <div class="split">
+      {{ error_card(p) }}
+      {% if with_health %}{{ health_card(health, health_is_today) }}{% endif %}
+    </div>
+  {% endif %}
+{% endmacro %}

@@ -6,6 +6,7 @@ import mimetypes
 import time
 import queue
 import threading
+import webbrowser
 import configparser
 import ctypes
 from datetime import datetime, timedelta
@@ -219,6 +220,28 @@ DEFAULT_CONTROLLER_CLIENTS = {
     "DWS8": ("10.30.32.39", "4000"),
     "DWS9-11": ("10.30.32.10", "4001"),
 }
+
+# เครื่องที่ตั้งค่าดึงไฟล์มาเก็บเองได้ — DWS9-11 ไม่อยู่ในนี้
+# เพราะมันดึงจาก MySQL ด้วย run_dws และตั้งชื่อไฟล์ที่ name_dws อยู่แล้ว
+DWS_PULL_CLIENTS = ("DWS1", "DWS2", "DWS3", "DWS4",
+                    "DWS5", "DWS6", "DWS7", "DWS8")
+
+# ลำดับขั้นตอนของ pipeline — ลำดับในนี้คือลำดับที่ทำงานจริง
+# (key, ชื่อที่โชว์, ไอคอน, ติ๊กไว้ตั้งแต่แรกไหม)
+# ติ๊กรายขั้นตอนได้เลยบนหน้า BOT REPORT ไม่ต้องเลือกเป็นกลุ่มแล้ว
+PIPELINE_STEPS = [
+    ("dws_mirror", "DWS1-8", "\U0001F5C2", False),
+    ("dws", "DWS", "\U0001F4E5", True),
+    ("jms_auto", "JMS AUTO", "\U0001F4E6", True),
+    ("jms_pda", "JMS PDA", "\U0001F4F2", True),
+    ("realtime", "Realtime DB", "\U0001F9ED", True),
+    ("excel", "Excel Image", "\U0001F5BC", True),
+    ("dashboard", "Dashboard", "\U0001F4CA", False),
+    ("feishu", "Feishu", "\U0001F680", True),
+]
+
+# ขั้นตอนที่ต้องมีไฟล์ดิบพร้อมก่อน (ใช้ตัดสินว่าต้องเช็ค config DWS/JMS ไหม)
+RAW_STEP_KEYS = ("dws_mirror", "dws", "jms_auto", "jms_pda", "realtime")
 
 
 bot_app = Flask(__name__)
@@ -1290,18 +1313,21 @@ class App(ctk.CTk):
                         self.config[section] = {}
                     self.config[section]["IP"] = clean_input_value(row["ip_entry"].get())
                     self.config[section]["PORT"] = clean_input_value(row["port_entry"].get(), collapse_internal_spaces=True)
+                    # ค่าดึงไฟล์ของเครื่องนั้น มีเฉพาะ DWS1-8
+                    if "folder_entry" in row:
+                        self.config[section]["pull_folder"] = clean_input_value(row["folder_entry"].get())
+                        self.config[section]["pull_file"] = clean_input_value(row["file_entry"].get(), collapse_internal_spaces=True)
+                        self.config[section]["pull_enabled"] = str(row["pull_var"].get()).lower()
             for old_key in (("WEB" + chr(72) + "OOK"), "SECRET"):
                 self.config.remove_option("FEISHU", old_key)
             if "DWS_JMS" not in self.config:
                 self.config["DWS_JMS"] = {}
             if hasattr(self, "raw_path_entry"):
                 self.config["DWS_JMS"]["raw_path"] = entry_value(self.raw_path_entry)
-            if hasattr(self, "bot_export_var"):
-                self.config["DWS_JMS"]["enabled"] = str(self.bot_export_var.get()).lower()
-            elif hasattr(self, "dws_enable_var"):
-                self.config["DWS_JMS"]["enabled"] = str(self.dws_enable_var.get()).lower()
-            if hasattr(self, "bot_chat_var"):
-                self.config["DWS_JMS"]["bot_chat_enabled"] = str(self.bot_chat_var.get()).lower()
+            # ติ๊กรายขั้นตอน เก็บใน [DWS_JMS] ร่วมกับของเดิม ไม่เปิดหมวดใหม่
+            if getattr(self, "step_vars", None):
+                for key, var in self.step_vars.items():
+                    self.config["DWS_JMS"][f"step_{key}"] = str(var.get()).lower()
             for _attr, _key in [
                 ("db_host_entry", "db_host"),
                 ("db_port_entry", "db_port"),
@@ -1462,8 +1488,9 @@ class App(ctk.CTk):
 
         return {
             "out": out,
-            "run_export": self.get_bool_var_value("bot_export_var", True),
-            "run_chat": self.get_bool_var_value("bot_chat_var", True),
+            "steps": {key: (self.step_vars[key].get()
+                            if key in self.step_vars else default_on)
+                      for key, _, _, default_on in PIPELINE_STEPS},
             "raw_folder": raw_folder,
             "db_config": self.get_dws_db_config(),
             "dws_names": {
@@ -1490,8 +1517,9 @@ class App(ctk.CTk):
         if not self.is_ui_thread():
             self.run_on_ui_thread(self.sync_auto_run_settings_after_save)
             return
-        run_chat = self.get_bool_var_value("bot_chat_var", True)
-        out = entry_value(self.out_entry) if run_chat else self.get_raw_export_folder()
+        steps = self.selected_steps()
+        needs_pictures = bool(steps.get("excel") or steps.get("feishu"))
+        out = entry_value(self.out_entry) if needs_pictures else self.get_raw_export_folder()
         self.auto_run_settings = self.build_run_settings_snapshot(out)
 
     def prepare_run_settings(self):
@@ -1541,6 +1569,7 @@ class App(ctk.CTk):
             "data_export": ("⇩  DATA EXPORT", "nav_data_export"),
             "dws_plan": ("▦  BOT DWS PLAN", "nav_dws_plan"),
             "jms_user": ("👤  BOT JMS USER", "nav_jms_user"),
+            "dashboard": ("📊  DASHBOARD", "nav_dashboard"),
             "settings": ("⚙  ตั้งค่า", "nav_settings"),
         }
         self.render_nav_menu()
@@ -1556,12 +1585,15 @@ class App(ctk.CTk):
         self.content.grid_columnconfigure(0, weight=1)
 
         self.pipeline_widgets = {}
+        # ติ๊กของแต่ละขั้นตอน key -> BooleanVar (สร้างใน make_stage)
+        self.step_vars = {}
         self.pages = {
             "home": self.build_home_page(self.content),
             "workbooks": self.build_workbooks_page(self.content),
             "data_export": self.build_data_export_page(self.content),
             "dws_plan": self.build_dws_plan_page(self.content),
             "jms_user": self.build_jms_user_page(self.content),
+            "dashboard": self.build_dashboard_page(self.content),
             "settings": self.build_settings_page(self.content),
         }
         self.show_page("home")
@@ -1586,16 +1618,25 @@ class App(ctk.CTk):
     def make_card(self, parent, fg="#323847", radius=22):
         return ctk.CTkFrame(parent, fg_color=fg, corner_radius=radius)
 
-    def make_stage(self, parent, col, key, title, icon):
-        stage = ctk.CTkFrame(parent, fg_color="#323847", corner_radius=18, border_width=1, border_color="#434c5e", height=108)
+    def make_stage(self, parent, col, key, title, icon, default_on=True):
+        stage = ctk.CTkFrame(parent, fg_color="#323847", corner_radius=18, border_width=1, border_color="#434c5e", height=118)
         stage.grid(row=0, column=col, padx=8, pady=8, sticky="ew")
         stage.grid_propagate(False)
         stage.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(stage, text=icon, font=ctk.CTkFont(size=22)).grid(row=0, column=0, padx=12, pady=(10, 0))
         ctk.CTkLabel(stage, text=title, text_color="#d8dee9", font=ctk.CTkFont(size=13, weight="bold")).grid(row=1, column=0, padx=12, pady=(0, 2))
         status = ctk.CTkLabel(stage, text="READY", text_color="#aeb8cc", font=ctk.CTkFont(size=11, weight="bold"))
-        status.grid(row=2, column=0, padx=12, pady=(0, 8))
-        self.pipeline_widgets[key] = {"frame": stage, "status": status}
+        status.grid(row=2, column=0, padx=12, pady=(0, 4))
+
+        # ติ๊กว่าจะทำขั้นตอนนี้ไหม — วางมุมขวาบนด้วย place() จะได้ไม่กวน grid เดิม
+        var = ctk.BooleanVar(value=default_on)
+        chk = ctk.CTkCheckBox(stage, text="", width=24, checkbox_width=20, checkbox_height=20,
+                              variable=var, command=self.save_config)
+        chk.place(relx=1.0, x=-10, y=8, anchor="ne")
+
+        self.step_vars[key] = var
+        self.lockable_inputs.append(chk)
+        self.pipeline_widgets[key] = {"frame": stage, "status": status, "check": chk}
 
     def set_pipeline_state(self, key=None, state="ready"):
         if not self.is_ui_thread():
@@ -1691,30 +1732,23 @@ class App(ctk.CTk):
         self.btn_stop_auto = ctk.CTkButton(command, text="⛔ Stop Auto", height=40, fg_color="#bf616a", hover_color="#a54f58", command=self.stop_scheduler)
         self.btn_stop_run = ctk.CTkButton(command, text="⛔ Stop Run", height=40, fg_color="#bf616a", hover_color="#a54f58", command=self.stop_process)
 
-        ctk.CTkLabel(command, text="เลือกงานที่จะรัน", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=2, column=0, columnspan=2, padx=16, pady=(8, 2), sticky="w")
-        self.bot_export_var = ctk.BooleanVar(value=True)
-        self.bot_chat_var = ctk.BooleanVar(value=True)
-        # Backward-compatible alias: old code used dws_enable_var to decide raw export.
-        self.dws_enable_var = self.bot_export_var
-        self.chk_bot_export = ctk.CTkCheckBox(command, text="Bot Export / Raw DWS-JMS", variable=self.bot_export_var, command=self.save_config)
-        self.chk_bot_export.grid(row=3, column=0, columnspan=3, padx=(16, 4), pady=(6, 16), sticky="w")
-        self.chk_bot_chat = ctk.CTkCheckBox(command, text="Bot Chat / Excel Image + Feishu", variable=self.bot_chat_var, command=self.save_config)
-        self.chk_bot_chat.grid(row=3, column=3, columnspan=3, padx=(16, 4), pady=(6, 16), sticky="w")
+
         self.btn_start.grid(row=3, column=7, padx=8, pady=(6, 16), sticky="ew")
         self.btn_run.grid(row=3, column=8, padx=(8, 16), pady=(6, 16), sticky="ew")
 
         pipeline = self.make_card(page, "#2e3440", 22)
         pipeline.grid(row=2, column=0, padx=24, pady=6, sticky="ew")
-        for i in range(6):
+        for i in range(8):
             pipeline.grid_columnconfigure(i, weight=1)
-        ctk.CTkLabel(pipeline, text="ลำดับการทำงาน", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, columnspan=6, padx=16, pady=(14, 0), sticky="w")
-        stages = [("dws", "DWS", "📥"), ("jms_auto", "JMS AUTO", "📦"), ("jms_pda", "JMS PDA", "📲"), ("realtime", "Realtime DB", "🧭"), ("excel", "Excel Image", "🖼"), ("feishu", "Feishu", "🚀")]
+        ctk.CTkLabel(pipeline, text="ลำดับการทำงาน", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, columnspan=8, padx=16, pady=(14, 0), sticky="w")
+        ctk.CTkLabel(pipeline, text="ติ๊กเลือกว่าจะทำขั้นตอนไหน ที่ไม่ติ๊กจะข้ามไป", text_color="#aeb8cc", font=ctk.CTkFont(size=12)).grid(row=1, column=0, columnspan=8, padx=16, pady=(2, 0), sticky="w")
+        stages = PIPELINE_STEPS
         stage_wrap = ctk.CTkFrame(pipeline, fg_color="transparent")
-        stage_wrap.grid(row=1, column=0, columnspan=6, padx=8, pady=(4, 10), sticky="ew")
-        for i in range(6):
+        stage_wrap.grid(row=2, column=0, columnspan=8, padx=8, pady=(4, 10), sticky="ew")
+        for i in range(8):
             stage_wrap.grid_columnconfigure(i, weight=1)
-        for col, (key, title, icon) in enumerate(stages):
-            self.make_stage(stage_wrap, col, key, title, icon)
+        for col, (key, title, icon, default_on) in enumerate(stages):
+            self.make_stage(stage_wrap, col, key, title, icon, default_on)
 
         self.progress = ctk.CTkProgressBar(page, height=14, progress_color="#88c0d0")
         self.progress.grid(row=3, column=0, padx=24, pady=(6, 6), sticky="ew")
@@ -1852,6 +1886,205 @@ class App(ctk.CTk):
         self.button_color_map[btn_stop] = ("#bf616a", "#a54f58")
         return page
 
+    # =================================================================
+    # หน้า DASHBOARD
+    # =================================================================
+
+    def build_dashboard_page(self, master):
+        page = ctk.CTkScrollableFrame(master, fg_color="#2e3440", corner_radius=0)
+        page.grid_columnconfigure(0, weight=1)
+        self.header(
+            page,
+            "DASHBOARD",
+            "ยอดรายชั่วโมงทุกแหล่งรวมในหน้าเดียว เปิดจากมือถือได้ และย้อนหลังได้ตามที่ตั้งไว้",
+        ).grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
+
+        # ---------- ยอดล่าสุด ----------
+        status = self.make_card(page, "#3b4252", 22)
+        status.grid(row=1, column=0, padx=24, pady=8, sticky="ew")
+        status.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(status, text="ยอดล่าสุด", text_color="#eceff4",
+                     font=ctk.CTkFont(size=17, weight="bold")).grid(
+            row=0, column=0, padx=16, pady=(16, 2), sticky="w")
+        self.dash_summary_label = ctk.CTkLabel(
+            status, text="ยังไม่ได้อ่านข้อมูล กดปุ่ม รีเฟรชสถานะ",
+            text_color="#aeb8cc", justify="left", font=ctk.CTkFont(size=13))
+        self.dash_summary_label.grid(row=1, column=0, padx=16, pady=(0, 6), sticky="w")
+        self.dash_range_label = ctk.CTkLabel(
+            status, text="", text_color="#88c0d0", font=ctk.CTkFont(size=12))
+        self.dash_range_label.grid(row=2, column=0, padx=16, pady=(0, 14), sticky="w")
+
+        # ---------- ปุ่มสั่งงาน ----------
+        actions = self.make_card(page, "#3b4252", 22)
+        actions.grid(row=2, column=0, padx=24, pady=8, sticky="ew")
+        for i in range(4):
+            actions.grid_columnconfigure(i, weight=1)
+        ctk.CTkLabel(actions, text="สั่งงาน", text_color="#eceff4",
+                     font=ctk.CTkFont(size=17, weight="bold")).grid(
+            row=0, column=0, columnspan=4, padx=16, pady=(16, 2), sticky="w")
+        ctk.CTkLabel(actions,
+                     text="รันเฉพาะโหมด Dashboard ได้ ไม่ต้องรัน pipeline ทั้งชุด",
+                     text_color="#aeb8cc").grid(
+            row=1, column=0, columnspan=4, padx=16, pady=(0, 8), sticky="w")
+
+        buttons = [
+            ("รันเดี๋ยวนี้", "ดึงยอด + สร้างรูป หนึ่งรอบ", "#a3be8c", "#8ca876",
+             self.dashboard_run_now),
+            ("เปิดเว็บ", "เปิดหน้า dashboard ในเบราว์เซอร์", "#88c0d0", "#72a8b8",
+             self.dashboard_open_web),
+            ("รีเฟรชสถานะ", "อ่านยอดล่าสุดจากฐานข้อมูล", "#5e81ac", "#4c6e93",
+             self.dashboard_refresh),
+            ("คัดลอกลิงก์", "ลิงก์พร้อมรหัสเข้าถึง ไว้ส่งให้คนอื่น", "#b48ead", "#9e7a98",
+             self.dashboard_copy_link),
+        ]
+        for idx, (title, desc, color, hover, command) in enumerate(buttons):
+            card = ctk.CTkFrame(actions, fg_color="#323847", corner_radius=18,
+                                border_width=1, border_color="#434c5e")
+            card.grid(row=2, column=idx, padx=6, pady=6, sticky="nsew")
+            card.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(card, text=title, text_color="#eceff4",
+                         font=ctk.CTkFont(size=12, weight="bold")).grid(
+                row=0, column=0, padx=10, pady=(10, 2), sticky="w")
+            ctk.CTkLabel(card, text=desc, text_color="#aeb8cc",
+                         font=ctk.CTkFont(size=11), wraplength=165).grid(
+                row=1, column=0, padx=10, pady=(0, 8), sticky="w")
+            btn = ctk.CTkButton(card, text="GO", height=32, fg_color=color,
+                                hover_color=hover, text_color=readable_on(color),
+                                command=command)
+            btn.grid(row=2, column=0, padx=10, pady=(0, 10), sticky="ew")
+            self.button_color_map[btn] = (color, hover)
+
+        # ---------- เว็บ ----------
+        web = self.make_card(page, "#3b4252", 22)
+        web.grid(row=3, column=0, padx=24, pady=8, sticky="ew")
+        web.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(web, text="หน้าเว็บ", text_color="#eceff4",
+                     font=ctk.CTkFont(size=17, weight="bold")).grid(
+            row=0, column=0, columnspan=2, padx=16, pady=(16, 2), sticky="w")
+        ctk.CTkLabel(web,
+                     text="เปิดเซิร์ฟเวอร์ไว้เพื่อให้ดูจากเครื่องอื่นหรือมือถือได้ "
+                          "ถ้าต้องดูจากนอกโรงงานให้เปิด tunnel เพิ่ม (dashboard/tunnel.ps1)",
+                     text_color="#aeb8cc", wraplength=760, justify="left").grid(
+            row=1, column=0, columnspan=2, padx=16, pady=(0, 10), sticky="w")
+
+        self.dash_web_status = ctk.CTkLabel(web, text="เซิร์ฟเวอร์: ยังไม่เปิด",
+                                            text_color="#aeb8cc",
+                                            font=ctk.CTkFont(size=13, weight="bold"))
+        self.dash_web_status.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="w")
+        btn_web = ctk.CTkButton(web, text="เปิดเซิร์ฟเวอร์เว็บ", height=38,
+                                fg_color="#8fbcbb", hover_color="#7aa5a4",
+                                text_color="#2e3440", command=self.dashboard_start_web)
+        btn_web.grid(row=2, column=1, padx=16, pady=(0, 16), sticky="e")
+        self.button_color_map[btn_web] = ("#8fbcbb", "#7aa5a4")
+        return page
+
+    # ---------- การทำงานของหน้า Dashboard ----------
+
+    def dashboard_run_now(self):
+        """รันโหมด Dashboard รอบเดียว โดยไม่ต้องรัน pipeline ทั้งชุด"""
+        if self.running:
+            messagebox.showinfo("Dashboard",
+                                "ตอนนี้ pipeline กำลังทำงานอยู่ รอให้เสร็จก่อน")
+            return
+
+        def work():
+            self.running = True
+            try:
+                self.run_dashboard_stage()
+                self.run_on_ui_thread(self.dashboard_refresh)
+            finally:
+                self.running = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def dashboard_refresh(self):
+        """อ่านยอดล่าสุดมาโชว์ — เปิด DB แบบอ่านอย่างเดียว ไม่แตะข้อมูล"""
+        def work():
+            try:
+                from dashboard import pipeline as dash_pipeline
+                from metrics import aggregate
+                from metrics import core as mcore
+
+                business_date = dash_pipeline.current_business_date()
+                conn = mcore.read_connect()
+                try:
+                    overview = aggregate.build_overview(conn, business_date)
+                    span = mcore.available_dates(conn)
+                finally:
+                    conn.close()
+
+                lines = ["รอบงาน " + business_date]
+                for src in overview["sources"]:
+                    lines.append(
+                        "   {}: {:,} {}   (กะ A {:,} · กะ B {:,})".format(
+                            src["title"], src["total"], src["unit"],
+                            src["shift_a"], src["shift_b"]))
+                text = "\n".join(lines)
+                span_text = ("มีข้อมูลตั้งแต่ {} ถึง {}".format(span["first"], span["last"])
+                             if span.get("first") else "ยังไม่มีข้อมูลในฐานข้อมูล")
+            except Exception as e:
+                text, span_text = "อ่านข้อมูลไม่ได้: {}".format(e), ""
+
+            self.run_on_ui_thread(self._dashboard_apply_summary, text, span_text)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _dashboard_apply_summary(self, text, span_text):
+        if hasattr(self, "dash_summary_label"):
+            self.dash_summary_label.configure(text=text)
+        if hasattr(self, "dash_range_label"):
+            self.dash_range_label.configure(text=span_text)
+
+    def dashboard_web_url(self):
+        from dashboard import server as dash_server
+        conf = dash_server.get_settings()
+        base = conf["public_url"] or "http://localhost:{}".format(conf["port"])
+        return "{}/?t={}".format(base, conf["token"])
+
+    def dashboard_start_web(self):
+        """เปิดเซิร์ฟเวอร์เว็บใน thread แยก — เปิดครั้งเดียวต่อการรันโปรแกรม"""
+        if getattr(self, "dash_web_started", False):
+            self.dashboard_open_web()
+            return
+        try:
+            from dashboard import server as dash_server
+        except Exception as e:
+            messagebox.showerror("Dashboard", "เปิดเซิร์ฟเวอร์ไม่ได้: {}".format(e))
+            return
+
+        def serve():
+            try:
+                dash_server.serve_forever()
+            except Exception as e:
+                self.write_log("Dashboard web ERROR: {}".format(e), level="ERROR")
+
+        threading.Thread(target=serve, daemon=True).start()
+        self.dash_web_started = True
+        conf = dash_server.get_settings()
+        self.dash_web_status.configure(
+            text="เซิร์ฟเวอร์: เปิดอยู่ที่พอร์ต {}".format(conf["port"]),
+            text_color="#a3be8c")
+        self.write_log("Dashboard web started on port {}".format(conf["port"]),
+                       level="SUCCESS")
+
+    def dashboard_open_web(self):
+        if not getattr(self, "dash_web_started", False):
+            self.dashboard_start_web()
+        try:
+            webbrowser.open(self.dashboard_web_url())
+        except Exception as e:
+            messagebox.showerror("Dashboard", "เปิดเบราว์เซอร์ไม่ได้: {}".format(e))
+
+    def dashboard_copy_link(self):
+        try:
+            url = self.dashboard_web_url()
+            self.clipboard_clear()
+            self.clipboard_append(url)
+            self.write_log("คัดลอกลิงก์ dashboard แล้ว: " + url, level="SUCCESS")
+            messagebox.showinfo("Dashboard", "คัดลอกลิงก์แล้ว\n\n" + url)
+        except Exception as e:
+            messagebox.showerror("Dashboard", "คัดลอกลิงก์ไม่ได้: {}".format(e))
+
     def build_dws_plan_page(self, master):
         page = ctk.CTkFrame(master, fg_color="#2e3440")
         page.grid_columnconfigure(0, weight=1)
@@ -1970,20 +2203,62 @@ class App(ctk.CTk):
         for widget in self.controller_client_frame.winfo_children():
             widget.destroy()
         self.controller_client_rows.clear()
-        headers = ["PC Name", "IP Address", "Port"]
+        headers = ["PC Name", "IP Address / โฟลเดอร์ที่จะเก็บ", "Port / ชื่อไฟล์", "ดึง", ""]
         for col, title in enumerate(headers):
             ctk.CTkLabel(self.controller_client_frame, text=title, text_color="#aeb8cc", font=ctk.CTkFont(weight="bold")).grid(row=0, column=col, padx=8, pady=(8, 4), sticky="w")
-        for idx, client in enumerate(self.controller_clients, start=1):
-            ctk.CTkLabel(self.controller_client_frame, text=client["name"], text_color="#d8dee9").grid(row=idx, column=0, padx=8, pady=5, sticky="w")
+
+        row = 1
+        for client in self.controller_clients:
+            # DWS9-11 ไม่ต้องมีบรรทัดดึงไฟล์ — มันมีของตัวเองอยู่ในหมวด DWS/JMS Export
+            # (ดึงจาก MySQL ด้วย run_dws แล้วเซฟตามชื่อใน name_dws)
+            has_pull = client["name"] in DWS_PULL_CLIENTS
+
+            ctk.CTkLabel(self.controller_client_frame, text=client["name"], text_color="#d8dee9").grid(
+                row=row, column=0, rowspan=2 if has_pull else 1, padx=8, pady=5, sticky="w")
+
             ip_entry = ctk.CTkEntry(self.controller_client_frame, width=180)
             ip_entry.insert(0, client["ip"])
-            ip_entry.grid(row=idx, column=1, padx=8, pady=5, sticky="ew")
+            ip_entry.grid(row=row, column=1, padx=8, pady=(5, 1) if has_pull else 5, sticky="ew")
             port_entry = ctk.CTkEntry(self.controller_client_frame, width=90)
             port_entry.insert(0, str(client["port"]))
-            port_entry.grid(row=idx, column=2, padx=8, pady=5, sticky="w")
+            port_entry.grid(row=row, column=2, padx=8, pady=(5, 1) if has_pull else 5, sticky="w")
             self.bind_clean_entry(ip_entry)
             self.bind_clean_entry(port_entry, collapse_internal_spaces=True, digits_only=True)
-            self.controller_client_rows.append({"name": client["name"], "ip_entry": ip_entry, "port_entry": port_entry})
+
+            entry = {"name": client["name"], "ip_entry": ip_entry, "port_entry": port_entry}
+
+            if has_pull:
+                folder_entry = ctk.CTkEntry(self.controller_client_frame, width=180,
+                                            placeholder_text="โฟลเดอร์ที่จะเก็บไฟล์")
+                folder_entry.insert(0, client.get("pull_folder", ""))
+                folder_entry.grid(row=row + 1, column=1, padx=8, pady=(1, 6), sticky="ew")
+
+                file_entry = ctk.CTkEntry(self.controller_client_frame, width=90,
+                                          placeholder_text="ชื่อไฟล์")
+                file_entry.insert(0, client.get("pull_file", ""))
+                file_entry.grid(row=row + 1, column=2, padx=8, pady=(1, 6), sticky="w")
+
+                self.bind_clean_entry(folder_entry)
+                self.bind_clean_entry(file_entry)
+
+                pull_var = ctk.BooleanVar(value=bool(client.get("pull_enabled", False)))
+                chk = ctk.CTkCheckBox(self.controller_client_frame, text="", width=28,
+                                      variable=pull_var)
+                chk.grid(row=row + 1, column=3, padx=8, pady=(1, 6))
+
+                btn = ctk.CTkButton(self.controller_client_frame, text="Browse", width=82,
+                                    fg_color="#4c566a", hover_color="#5e6779",
+                                    command=lambda e=folder_entry: self.set_path(e, self.browse_folder()))
+                btn.grid(row=row + 1, column=4, padx=(8, 12), pady=(1, 6))
+
+                self.lockable_inputs.extend([folder_entry, file_entry])
+                self.lockable_buttons.append(btn)
+                entry.update({"folder_entry": folder_entry, "file_entry": file_entry,
+                              "pull_var": pull_var})
+
+            self.controller_client_rows.append(entry)
+            row += 2 if has_pull else 1
+
         self.controller_client_frame.grid_columnconfigure(1, weight=1)
 
     def build_settings_page(self, master):
@@ -2104,7 +2379,7 @@ class App(ctk.CTk):
     def can_open_page_during_runtime(self, key: str) -> bool:
         if not (self.running or self.scheduler_running or self.runtime_locked):
             return True
-        return key in {"home", "dws_plan", "jms_user"}
+        return key in {"home", "dws_plan", "jms_user", "dashboard"}
 
     def layout_nav_rows(self):
         for idx, key in enumerate(self.get_nav_order()):
@@ -2210,10 +2485,22 @@ class App(ctk.CTk):
         dws = self.config["DWS_JMS"] if "DWS_JMS" in self.config else {}
         if hasattr(self, "raw_path_entry"):
             self.raw_path_entry.insert(0, dws.get("raw_path", "") or self.config["PATH"].get("output_dir", ""))
-        if hasattr(self, "bot_export_var"):
-            self.bot_export_var.set(as_bool(dws.get("enabled", "true"), True))
-        if hasattr(self, "bot_chat_var"):
-            self.bot_chat_var.set(as_bool(dws.get("bot_chat_enabled", "true"), True))
+        # โหลดค่าติ๊กรายขั้นตอน — เครื่องที่เพิ่งอัปเกรดยังไม่มีค่าพวกนี้
+        # จึงเดาจากสวิตช์กลุ่มแบบเก่าให้ พฤติกรรมจะได้เหมือนเดิมในรอบแรก
+        if getattr(self, "step_vars", None):
+            legacy_export = as_bool(dws.get("enabled", "true"), True)
+            legacy_chat = as_bool(dws.get("bot_chat_enabled", "true"), True)
+            legacy_dash = as_bool(dws.get("dashboard_enabled", "false"), False)
+            for key, _, _, default_on in PIPELINE_STEPS:
+                if key in RAW_STEP_KEYS:
+                    fallback = legacy_export and default_on
+                elif key == "dashboard":
+                    fallback = legacy_dash
+                else:
+                    fallback = legacy_chat
+                raw = dws.get(f"step_{key}")
+                value = as_bool(raw, fallback) if raw not in (None, "") else fallback
+                self.step_vars[key].set(value)
         for _attr, _key, _default in [
             ("db_host_entry", "db_host", "10.30.32.10"),
             ("db_port_entry", "db_port", "3306"),
@@ -2746,12 +3033,20 @@ class App(ctk.CTk):
     def is_busy(self):
         return self.running
 
+    def selected_steps(self):
+        """ขั้นตอนที่ติ๊กไว้ตอนนี้ — key -> True/False"""
+        return {key: (self.step_vars[key].get() if key in self.step_vars else default_on)
+                for key, _, _, default_on in PIPELINE_STEPS}
+
     def validate_run_selection(self):
-        run_export = self.get_bool_var_value("bot_export_var", True)
-        run_chat = self.get_bool_var_value("bot_chat_var", True)
-        if not run_export and not run_chat:
-            self.write_log("Please select Bot Export, Bot Chat, or both")
+        steps = self.selected_steps()
+        if not any(steps.values()):
+            self.write_log("ติ๊กอย่างน้อยหนึ่งขั้นตอนก่อนเริ่มงาน")
             return None
+        # คงรูปแบบคืนค่าเดิมไว้ (run_export, run_chat) เพราะ validate_ready ใช้ต่อ
+        # run_export = มีขั้นตอนที่ต้องดึงไฟล์ดิบ, run_chat = ต้องใช้ Excel/ส่งรูป
+        run_export = any(steps.get(k) for k in RAW_STEP_KEYS)
+        run_chat = bool(steps.get("excel") or steps.get("feishu"))
         return run_export, run_chat
 
     def validate_ready(self):
@@ -3230,6 +3525,90 @@ class App(ctk.CTk):
             if is_current and not self.scheduler_running:
                 self.set_ui_running(False)
             self.schedule_pipeline_reset(run_generation)
+
+    def run_dws_mirror(self):
+        """ดึงไฟล์ raw ของ DWS1-8 มาเก็บไว้ในเครื่องนี้ ก่อนให้ Excel refresh
+
+        ทำไมต้องมี: Power Query ชี้ไปที่ share ของแต่ละเครื่องโดยตรง
+        เครื่องไหนดับจะทำให้ refresh ล้มทั้งไฟล์ และยอดชั่วโมงก่อนหน้า
+        ที่เกิดขึ้นจริงก็หายไปด้วย เพราะไม่มีใครตอบให้อ่าน
+
+        ดึงมาเก็บไว้เองแล้วชี้ Power Query มาที่สำเนานี้ เครื่องดับเมื่อไหร่
+        สำเนาที่ดึงสำเร็จล่าสุดก็ยังอยู่ ชั่วโมงก่อนหน้าไม่หาย
+
+        เครื่องหนึ่งดึงไม่ได้ไม่ทำให้ขั้นตอนนี้ล้ม — จุดประสงค์ทั้งหมด
+        คือกันไม่ให้เครื่องเดียวทำพังทั้งกระดาน
+        """
+        from core import dws_mirror
+
+        dws_mirror.pull_all(log=self.write_log)
+
+    def send_dashboard_to_feishu(self):
+        """ส่งรูปของโหมด Dashboard เข้ากลุ่ม พร้อมข้อความสรุปที่ copy ตัวเลขได้
+
+        ต่างจากรูป Excel ตรงที่แนบข้อความสรุปยอดไปด้วย ตัวเลขจึงค้นหาและคัดลอกได้
+        ไม่ใช่รูปที่อ่านได้อย่างเดียว และแนบลิงก์หน้าเว็บถ้าตั้ง public_url ไว้
+
+        ส่งไม่สำเร็จไม่ล้มขั้นตอน Feishu — รูป Excel ที่ส่งไปแล้วสำคัญกว่า
+        """
+        try:
+            from dashboard import notify, pipeline as dash_pipeline
+
+            business_date = dash_pipeline.current_business_date()
+            png_dir = dash_pipeline._settings()["png_dir"]
+            result = notify.send_dashboard(
+                business_date, png_dir,
+                log=lambda msg, level="INFO": self.write_log(msg, level=level))
+
+            if result.get("skipped"):
+                self.write_log(f"Dashboard ไม่ได้ส่ง: {result['skipped']}", level="WARN")
+            elif result.get("error"):
+                self.write_log(f"Dashboard ส่งไม่สำเร็จ: {result['error']}", level="ERROR")
+            elif result.get("sent"):
+                self.write_log(
+                    f"Dashboard ส่งเข้ากลุ่ม {result.get('chat_name')} แล้ว "
+                    f"({result['sent']} ข้อความ)", level="SUCCESS")
+        except Exception as e:
+            self.write_log(f"Dashboard ส่งไม่สำเร็จ: {e}", level="ERROR")
+
+    def run_dashboard_stage(self, run_generation=None):
+        """เก็บยอดลง SQLite แล้วทำรูปรายงานจาก HTML (โหมด Dashboard)
+
+        แยกเป็นเมธอดของตัวเองเพื่อให้ run_process อ่านง่าย และเรียกซ้ำได้
+        จากปุ่มบนหน้า Dashboard โดยไม่ต้องรันทั้ง pipeline
+
+        นำเข้าแบบ lazy ตั้งใจ — ชั้น metrics/dashboard ใช้ของนอกหลายตัว
+        (pandas, jinja2, playwright) ถ้า import ตอนเปิดโปรแกรม โปรแกรมจะเปิดช้าลง
+        และถ้าเครื่องไหนยังไม่ได้ลงของพวกนี้ จะเปิดโปรแกรมไม่ขึ้นทั้งตัว
+        ทั้งที่งานเดิม (Excel) ไม่ได้ต้องใช้เลย
+        """
+        self.set_pipeline_state("dashboard", "run")
+        self.write_log("Dashboard started", level="START")
+        try:
+            from dashboard import pipeline as dash_pipeline
+
+            summary = dash_pipeline.run_cycle(
+                log=lambda msg, level="INFO": self.write_log(msg, level=level),
+                should_stop=lambda: self.stop_requested or not self.running,
+            )
+            if summary.get("skipped"):
+                self.set_pipeline_state("dashboard", "skip")
+                self.write_log(f"Dashboard skipped: {summary['skipped']}", level="WARN")
+                return
+
+            for warning in summary.get("warnings", []):
+                self.write_log(f"Dashboard: {warning}", level="WARN")
+
+            self.set_pipeline_state("dashboard", "ok")
+            self.write_log(
+                f"Dashboard done — {summary.get('rows', 0):,} rows, "
+                f"{len(summary.get('png', []))} images, {summary.get('seconds', 0)}s",
+                level="SUCCESS",
+            )
+        except Exception as e:
+            # โหมดใหม่พังต้องไม่ล้มงานเดิมที่ส่งยอดทุกวัน
+            self.set_pipeline_state("dashboard", "error")
+            self.write_log(f"Dashboard ERROR: {e}", level="ERROR")
 
     # ลำดับหัวคอลัมน์ให้ตรงกับไฟล์ export เดิม (DWS9-11.xlsx) เป๊ะทั้ง 18 คอลัมน์
     DWS_EXPORT_HEADERS = [
@@ -4152,37 +4531,53 @@ class App(ctk.CTk):
             self.set_pipeline_state(None, "ready")
             self.write_log("Pipeline started", level="START")
 
-            run_export = bool(run_settings.get("run_export", True))
-            run_chat = bool(run_settings.get("run_chat", True))
+            steps = run_settings.get("steps") or {
+                key: default_on for key, _, _, default_on in PIPELINE_STEPS}
 
-            if run_export:
+            def wanted(key):
+                return bool(steps.get(key))
+
+            # ---------- ขั้นตอนที่ดึงไฟล์ดิบ ----------
+            raw_steps = [
+                ("dws_mirror", "DWS1-8 Mirror", self.run_dws_mirror),
+                ("dws", "DWS", self.run_dws),
+                ("jms_auto", "JMS AUTO", self.run_jms_auto),
+                ("jms_pda", "JMS PDA", self.run_jms_pda),
+                ("realtime", "Realtime DB", self.run_realtime_db),
+            ]
+            active_raw = [step for step in raw_steps if wanted(step[0])]
+
+            if active_raw:
                 if not self.validate_dws_jms_ready():
                     raise Exception("DWS/JMS config is not ready")
                 self.raw_time_source = "scheduler"
-                raw_steps = [
-                    ("dws", "DWS", self.run_dws),
-                    ("jms_auto", "JMS AUTO", self.run_jms_auto),
-                    ("jms_pda", "JMS PDA", self.run_jms_pda),
-                    ("realtime", "Realtime DB", self.run_realtime_db),
-                ]
-                if not self.stop_requested:
-                    self.prewarm_jms_exports(["建包扫描", "卸车扫描"])
-                for idx, (key, name, func) in enumerate(raw_steps, start=1):
-                    if not self.running or self.stop_requested or not self.is_run_generation_active(run_generation):
-                        return
-                    pipeline_error_key = key
-                    self.set_pipeline_state(key, "run")
-                    self.write_log(f"Raw export step {idx}/4 — {name}", level="START")
-                    func()
-                    self.set_pipeline_state(key, "ok")
-                    pipeline_error_key = None
-                    self.set_progress(8 + idx * 9)
-                self.raw_time_source = "manual"
-            else:
-                for key in ["dws", "jms_auto", "jms_pda", "realtime"]:
+                # สั่ง export ล่วงหน้าเฉพาะ scanType ที่ติ๊กไว้จริง
+                prewarm = [st for key, st in (("jms_auto", "建包扫描"),
+                                              ("jms_pda", "卸车扫描"))
+                           if wanted(key)]
+                if prewarm and not self.stop_requested:
+                    self.prewarm_jms_exports(prewarm)
+
+            for key in RAW_STEP_KEYS:
+                if not wanted(key):
                     self.set_pipeline_state(key, "skip")
 
-            if run_chat:
+            for idx, (key, name, func) in enumerate(active_raw, start=1):
+                if not self.running or self.stop_requested or not self.is_run_generation_active(run_generation):
+                    return
+                pipeline_error_key = key
+                self.set_pipeline_state(key, "run")
+                self.write_log(f"Raw export step {idx}/{len(active_raw)} — {name}", level="START")
+                func()
+                self.set_pipeline_state(key, "ok")
+                pipeline_error_key = None
+                self.set_progress(8 + idx * 9)
+
+            if active_raw:
+                self.raw_time_source = "manual"
+
+            # ---------- Excel ----------
+            if wanted("excel"):
                 pipeline_error_key = "excel"
                 self.set_pipeline_state("excel", "run")
                 run_create(out, log=self.write_log, is_running=lambda: self.running and self.is_run_generation_active(run_generation))
@@ -4191,10 +4586,27 @@ class App(ctk.CTk):
                 self.set_pipeline_state("excel", "ok")
                 pipeline_error_key = None
                 self.set_progress(62)
-                if not self.running or not self.is_run_generation_active(run_generation):
-                    self.set_status("Stopped", "#d3868e", "#4a3438")
-                    return
+            else:
+                self.set_pipeline_state("excel", "skip")
 
+            if not self.running or not self.is_run_generation_active(run_generation):
+                self.set_status("Stopped", "#d3868e", "#4a3438")
+                return
+
+            # ---------- Dashboard ----------
+            # ทำหลัง Excel เสมอ เพราะ Excel COM หวงเครื่อง
+            # ถ้าเปิด Chromium แย่ง CPU/RAM ตอนเดียวกันจะพัง
+            if wanted("dashboard"):
+                self.run_dashboard_stage(run_generation)
+            else:
+                self.set_pipeline_state("dashboard", "skip")
+
+            if not self.running or not self.is_run_generation_active(run_generation):
+                self.set_status("Stopped", "#d3868e", "#4a3438")
+                return
+
+            # ---------- ส่งเข้า Feishu ----------
+            if wanted("feishu"):
                 self.write_log("Feishu delivery started", level="START")
                 self.set_status("Sending", "#88c0d0", "#3b4252")
                 pipeline_error_key = "feishu"
@@ -4202,17 +4614,20 @@ class App(ctk.CTk):
                 self.set_progress(76)
                 try:
                     Botmessage.send_ui = lambda stage: self.set_status(stage.capitalize(), "#88c0d0", "#3b4252")
-                    run_send(out, log=self.write_log, is_running=lambda: self.running and self.is_run_generation_active(run_generation))
-                    if self.running and self.is_run_generation_active(run_generation):
-                        self.send_selected_excel_files_to_feishu(
-                            is_running=lambda: self.running and self.is_run_generation_active(run_generation)
-                        )
+                    # ส่งรูป Excel เฉพาะตอนที่ทำ Excel ในรอบนี้ ไม่งั้นจะส่งรูปเก่าซ้ำ
+                    if wanted("excel"):
+                        run_send(out, log=self.write_log, is_running=lambda: self.running and self.is_run_generation_active(run_generation))
+                        if self.running and self.is_run_generation_active(run_generation):
+                            self.send_selected_excel_files_to_feishu(
+                                is_running=lambda: self.running and self.is_run_generation_active(run_generation)
+                            )
+                    if wanted("dashboard") and self.running and self.is_run_generation_active(run_generation):
+                        self.send_dashboard_to_feishu()
                     self.set_pipeline_state("feishu", "ok")
                     pipeline_error_key = None
                 finally:
                     Botmessage.send_ui = None
             else:
-                self.set_pipeline_state("excel", "skip")
                 self.set_pipeline_state("feishu", "skip")
 
             self.set_progress(100)
@@ -4429,6 +4844,10 @@ class App(ctk.CTk):
                 "name": section,
                 "ip": self.config.get(section, "IP", fallback=DEFAULT_CONTROLLER_CLIENTS.get(section, ("", ""))[0]),
                 "port": port,
+                # ที่เก็บไฟล์ที่ดึงมา เก็บในหมวดเดียวกับ IP/PORT ของเครื่องนั้น
+                "pull_folder": self.config.get(section, "pull_folder", fallback=""),
+                "pull_file": self.config.get(section, "pull_file", fallback=""),
+                "pull_enabled": as_bool(self.config.get(section, "pull_enabled", fallback="false"), False),
             })
         self.controller_clients.sort(key=lambda c: list(DEFAULT_CONTROLLER_CLIENTS).index(c["name"]) if c["name"] in DEFAULT_CONTROLLER_CLIENTS else 999)
 

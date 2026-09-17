@@ -8,3 +8,14 @@ Pillow
 pymysql
 openpyxl
 pyinstaller
+
+# --- โหมด Dashboard (ติ๊ก "Dashboard / เว็บ + ย้อนหลัง" ถึงจะใช้) ---
+# ไม่ลงก็เปิดโปรแกรมได้ปกติ แค่ติ๊กโหมดนี้แล้วขั้นตอนนั้นจะ error ขั้นตอนเดียว
+# หลังติดตั้งต้องโหลด chromium ด้วย ครั้งเดียว:  python -m playwright install chromium
+pandas>=2.2          # อ่านไฟล์ JMS สามแสนแถว
+python-calamine      # engine อ่าน xlsx เร็ว
+PyYAML               # metrics_config.yaml
+Jinja2               # template หน้า dashboard
+playwright           # แคป HTML เป็น PNG
+fastapi              # เว็บ dashboard
+uvicorn

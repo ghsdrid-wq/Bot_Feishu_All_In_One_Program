@@ -1,0 +1,224 @@
+# =====================================================================
+# metrics_config.yaml — นิยาม metric / เป้า / เกณฑ์สี ของ Dashboard
+# แก้ไฟล์นี้ได้โดยไม่ต้องแตะโค้ด (แทน conditional formatting ใน Excel เดิม)
+# =====================================================================
+
+# หมายเหตุ: start_hour / raw_dir / ชื่อไฟล์ JMS ถูกทับด้วยค่าจาก config.ini
+# ของโปรแกรมหลักตอนโหลด (ดู metrics/core.py -> _merge_program_config)
+# ค่าที่เขียนไว้ตรงนี้เป็นแค่ค่าสำรองเวลาไม่มี config.ini
+business_day:
+  start_hour: 12  # รอบงานเริ่ม 12:00 ของวัน -> business_date = วันที่เริ่มรอบ
+  shift_a_start: 12       # กะ A 12:00 - 01:00
+  shift_b_start: 1        # กะ B 01:00 - 12:00
+
+# =====================================================================
+# เก็บข้อมูลย้อนหลังกี่วัน
+#
+# ระบบสะสมข้อมูลไปข้างหน้าเอง ไม่ได้ดึงย้อนหลังจากต้นทาง เพราะ:
+#   - AutoPacking เก็บไฟล์ย้อนหลังไว้ 7 วัน (ดึงได้)
+#   - DWS1-8 ดึงจาก API ได้ไกลเท่าที่ DB เก็บ
+#   - DWSPDA / DWSXAUTOPDA ต้องดึงผ่านเว็บ JMS ย้อนหลังไม่ได้  <-- ตัวจำกัด
+# ถ้า backfill เฉพาะบางแหล่ง วันนั้นจะมียอดไม่ครบแล้วอ่านแล้วเข้าใจผิดว่ายอดตก
+# จึงเลือกสะสมไปข้างหน้าตั้งแต่วันที่เริ่มใช้จริง ให้ทุกแหล่งครบพร้อมกัน
+#
+# prune_enabled: true = ลบข้อมูลที่เก่ากว่า retention_days ออกทุกรอบ
+#   ปิดไว้ = เก็บทุกอย่างไม่ลบ (ไฟล์โตขึ้นเรื่อยๆ แต่ย้อนได้ไกล)
+# =====================================================================
+retention:
+  days: 7
+  prune_enabled: true
+
+effective_hour:
+  # ชั่วโมงที่ยอดต่ำกว่านี้ ไม่นับเป็น "ชั่วโมงทำงาน" ตอนหาร Avg
+  # (แก้ปัญหา feeder ที่เปิด/ปิดกลางชั่วโมงแล้วมียอด 3-20 ชิ้น ทำให้ Avg เพี้ยน)
+  #
+  # เป็นค่าเริ่มต้นเท่านั้น — แต่ละแหล่งตั้ง min_qty ของตัวเองได้ใน targets
+  # เพราะหน่วยต่างกันมาก: AutoPacking นับพันชิ้น/ชม. แต่กระสอบนับ 10-15 ใบ/ชม.
+  # ถ้าใช้ 100 กับกระสอบ จะไม่มีชั่วโมงไหนนับเป็นชั่วโมงทำงานเลย
+  min_qty: 100
+
+autopacking:
+  # share ของเครื่องที่รันโปรแกรม auto export รายชั่วโมง (ยืนยัน path แล้ว 17 ก.ย. 2026)
+  # ในโฟลเดอร์นี้มีทั้งไฟล์ของวันปัจจุบัน (00-23.xlsx) และโฟลเดอร์เก็บย้อนหลัง
+  # ชื่อตามวันที่ (2026-09-09 ...) ซึ่งข้างในมี 00-23.xlsx ครบเหมือนกัน
+  raw_dir: "//10.30.32.44/Users/Administrator/Desktop/report/Auto/report"
+  # ไฟล์ชื่อ NN.xlsx เก็บข้อมูลของชั่วโมง NN-1 (NN = เวลาที่ export)
+  # 00.xlsx = 23:00 ของเมื่อวาน — พิสูจน์แล้วจากข้อมูลจริงทุกไฟล์
+  file_hour_offset: -1
+  sheet_throughput: "Throughput"
+  sheet_abnormal: "Abnormal"
+  pipelines:
+    # error_chute = ชื่อช่อง error ของสายนั้น
+    # รายงานเดิมแยก 1号异常口 / 2号异常口 ตาม "สาย" ไม่ใช่ตามเลข Sorting Port
+    # (ตรวจกับข้อมูลจริงแล้ว: ชั่วโมง 15 -> AP1 358 / AP2 197 ตรงกับรายงานเป๊ะ
+    #  ส่วนถ้าแยกตาม port จะได้ 351/204 ซึ่งไม่ตรง)
+    "58987-001": { line: "AP1", feeder_count: 12, display_offset: 0,  error_chute: "ช่อง Error 1" }
+    "58987-002": { line: "AP2", feeder_count: 12, display_offset: 12, error_chute: "ช่อง Error 2" }
+
+dws:
+  # ถ้าไฟล์ไม่ถูกเขียนใหม่เกินนี้ = ตัว exporter บนเครื่องนั้นตาย
+  stale_file_minutes: 90
+  # ถ้าข้อมูลล่าสุดในไฟล์เก่ากว่านี้ = เครื่องไม่ได้ยิงพัสดุ (ถึง exporter จะยังเขียนอยู่)
+  idle_data_minutes: 90
+  sheet: "sheet1"
+  # path ไม่เหมือนกันทุกเครื่อง — ตรวจจาก share จริงแล้ว (17 ก.ย. 2026)
+  #
+  # in_service: false = ยังไม่ได้ใช้งาน (ไม่ใช่เครื่องเสีย)
+  #   -> ข้ามการอ่าน share ไปเลย ไม่เสียเวลา timeout ทุกรอบ
+  #   -> ยังอยู่ในตาราง แสดงเป็น '-'
+  #   -> ไม่ถูกนับเป็นของเสีย และไม่แจ้งเตือน
+  #   วันไหนเริ่มใช้ แค่เปลี่ยนเป็น true แล้วเช็ก path ให้ถูก
+  machines:
+    DWS_01:
+      source: file
+      api_url: "http://10.30.32.32:4000"
+      path: "//10.30.32.32/users/admin/desktop/report/realtime/dws1.xlsx"
+      in_service: false
+    DWS_02:
+      source: api
+      api_url: "http://10.30.32.33:4000"
+      path: "//10.30.32.33/users/admin/desktop/report/realtime/dws2.xlsx"
+      in_service: true
+    DWS_03:
+      source: api
+      api_url: "http://10.30.32.34:4000"
+      path: "//10.30.32.34/users/admin/desktop/report/dws3/realtime/dws3.xlsx"
+      in_service: true
+    DWS_04:
+      source: api
+      api_url: "http://10.30.32.35:4000"
+      path: "//10.30.32.35/users/admin/desktop/report/realtime/dws4.xlsx"
+      in_service: true
+    DWS_05:
+      source: api
+      api_url: "http://10.30.32.36:4000"
+      path: "//10.30.32.36/users/shzto/desktop/report/realtime/dws5.xlsx"
+      in_service: true
+    DWS_06:
+      source: api
+      api_url: "http://10.30.32.37:4000"
+      path: "//10.30.32.37/users/admin/desktop/report/realtime/dws6.xlsx"
+      in_service: true
+    DWS_07:
+      source: api
+      api_url: "http://10.30.32.38:4000"
+      path: "//10.30.32.38/users/admin/desktop/report/dws7/realtime/dws7.xlsx"
+      fallback_path: "//10.30.32.38/users/admin/desktop/report/realtime/dws7.xlsx"
+      in_service: true
+    DWS_08:
+      source: api
+      api_url: "http://10.30.32.39:4000"
+      path: "//10.30.32.39/users/admin/desktop/report/dws8/realtime/dws8.xlsx"
+      in_service: true
+  # 分拣状态 ที่ถือว่าเป็น error
+  error_states: ["回流", "未知"]
+  success_state: "分拣成功"
+
+  # อ่านผ่าน API ของ agent แทนไฟล์ share ได้ (agent v1.1.0 ขึ้นไป)
+  # ข้อดี: ข้อมูลสดทันที ไม่ต้องรอ export รายชั่วโมง และไม่ต้องก๊อปไฟล์ข้ามเน็ตเวิร์ก
+  # ตั้ง source: api รายเครื่อง เครื่องไหนยังไม่อัปเดต agent ก็ปล่อยเป็น file ไปก่อน
+  api_timeout: 20
+
+# DWS9-11 ไม่ได้อ่านจากไฟล์ share — ต่อ MySQL ตรง (ค่าเชื่อมต่อมาจาก config.ini [DWS_JMS])
+dws_db:
+  table: "tab_assembly_dws_sorting_log"
+  # DB เก็บ DwsNo เป็น IP — map เป็นชื่อเครื่อง
+  dws_no_map:
+    "10.30.32.220": DWS_09
+    "10.30.32.221": DWS_10
+    "10.30.32.222": DWS_11
+  # ในตารางมีแถวขยะที่ ScanTime = ปี 9999 ปนอยู่ ต้องกรองทิ้งเสมอ
+  # ไม่งั้นยอดจะเพี้ยนและ business_date จะกระโดดไปปี 9999
+  max_valid_year: 2100
+  # ExceptionCode ที่ "ไม่ใช่ error" — ตรวจจากข้อมูลจริงแล้ว:
+  #   111 = คัดแยกสำเร็จ (ChuteNo ตรงกับ ChuteNos ที่ขอ) มี 31,863 จาก 33,577 แถว
+  #   996 = ตกช่อง 99 ซึ่งเป็นช่อง reject -> อันนี้คือ error จริง
+  # ถ้าเหมาว่า ExceptionCode != 0 คือ error จะได้ error rate 63% ซึ่งผิด
+  normal_exception_codes: [0, 111]
+  exception_labels:
+    "996": "ตกช่อง reject (99)"
+    "992": "ผิดพลาดอื่น"
+  stations:
+    DWS_09: { in_service: true }
+    DWS_10: { in_service: true }
+    DWS_11: { in_service: true }
+
+# ---------------------------------------------------------------------
+# ยอดจาก JMS J&T — ไฟล์ export ที่ bot ดึงมาอยู่แล้ว
+# แยกเป็น 3 source เพราะเป็นคนละงานกัน ถึงจะมาจากไฟล์เดียวกัน
+# ---------------------------------------------------------------------
+jms:
+  # ชื่อไฟล์ export เปลี่ยนได้ในโปรแกรมหลัก (name_auto / name_dwspda)
+  # จึงเก็บเป็น "พาธไฟล์เต็ม" รายตัว แทนที่จะเดาจากโฟลเดอร์ + ชื่อตายตัว
+  # ว่าง = ถอยไปใช้ raw_dir + file แบบเดิม
+  raw_dir: "C:/0DWS"
+  # ตำแหน่งคอลัมน์ในไฟล์ export (16 คอลัมน์ เหมือนกันทั้ง AUTO และ PDA)
+  columns:
+    bag: 1          # หมายเลขกระสอบ
+    scan_time: 3    # เวลาที่สแกน
+    weight: 7       # น้ำหนัก
+    employee: 12    # พนักงานสแกน
+  sources:
+    PDA_AUTO:
+      file: "DWSXAUTOPDA.xlsx"     # 建包扫描 — สแกนบรรจุกระสอบ
+      title: "ยอดบรรจุมือ Autopacking"
+      prefix: "Autopacking_pda"
+      station_count: 54
+    BAG:
+      file: "DWSXAUTOPDA.xlsx"     # ไฟล์เดียวกับ PDA_AUTO แต่นับกระสอบไม่ใช่ชิ้น
+      title: "ยอดบรรจุกระสอบ"
+      prefix: "Autopacking_pda"
+      station_count: 54
+      measure: "distinct_bag"
+    PDA_DWS:
+      file: "DWSPDA.xlsx"          # 卸车扫描 — สแกนกระสอบลงรถ
+      title: "ยอดสแกนลงรถผ่าน PDA"
+      prefix: "Dws_pda"
+      station_count: 16
+      # นับเฉพาะแถวที่ "หมายเลขกระสอบ" ว่าง = พัสดุที่ยิงด้วย PDA ตรงๆ
+      # แถวที่มีเลขกระสอบคือพัสดุที่ถูกนับผ่านกระสอบอยู่แล้ว ถ้านับด้วยจะซ้ำ
+      # (ตรวจแล้วตรงกับรายงานเดิมทุกชั่วโมง เช่น Dws_pda03 = 9,100)
+      exclude_rows_with_bag: true
+
+# =====================================================================
+# เป้าหมายรายชั่วโมงต่อ 1 จุด — หัวใจของการอ่าน dashboard
+#
+# สีในตารางบอก "เทียบเป้าแล้วเป็นยังไง" ไม่ใช่ "ยอดมากหรือน้อย"
+# ถ้าไม่มีเป้า คนอ่านตัวเลข 900 แล้วไม่รู้ว่าดีหรือแย่ ต้องไปถามหัวหน้า
+#
+# ⚠ ค่าด้านล่างนี้ผมคำนวณจากข้อมูลจริงของวันที่ 16 ก.ย. เป็นค่าตั้งต้นเท่านั้น
+#   (target ~ ค่ามัธยฐาน, warn ~ เปอร์เซ็นไทล์ที่ 25 ของชั่วโมงที่ทำงานจริง)
+#   ต้องให้ฝ่ายผลิตเคาะเป้าจริงมาแทน แล้วแก้ตรงนี้
+#
+#   เหตุผลที่ไม่ตั้งเป้าสูงแบบ p75: ถ้าเป้าสูงเกินไป ช่องเกือบทั้งตารางจะเป็น
+#   สีเหลืองหมด ซึ่งทำให้สีไม่มีความหมาย — คนอ่านจะเลิกสนใจสีไปเลย
+#   เป้าที่อ่านได้ดีคือเป้าที่ทำได้ราวครึ่งหนึ่งของเวลา
+# =====================================================================
+targets:
+  AUTOPACK: { per_hour: 1400, warn: 1100, min_qty: 100, label: "ชิ้น/ชม./จุด" }
+  DWS:      { per_hour:  700, warn:  450, min_qty:  50, label: "ชิ้น/ชม./เครื่อง" }
+  PDA_DWS:  { per_hour:  800, warn:  450, min_qty:  50, label: "ชิ้น/ชม./คน" }
+  DWS_ALL:  { per_hour:  700, warn:  450, min_qty:  50, label: "ชิ้น/ชม./จุด" }
+  PDA_AUTO: { per_hour:  520, warn:  300, min_qty:  50, label: "ชิ้น/ชม./คน" }
+  BAG:      { per_hour:   11, warn:    7, min_qty:   3, label: "กระสอบ/ชม./คน" }
+
+# เกณฑ์สีบน dashboard — ใช้แทน conditional formatting เดิม
+thresholds:
+  error_rate_pct:           # % พัสดุตก error ต่อยอดรวม
+    good: 1.0
+    warn: 2.5
+  machine_offline_minutes: 90
+
+# แปลศัพท์จีนที่ติดมากับ raw ให้เป็นไทย — raw ส่งมาเป็นจีนล้วน
+# ถ้าเจอคำใหม่ที่ไม่ได้อยู่ในนี้ จะแสดงคำจีนเดิมไปก่อน (ไม่พัง)
+labels:
+  "1号异常口": "ช่อง Error 1"
+  "2号异常口": "ช่อง Error 2"
+  "最大循环件": "วิ่งเกินรอบ"
+  "无分拣计划": "ไม่มีแผนคัดแยก"
+  "回流": "ไหลกลับ"
+  "未知": "ไม่ทราบสถานะ"
+  "分拣成功": "คัดแยกสำเร็จ"
+  # ชื่อ series ในคำอธิบายกราฟ — raw ใช้รหัสของ source ซึ่งคนอ่านไม่รู้จัก
+  "PDA_DWS": "PDA ลงรถ"
+  "PDA_AUTO": "PDA บรรจุมือ"
