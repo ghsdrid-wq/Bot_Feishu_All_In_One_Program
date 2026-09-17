@@ -1212,6 +1212,7 @@ class App(ctk.CTk):
         self.start_controller_api()
         self.after(1000, self.update_clock)
         self.after(2500, self.refresh_status)
+        self.after(60000, self.check_shift_date_roll)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def ensure_config(self):
@@ -1279,6 +1280,8 @@ class App(ctk.CTk):
     def save_config(self):
         if hasattr(self, "out_entry"):
             self.config["PATH"]["output_dir"] = entry_value(self.out_entry)
+            if hasattr(self, "autopack_dir_entry"):
+                self.config["PATH"]["autopacking_dir"] = entry_value(self.autopack_dir_entry)
             self.config["TIME"]["run_minute"] = clean_input_value(self.minute_var.get()) or "5"
             self.config["TIME"]["start_hour"] = clean_input_value(self.start_hour_var.get()).replace(":00", "") or "15"
             self.config["TIME"]["end_hour"] = clean_input_value(self.end_hour_var.get()).replace(":00", "") or "12"
@@ -2278,6 +2281,9 @@ class App(ctk.CTk):
         ctk.CTkLabel(path, text="ตำแหน่งโฟลเดอร์", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 0), sticky="w")
         self.out_entry = self.path_row(path, 1, "ตำแหน่งเก็บรูป", self.browse_folder)
         self.raw_path_entry = self.path_row(path, 2, "ตำแหน่งเก็บ Excel", self.browse_folder)
+        # โฟลเดอร์ไฟล์ 00-23.xlsx ของ AutoPacking — มาจากโปรแกรม auto export คนละตัว
+        # ปกติเป็น network share ของเครื่องที่รันโปรแกรมนั้น ไม่ใช่โฟลเดอร์ในเครื่องนี้
+        self.autopack_dir_entry = self.path_row(path, 3, "โฟลเดอร์ AutoPacking", self.browse_folder)
 
         # ชื่อไฟล์ดิบ — โปรแกรมใช้ค่าพวกนี้ทั้งตอน export และตอนอ่านเข้า Dashboard
         # (metrics/core.py เอา raw_path + ชื่อพวกนี้มาต่อกันเป็นพาธเต็ม)
@@ -2474,6 +2480,16 @@ class App(ctk.CTk):
 
     def load_values_to_ui(self):
         self.out_entry.insert(0, self.config["PATH"].get("output_dir", ""))
+        if hasattr(self, "autopack_dir_entry"):
+            # ไม่มีใน config.ini ก็เอาค่าที่ตั้งไว้ใน metrics_config.yaml มาโชว์
+            _ap = self.config["PATH"].get("autopacking_dir", "")
+            if not _ap:
+                try:
+                    from metrics import core as _mcore
+                    _ap = (_mcore.load_config().get("autopacking") or {}).get("raw_dir", "")
+                except Exception:
+                    _ap = ""
+            self.autopack_dir_entry.insert(0, _ap)
         self.minute_var.set(self.config["TIME"].get("run_minute", "5"))
         self.start_hour_var.set(f'{int(self.config["TIME"].get("start_hour", "15")):02}:00')
         self.end_hour_var.set(f'{int(self.config["TIME"].get("end_hour", "12")):02}:00')
@@ -2539,17 +2555,76 @@ class App(ctk.CTk):
         ]:
             if hasattr(self, _attr):
                 getattr(self, _attr).set(as_bool(dws.get(_key, "false"), False))
-        # ตอนเปิดแอปทุกครั้ง: วันเริ่ม = วันปัจจุบัน, วันจบ = +1 วันเสมอ
-        # (ไม่ใช้ค่าที่เซฟไว้ กันวันที่เก่าค้างเมื่อเปิดคนละวัน)
-        today = datetime.now().date()
-        try:
-            self.start_date.set_date(today)
-            self.end_date.set_date(today + timedelta(days=1))
-        except Exception:
-            pass
+        # ตั้งวันตามรอบงานจริง ไม่ใช่ "วันนี้" เฉยๆ
+        # (เปิดโปรแกรมตอนตี 3 รอบงานคือของเมื่อวาน ไม่ใช่ของวันนี้)
+        self.apply_shift_dates(reason="เปิดโปรแกรม")
         self.start_hour.set(dws.get("start_hour", "13:00"))
         self.end_hour.set(dws.get("end_hour", "23:00"))
         self.reload_workbook_cards()
+
+    def shift_date_range(self):
+        """วันเริ่ม/วันจบของรอบงานที่กำลังเดินอยู่ตอนนี้
+
+        รอบงานเริ่มบ่าย 2 และจบก่อนเที่ยงของวันถัดไป ช่วง 12:00-13:00 จึงเป็น
+        ตอนที่งานเก่าจบแล้วและงานใหม่ยังไม่เริ่ม — ใช้ 13:00 เป็นจุดตัดวัน
+
+        ก่อน 13:00 = ยังเป็นรอบของเมื่อวาน  /  ตั้งแต่ 13:00 = รอบของวันนี้
+        ปรับจุดตัดได้ที่ [TIME] date_roll_hour ถ้าเวลาทำงานเปลี่ยน
+        """
+        try:
+            roll = int(self.config["TIME"].get("date_roll_hour", "13"))
+        except Exception:
+            roll = 13
+        now = datetime.now()
+        start = now.date() if now.hour >= roll else now.date() - timedelta(days=1)
+        return start, start + timedelta(days=1)
+
+    def apply_shift_dates(self, reason=""):
+        """ตั้ง Start/End ให้ตรงรอบงาน — ไม่แตะถ้าผู้ใช้แก้เอง
+
+        Start/End ใช้กำหนดการลบคอลัมน์ใน Excel และกรองข้อมูล JMS/DWS ด้วย
+        ถ้าไปทับตอนที่คนตั้งไว้เองเพื่อดึงย้อนหลัง จะพังงานเขา
+        จึงเปลี่ยนให้เฉพาะตอนที่ค่าปัจจุบันยังเป็นค่าที่เราตั้งไว้เองรอบก่อน
+        """
+        if not self.is_ui_thread():
+            return
+        if "start_date" not in self.__dict__ or "end_date" not in self.__dict__:
+            return
+
+        want_start, want_end = self.shift_date_range()
+        try:
+            cur_start = self.start_date.get_date()
+            cur_end = self.end_date.get_date()
+        except Exception:
+            cur_start = cur_end = None
+
+        if cur_start == want_start and cur_end == want_end:
+            self._auto_dates = (want_start, want_end)
+            return
+
+        touched_by_user = (getattr(self, "_auto_dates", None) is not None
+                           and (cur_start, cur_end) != self._auto_dates)
+        if touched_by_user:
+            return
+
+        try:
+            self.start_date.set_date(want_start)
+            self.end_date.set_date(want_end)
+        except Exception:
+            return
+        self._auto_dates = (want_start, want_end)
+        if reason:
+            self.write_log(
+                f"ตั้งช่วงวันที่ตามรอบงาน: {want_start} -> {want_end} ({reason})")
+        self.save_config()
+
+    def check_shift_date_roll(self):
+        """เช็คทุกนาทีว่าข้ามจุดตัดวันหรือยัง — โปรแกรมเปิดค้างข้ามวันได้"""
+        try:
+            self.apply_shift_dates(reason="ข้ามรอบงานใหม่")
+        except Exception:
+            pass
+        self.after(60000, self.check_shift_date_roll)
 
     def reload_workbook_cards(self):
         for card in self.workbook_cards:

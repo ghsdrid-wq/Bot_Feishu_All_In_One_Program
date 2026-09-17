@@ -51,6 +51,12 @@ def _merge_program_config(cfg: Dict[str, Any]) -> None:
             return ""
         return (parser[section].get(key) or "").strip().replace('"', "")
 
+    # โฟลเดอร์ไฟล์ดิบ AutoPacking <- [PATH] autopacking_dir
+    # เว้นว่าง = ใช้ค่าที่ตั้งไว้ใน metrics_config.yaml ตามเดิม
+    autopacking_dir = value("PATH", "autopacking_dir")
+    if autopacking_dir:
+        cfg.setdefault("autopacking", {})["raw_dir"] = autopacking_dir
+
     # รอบงานเริ่มกี่โมง <- [TIME] start_hour
     start_hour = value("TIME", "start_hour")
     if start_hour.isdigit():
