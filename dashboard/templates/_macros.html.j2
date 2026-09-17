@@ -153,6 +153,57 @@
 {% endmacro %}
 
 
+
+{# ---------------------------------------------------------------
+   มุมมองมือถือ: หนึ่งจุด = หนึ่งแถว ไม่ต้องเลื่อนแนวนอน
+
+   ตาราง 24 ชั่วโมง x 24 จุด เป็นรูปทรงของจอคอม บนมือถือเห็นทีละ 3-4
+   คอลัมน์ ทำให้ดูภาพรวมไม่ได้เลย ต้องเลื่อนไปมาแล้วจำเอา
+
+   แถวนี้ตอบสามคำถามที่ถามบ่อยสุดในบรรทัดเดียว:
+     จุดนี้ทำได้เท่าไหร่ / เทียบเป้าแล้วเป็นยังไง / ชั่วโมงล่าสุดยังเดินอยู่ไหม
+   อยากดูรายชั่วโมงค่อยกดเปิดตารางเต็มด้านล่าง
+   --------------------------------------------------------------- #}
+{% macro station_cards(p) %}
+<div class="card mob-card">
+  <div class="chart-head">
+    <h2>ยอดต่อจุด
+      {% if p.target.per_hour %}<span class="h2-sub">เป้า {{ "{:,}".format(p.target.per_hour) }} {{ p.target.label }}</span>{% endif %}
+    </h2>
+  </div>
+  <div class="mob-list">
+    {% for g in p.groups %}
+      {% if p.groups|length > 1 %}
+        <div class="mob-group">{{ g.label }} <span>{{ g.active }}/{{ g.stations }} จุดที่เดิน</span></div>
+      {% endif %}
+      {% for row in g.rows %}
+        {% if row.total > 0 or row.in_service %}
+        <div class="mob-row{% if row.total == 0 %} is-zero{% endif %}">
+          <div class="mob-name" title="{{ row.display_name }}">{{ row.display_name }}</div>
+          <div class="mob-total">{{ "{:,}".format(row.total) }}</div>
+          <div class="mob-sub">
+          <div class="mob-bar">
+            {% set pct = row.target_pct if row.target_pct is defined else 0 %}
+            <span class="{{ row.tone }}" style="width:{{ [pct, 100]|min }}%"></span>
+          </div>
+          <div class="mob-meta">
+            <span>เฉลี่ย {{ "{:,}".format(row.avg_per_hour|round|int) }}/ชม.</span>
+            {% if row.last_cell %}
+              <span class="mob-last {{ row.last_cell.css }}">ล่าสุด {{ row.last_cell.text }}</span>
+            {% else %}
+              <span class="mob-last nodata">ล่าสุด –</span>
+            {% endif %}
+          </div>
+          </div>
+        </div>
+        {% endif %}
+      {% endfor %}
+    {% endfor %}
+  </div>
+  <div class="mob-foot">รวมทุกจุด <b>{{ "{:,}".format(p.kpi.total_qty) }}</b> {{ p.unit }}</div>
+</div>
+{% endmacro %}
+
 {% macro heat_table(p) %}
 {% set empty_rows = p.rows | selectattr('total', 'equalto', 0) | list | length %}
 <div class="card table-card{% if hide_empty %} hide-empty{% endif %}">
@@ -300,8 +351,10 @@
 {# ตาราง error รายชั่วโมง — การ์ดแท่งบอกแค่ยอดรวม ไม่บอกว่าพีคตอนไหน #}
 {% macro error_table(p) %}
 {% if p.error_table %}
-<div class="card">
+<div class="card err-hours">
   <h2>พัสดุตก Error รายชั่วโมง</h2>
+  {# ตารางนี้กว้าง 24 คอลัมน์ บนมือถือซ่อนไว้ (ดู CSS .err-hours .tscroll)
+     บรรทัดสรุป "ชั่วโมงที่ตก error มากสุด" ด้านล่างยังอยู่ ซึ่งคือใจความหลัก #}
   <div class="tscroll">
     <table>
       <thead>
@@ -390,6 +443,7 @@
   {{ alert_strip(p) }}
   {{ kpi_tiles(p) }}
   {# ตารางขึ้นก่อนกราฟ — คนดูส่วนใหญ่มาหาตัวเลขในตาราง กราฟเป็นของประกอบ #}
+  {{ station_cards(p) }}
   {{ heat_table(p) }}
   {{ hourly_chart(p) }}
   {{ shift_cards(p) }}

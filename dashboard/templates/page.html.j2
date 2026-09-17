@@ -53,14 +53,32 @@
   .sub { color:var(--ink-2); }
   .stamp { margin-left:auto; color:var(--muted); font-size:12px; }
 
-  /* ---------- tabs ---------- */
-  .tabs { display:flex; gap:2px; border-bottom:1px solid var(--border); margin-bottom:14px; flex-wrap:wrap; }
-  .tabs a {
-    padding:7px 14px; font-size:13px; font-weight:550; color:var(--ink-2);
-    text-decoration:none; border-bottom:2px solid transparent; margin-bottom:-1px;
+  /* ---------- tabs ----------
+     เดิมเป็นข้อความขีดเส้นใต้ บนมือถือดูไม่ออกว่ากดได้ และตกบรรทัด 3 แถว
+     เปลี่ยนเป็นปุ่มมีกรอบ+พื้นหลัง เรียงแถวเดียวเลื่อนแนวนอน
+     มีเงาขอบขวาบอกว่ายังมีต่อ */
+  .tabs-wrap { position:relative; margin-bottom:14px; }
+  .tabs-wrap::after {
+    content:""; position:absolute; right:0; top:0; bottom:10px; width:30px;
+    pointer-events:none; background:linear-gradient(to right,transparent,var(--bg));
   }
-  .tabs a:hover { color:var(--ink); }
-  .tabs a.on { color:var(--accent); border-bottom-color:var(--accent); }
+  .tabs {
+    display:flex; gap:8px; overflow-x:auto; padding:2px 2px 10px;
+    scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch;
+  }
+  .tabs::-webkit-scrollbar { height:4px; }
+  .tabs::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+  .tabs a {
+    flex:0 0 auto; scroll-snap-align:start; white-space:nowrap;
+    padding:9px 16px; font-size:14px; font-weight:600; color:var(--ink-2);
+    text-decoration:none; border:1px solid var(--border); border-radius:999px;
+    background:var(--card);
+  }
+  .tabs a:hover { color:var(--ink); border-color:var(--ink-2); }
+  .tabs a.on {
+    color:#fff; background:var(--accent); border-color:var(--accent);
+    box-shadow:0 1px 4px rgba(0,0,0,.18);
+  }
   .panel { display:none; }
   .panel.on { display:block; }
 
@@ -276,7 +294,55 @@
   .health-item .what { color:var(--ink-2); font-size:11.5px; }
   .health-item.disabled { opacity:.5; }
 
+  /* ---------- มุมมองมือถือ: หนึ่งจุด = หนึ่งแถว ----------
+     จอคอมใช้ตารางเต็ม จอแคบใช้การ์ดนี้แทน สลับกันด้วย media query
+     ไม่ได้ซ่อนข้อมูล — ตารางเต็มยังอยู่ แค่พับเก็บให้กดเปิดเอง */
+  .mob-card { display:none; }
+  .mob-list { padding:2px 0 4px; }
+  .mob-group {
+    font-size:12px; font-weight:700; color:var(--ink-2); letter-spacing:.02em;
+    padding:10px 14px 4px; border-top:1px solid var(--border); margin-top:6px;
+  }
+  .mob-group:first-child { border-top:0; margin-top:0; }
+  .mob-group span { font-weight:500; color:var(--muted); }
+  .mob-row {
+    /* ชื่อได้ความกว้างเต็มบรรทัด — ชื่อพนักงานยาวกว่าเลขจุดหลายเท่า
+       เดิมตั้งคอลัมน์ตายไว้ 40px ซึ่งพอแค่ AutoPacking ที่เป็นตัวเลข */
+    display:grid; grid-template-columns:1fr auto; column-gap:10px; row-gap:5px;
+    align-items:center; padding:10px 14px; border-top:1px solid var(--border);
+  }
+  .mob-sub { grid-column:1 / -1; display:flex; align-items:center; gap:10px; }
+  .mob-sub .mob-bar { flex:1 1 auto; min-width:52px; }
+  .mob-sub .mob-meta { flex:0 0 auto; }
+  .mob-row.is-zero { opacity:.45; }
+  .mob-name {
+    font-weight:700; font-size:15px; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .mob-bar {
+    height:9px; border-radius:6px; background:var(--border); overflow:hidden;
+  }
+  .mob-bar span { display:block; height:100%; border-radius:6px; }
+  .mob-bar span.ok    { background:var(--good); }
+  .mob-bar span.near  { background:var(--warning); }
+  .mob-bar span.under { background:var(--critical); }
+  .mob-bar span.none  { background:transparent; }
+  .mob-total { font-size:17px; font-weight:750; font-variant-numeric:tabular-nums; text-align:right; }
+  .mob-meta { display:flex; gap:10px; font-size:12px; color:var(--muted); }
+  .mob-last { font-weight:600; padding:1px 7px; border-radius:5px; }
+  .mob-foot {
+    padding:11px 14px; border-top:1px solid var(--border); font-size:14px;
+    display:flex; justify-content:space-between;
+  }
+  .mob-foot b { font-size:17px; font-variant-numeric:tabular-nums; }
   @media (max-width: 760px) {
+    /* จอแคบ: การ์ดแทนตาราง — ตารางเต็มพับเก็บไว้ใน <details> */
+    .mob-card { display:block; }
+    .table-card { display:none; }
+    /* ตาราง error 24 คอลัมน์กว้างเกินจอ — ซ่อนตาราง แต่เก็บบรรทัด
+       "ชั่วโมงที่ตก error มากสุด" กับการ์ดแยกตามช่องไว้ ซึ่งคือใจความหลัก */
+    .err-hours .tscroll { display:none; }
+    .full-table-toggle { display:block; }
     .split { grid-template-columns:1fr; }
     .shifts-grid { grid-template-columns:1fr; }
     .kpi-row { grid-template-columns:1fr; }
@@ -297,12 +363,14 @@
   </header>
 
   {% if not single_tab %}
+  <div class="tabs-wrap">
   <nav class="tabs">
     {% for tab in tabs %}
       <a href="#{{ tab.key }}" data-tab="{{ tab.key }}"
          class="{% if tab.key == active_tab %}on{% endif %}">{{ tab.title }}</a>
     {% endfor %}
   </nav>
+  </div>
   {% endif %}
 
   {# ---------------- ภาพรวม ---------------- #}

@@ -126,10 +126,26 @@ def build_view(report: dict, health: Optional[list[dict]] = None,
                 "latest": idx == latest_idx and cell["status"] not in ("no_data",),
             })
         # แยกเป็นสองช่วงกะ เพื่อแทรกคอลัมน์ยอดรวมกะ A ตรงกลางตารางแบบรายงานเดิม
+        # ---- ค่าสรุปสำหรับมุมมองมือถือ ----
+        # มือถือแสดงตารางเต็มไม่ไหว จึงต้องมีตัวเลขที่ย่อยมาแล้วให้ดูแถวเดียวจบ
+        per_hour = target.get("per_hour") or 0
+        target_pct = round(row["avg_per_hour"] / per_hour * 100) if per_hour else 0
+        if not row["total"]:
+            tone = "none"
+        elif target_pct >= 100:
+            tone = "ok"
+        elif target_pct >= 70:
+            tone = "near"
+        else:
+            tone = "under"
+        # ช่องล่าสุดที่มีค่าจริง — บอกว่าตอนนี้จุดนี้ยังเดินอยู่ไหม
+        last_cell = next((c for c in reversed(cells) if c["value"]), None)
+
         table_rows.append({
             **row, "cells": cells,
             "display_name": station_display(row.get("source", ""), row["display_name"]),
             "cells_a": cells[:split], "cells_b": cells[split:],
+            "target_pct": target_pct, "tone": tone, "last_cell": last_cell,
         })
 
     # แถวสรุปท้ายตาราง: ยอดรวมรายชั่วโมง + เฉลี่ยต่อจุดที่เดินในชั่วโมงนั้น

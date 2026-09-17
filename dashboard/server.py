@@ -91,9 +91,32 @@ def _db_stamp(db_path: str) -> float:
     return max(stamps) if stamps else 0.0
 
 
+def _code_stamp() -> float:
+    """mtime ล่าสุดของ template กับโค้ดที่ใช้เรนเดอร์
+
+    หน้า HTML ขึ้นกับทั้งข้อมูลและโค้ด ถ้า key ดูแค่ข้อมูล พอแก้ template
+    แล้วข้อมูลยังไม่เปลี่ยน cache จะคืนหน้าเก่าให้ตลอดจนกว่าจะรีสตาร์ท
+    — เสียเวลาไล่หาสาเหตุมาแล้วสองรอบ และตอนอัปเดตเวอร์ชันจริงก็จะเจอแบบเดียวกัน
+    """
+    stamps = []
+    for path in (os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "templates"),
+                 os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.py"),
+                 os.path.join(os.path.dirname(os.path.abspath(__file__)), "render.py")):
+        try:
+            if os.path.isdir(path):
+                for name in os.listdir(path):
+                    stamps.append(os.path.getmtime(os.path.join(path, name)))
+            else:
+                stamps.append(os.path.getmtime(path))
+        except OSError:
+            pass
+    return max(stamps) if stamps else 0.0
+
+
 def cached_html(business_date: str, theme: str, db_path: str,
                 refresh_seconds: int, nav: dict) -> str:
-    key = (business_date, theme, _db_stamp(db_path),
+    key = (business_date, theme, _db_stamp(db_path), _code_stamp(),
            nav["prev"], nav["next"], nav["prev_disabled"], nav["next_disabled"])
     with _cache_lock:
         hit = _cache.get(key)
