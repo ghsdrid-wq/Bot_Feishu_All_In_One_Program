@@ -183,6 +183,10 @@
     <h2>ยอดต่อจุด
       {% if p.target.per_hour %}<span class="h2-sub">เป้า {{ "{:,}".format(p.target.per_hour) }} {{ p.target.label }}</span>{% endif %}
     </h2>
+    <div class="view-toggle" role="group" aria-label="เลือกมุมมอง">
+      <button type="button" data-view-set="cards">สรุป</button>
+      <button type="button" data-view-set="table">ตาราง</button>
+    </div>
   </div>
   <div class="mob-list">
     {% for g in p.groups %}
@@ -224,6 +228,10 @@
     <h2>ยอดต่อจุด ต่อชั่วโมง
       {% if p.target.per_hour %}<span class="h2-sub">เป้า {{ "{:,}".format(p.target.per_hour) }} {{ p.target.label }}</span>{% endif %}
     </h2>
+    <div class="view-toggle" role="group" aria-label="เลือกมุมมอง">
+      <button type="button" data-view-set="cards">สรุป</button>
+      <button type="button" data-view-set="table">ตาราง</button>
+    </div>
     {% if empty_rows %}
       <label class="toggle">
         <input type="checkbox" class="hide-empty-toggle"{% if hide_empty %} checked{% endif %}>
@@ -456,8 +464,12 @@
   {{ alert_strip(p) }}
   {{ kpi_tiles(p) }}
   {# ตารางขึ้นก่อนกราฟ — คนดูส่วนใหญ่มาหาตัวเลขในตาราง กราฟเป็นของประกอบ #}
+  {# สองมุมมองของข้อมูลชุดเดียวกัน — ปุ่มในหัวการ์ดสลับระหว่างกัน
+   ค่าเริ่มต้นมาจากความกว้างจอ (มือถือ=สรุป จอคอม=ตาราง) แต่เลือกเองทับได้ #}
+<div class="table-views">
   {{ station_cards(p) }}
   {{ heat_table(p) }}
+</div>
   {{ hourly_chart(p) }}
   {{ shift_cards(p) }}
   {{ error_table(p) }}

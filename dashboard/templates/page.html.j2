@@ -177,7 +177,12 @@
   /* ---------- chart ---------- */
   .legend { display:flex; gap:14px; align-items:center; font-size:12px; color:var(--ink-2); }
   .swatch { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:5px; vertical-align:-1px; }
-  .chart-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px; }
+  .chart-head {
+    display:flex; justify-content:space-between; align-items:center;
+    gap:10px 14px; flex-wrap:wrap; margin-bottom:4px;
+  }
+  .chart-head h2 { flex:1 1 auto; }
+  .chart-head .view-toggle { flex:0 0 auto; }
   .chart-head h2 { margin:0; }
 
   /* ---------- table ---------- */
@@ -335,6 +340,23 @@
     display:flex; justify-content:space-between;
   }
   .mob-foot b { font-size:17px; font-variant-numeric:tabular-nums; }
+  /* ---------- ปุ่มสลับมุมมอง สรุป / ตาราง ---------- */
+  .view-toggle { display:inline-flex; border:1px solid var(--border); border-radius:999px; overflow:hidden; }
+  .view-toggle button {
+    appearance:none; border:0; cursor:pointer; padding:5px 14px;
+    font:inherit; font-size:12.5px; font-weight:600;
+    background:var(--card); color:var(--ink-2);
+  }
+  .view-toggle button + button { border-left:1px solid var(--border); }
+  .view-toggle button:hover { color:var(--ink); }
+  .view-toggle button.on { background:var(--accent); color:#fff; }
+
+  /* เลือกเองแล้วให้ทับค่าเริ่มต้นที่มาจากความกว้างจอ
+     ใช้ตัวเลือกที่เจาะจงกว่าแทน !important จะได้ยังอ่านลำดับออก */
+  .table-views[data-view="cards"] .card.mob-card   { display:block; }
+  .table-views[data-view="cards"] .card.table-card { display:none; }
+  .table-views[data-view="table"] .card.mob-card   { display:none; }
+  .table-views[data-view="table"] .card.table-card { display:block; }
   /* กราฟสองสัดส่วน — จอคอมกว้าง มือถือสูง */
   .chart-narrow { display:none; }
   @media (max-width: 760px) {
@@ -342,6 +364,10 @@
     .mob-card { display:block; }
     .table-card { display:none; }
     .chart-wide { display:none; }
+    /* หัวการ์ดบนจอแคบ: ชื่อขึ้นบรรทัดเดียว ปุ่มกับ checkbox ลงมาข้างล่าง */
+    .chart-head h2 { flex:1 1 100%; }
+    .chart-head .view-toggle { order:1; }
+    .chart-head .toggle { order:2; }
     .chart-narrow { display:block; }
     /* ตาราง error 24 คอลัมน์กว้างเกินจอ — ซ่อนตาราง แต่เก็บบรรทัด
        "ชั่วโมงที่ตก error มากสุด" กับการ์ดแยกตามช่องไว้ ซึ่งคือใจความหลัก */
@@ -454,6 +480,50 @@
 </div>
 
 <script>
+  // สลับมุมมอง สรุป <-> ตาราง และจำค่าไว้ในเครื่องผู้ใช้
+  // ค่าเริ่มต้นมาจาก CSS ตามความกว้างจอ ถ้าไม่เคยเลือกก็ไม่ไปยุ่ง
+  (function () {
+    var KEY = "dash-view";
+    var saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (e) {}
+
+    function effective() {
+      if (saved === "cards" || saved === "table") return saved;
+      return window.matchMedia("(max-width: 760px)").matches ? "cards" : "table";
+    }
+
+    function apply(view, persist) {
+      document.querySelectorAll(".table-views").forEach(function (box) {
+        box.setAttribute("data-view", view);
+      });
+      document.querySelectorAll("[data-view-set]").forEach(function (btn) {
+        btn.classList.toggle("on", btn.dataset.viewSet === view);
+      });
+      if (persist) {
+        saved = view;
+        try { localStorage.setItem(KEY, view); } catch (e) {}
+      }
+    }
+
+    // ตอนโหลด: ทาสีปุ่มให้ตรงกับที่เห็นจริง แต่ตั้ง data-view เฉพาะตอนเคยเลือกไว้
+    // ไม่งั้นจะไปล็อกมุมมองไว้จนหมุนจอแล้วไม่เปลี่ยนตาม
+    var view = effective();
+    document.querySelectorAll("[data-view-set]").forEach(function (btn) {
+      btn.classList.toggle("on", btn.dataset.viewSet === view);
+      btn.addEventListener("click", function () { apply(btn.dataset.viewSet, true); });
+    });
+    if (saved) { apply(saved, false); }
+
+    // ยังไม่เคยเลือกเอง = ให้ตามความกว้างจอต่อไป
+    window.matchMedia("(max-width: 760px)").addEventListener("change", function () {
+      if (!saved) {
+        var v = effective();
+        document.querySelectorAll("[data-view-set]").forEach(function (btn) {
+          btn.classList.toggle("on", btn.dataset.viewSet === v);
+        });
+      }
+    });
+  })();
   // ติ๊กเพื่อซ่อนแถวของจุดที่ไม่มียอดทั้งวัน — ตารางยาว 24-30 แถวแต่เดินจริงไม่ถึงครึ่ง
   // ยอดรวมท้ายตารางไม่เปลี่ยน เพราะแถวที่ซ่อนมีค่า 0 อยู่แล้ว
   (function () {
