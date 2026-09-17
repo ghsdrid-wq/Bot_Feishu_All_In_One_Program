@@ -3614,6 +3614,54 @@ class App(ctk.CTk):
                 self.set_ui_running(False)
             self.schedule_pipeline_reset(run_generation)
 
+    def warn_if_range_misses_dashboard(self, steps):
+        """เตือนถ้าช่วง Start/End ไม่ครอบรอบงานที่ Dashboard จะอ่าน
+
+        สองฝั่งคิดเวลาคนละทาง:
+          JMS/DWS export ใช้ Start/End ที่คนตั้งเอง
+          Dashboard คำนวณรอบงานจาก [TIME] start_hour
+        ปกติตรงกันเพราะวันที่เลื่อนให้อัตโนมัติ แต่ถ้าคนตั้งเองเพื่อดึงย้อนหลัง
+        แล้วยังติ๊ก Dashboard ไว้ จะได้ไฟล์ที่ไม่มีข้อมูลของรอบงานปัจจุบัน
+
+        เตือนก่อนเริ่มงาน ตอนที่ยังกดยกเลิกได้ ไม่ใช่หลังเขียนทับไฟล์ไปแล้ว
+        """
+        if not steps.get("dashboard"):
+            return
+        if not (steps.get("jms_auto") or steps.get("jms_pda") or steps.get("dws")):
+            return
+
+        try:
+            from datetime import time as _dtime
+            from metrics import core as _mcore
+            from dashboard import pipeline as _dpipe
+
+            start_text, end_text = self.get_time_range()
+            exp_start = datetime.strptime(start_text, "%Y-%m-%d %H:%M:%S")
+            exp_end = datetime.strptime(end_text, "%Y-%m-%d %H:%M:%S")
+
+            business_date = _dpipe.current_business_date()
+            bd_hour = _mcore.load_config()["business_day"]["start_hour"]
+            bd_start = datetime.combine(
+                datetime.strptime(business_date, "%Y-%m-%d").date(),
+                _dtime(hour=bd_hour))
+            now = datetime.now()
+        except Exception:
+            return          # ตรวจไม่ได้ก็ไม่ควรขวางการทำงาน
+
+        # ต้องครอบตั้งแต่ต้นรอบงานถึงตอนนี้ ไม่งั้นยอดบางช่วงจะขาด
+        if exp_start <= bd_start and now <= exp_end:
+            return
+
+        self.write_log(
+            f"ช่วงที่ตั้งไว้ {exp_start:%d/%m %H:%M} - {exp_end:%d/%m %H:%M} "
+            f"ไม่ครอบรอบงาน {business_date} ที่ Dashboard อ่าน "
+            f"(ต้องครอบ {bd_start:%d/%m %H:%M} ถึงตอนนี้)",
+            level="WARN")
+        self.write_log(
+            "ยอด PDA ลงรถ / บรรจุมือ อาจไม่อัปเดตในรอบนี้ "
+            "— ถ้ากำลังดึงย้อนหลังอยู่ถือว่าปกติ",
+            level="WARN")
+
     def run_dws_mirror(self):
         """ดึงไฟล์ raw ของ DWS1-8 มาเก็บไว้ในเครื่องนี้ ก่อนให้ Excel refresh
 
@@ -4634,6 +4682,9 @@ class App(ctk.CTk):
                 ("realtime", "Realtime DB", self.run_realtime_db),
             ]
             active_raw = [step for step in raw_steps if wanted(step[0])]
+
+            # เตือนก่อนเริ่ม ตอนที่ยังไม่ได้เขียนทับไฟล์อะไร
+            self.warn_if_range_misses_dashboard(steps)
 
             if active_raw:
                 if not self.validate_dws_jms_ready():
