@@ -1213,6 +1213,8 @@ class App(ctk.CTk):
         self.after(1000, self.update_clock)
         self.after(2500, self.refresh_status)
         self.after(60000, self.check_shift_date_roll)
+        # เปิดเว็บเองตอนโปรแกรมเริ่ม ปิดได้ที่ [DASHBOARD] web_autostart
+        self.after(1500, self.dashboard_autostart_web)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def ensure_config(self):
@@ -2044,31 +2046,108 @@ class App(ctk.CTk):
         base = conf["public_url"] or "http://localhost:{}".format(conf["port"])
         return "{}/?t={}".format(base, conf["token"])
 
-    def dashboard_start_web(self):
-        """เปิดเซิร์ฟเวอร์เว็บใน thread แยก — เปิดครั้งเดียวต่อการรันโปรแกรม"""
-        if getattr(self, "dash_web_started", False):
-            self.dashboard_open_web()
+    def dashboard_autostart_web(self):
+        """เปิดเว็บเองตอนโปรแกรมเริ่ม — ไม่ต้องให้คนมากดทุกครั้ง
+
+        ลิงก์ที่ส่งเข้ากลุ่ม Feishu ชี้มาที่เซิร์ฟเวอร์นี้ ถ้าไม่มีใครเปิด
+        คนที่กดลิงก์จะเจอหน้าว่าง ทั้งที่ยอดพร้อมอยู่แล้ว
+        """
+        section = self.config["DASHBOARD"] if "DASHBOARD" in self.config else {}
+        if not as_bool(section.get("web_autostart", "true"), True):
+            self.dashboard_set_web_status("เซิร์ฟเวอร์: ปิดการเปิดอัตโนมัติไว้")
             return
+        self.dashboard_start_web(auto=True)
+
+    def dashboard_set_web_status(self, text, color="#aeb8cc"):
+        if hasattr(self, "dash_web_status"):
+            self.dash_web_status.configure(text=text, text_color=color)
+
+    @staticmethod
+    def dashboard_port_busy(port):
+        """มีอะไรฟังพอร์ตนี้อยู่แล้วไหม"""
+        import socket
+        try:
+            with socket.socket() as sock:
+                sock.settimeout(0.4)
+                return sock.connect_ex(("127.0.0.1", int(port))) == 0
+        except Exception:
+            return False
+
+    def dashboard_start_web(self, auto=False):
+        """เปิดเซิร์ฟเวอร์เว็บใน thread ของโปรแกรมเอง
+
+        เปิดจากในโปรแกรมสำคัญกว่าที่คิด — ถ้ารันเป็น process แยก มันจะถือ
+        โค้ดเวอร์ชันที่โหลดตอนเริ่ม พอแก้โค้ดแล้วเปิดโปรแกรมใหม่ เว็บยังเสิร์ฟ
+        ของเก่าโดยไม่มีใครรู้ (เจอมา 3 ครั้งตอนพัฒนา)
+
+        auto=True คือเปิดเองตอนโปรแกรมเริ่ม — จะไม่เด้ง dialog รบกวน
+        """
+        if getattr(self, "dash_web_started", False):
+            if not auto:
+                self.dashboard_open_web()
+            return
+
         try:
             from dashboard import server as dash_server
+            conf = dash_server.get_settings()
         except Exception as e:
-            messagebox.showerror("Dashboard", "เปิดเซิร์ฟเวอร์ไม่ได้: {}".format(e))
+            self.dashboard_set_web_status("เซิร์ฟเวอร์: เปิดไม่ได้ ({})".format(e), "#bf616a")
+            self.write_log("Dashboard web ERROR: {}".format(e), level="ERROR")
+            if not auto:
+                messagebox.showerror("Dashboard", "เปิดเซิร์ฟเวอร์ไม่ได้: {}".format(e))
+            return
+
+        port = conf["port"]
+
+        # มีอะไรถือพอร์ตอยู่แล้ว = process อื่นค้างอยู่ ห้ามบอกว่าเปิดสำเร็จ
+        # เพราะเว็บที่เห็นจะเป็นของ process นั้น ไม่ใช่โค้ดชุดนี้
+        if self.dashboard_port_busy(port):
+            self.dashboard_set_web_status(
+                "เซิร์ฟเวอร์: พอร์ต {} ถูกใช้อยู่แล้ว (อาจมีตัวเก่าค้าง)".format(port),
+                "#ebcb8b")
+            self.write_log(
+                "Dashboard web: พอร์ต {} ถูกใช้อยู่แล้ว — หน้าเว็บที่เปิดอาจเป็น"
+                " ของโปรแกรมตัวเก่าที่ยังค้างอยู่".format(port), level="WARN")
             return
 
         def serve():
             try:
                 dash_server.serve_forever()
             except Exception as e:
+                self.run_on_ui_thread(
+                    self.dashboard_set_web_status,
+                    "เซิร์ฟเวอร์: หยุดทำงาน ({})".format(e), "#bf616a")
                 self.write_log("Dashboard web ERROR: {}".format(e), level="ERROR")
 
         threading.Thread(target=serve, daemon=True).start()
-        self.dash_web_started = True
-        conf = dash_server.get_settings()
-        self.dash_web_status.configure(
-            text="เซิร์ฟเวอร์: เปิดอยู่ที่พอร์ต {}".format(conf["port"]),
-            text_color="#a3be8c")
-        self.write_log("Dashboard web started on port {}".format(conf["port"]),
-                       level="SUCCESS")
+        self.dashboard_set_web_status("เซิร์ฟเวอร์: กำลังเปิด...", "#88c0d0")
+        self._dash_web_tries = 0
+        self.after(400, lambda: self.dashboard_confirm_web(port))
+
+    def dashboard_confirm_web(self, port):
+        """ยืนยันว่า bind พอร์ตได้จริงก่อนบอกว่าเปิดสำเร็จ
+
+        ของเดิมตั้งสถานะเป็น "เปิดอยู่" ทันทีที่สั่ง thread ทำงาน ซึ่งโกหกได้
+        ถ้าพอร์ตชนแล้ว uvicorn ตายเงียบ หน้าจอจะยังบอกว่าปกติ
+        """
+        if self.dashboard_port_busy(port):
+            self.dash_web_started = True
+            self.dashboard_set_web_status(
+                "เซิร์ฟเวอร์: เปิดอยู่ที่พอร์ต {}".format(port), "#a3be8c")
+            self.write_log("Dashboard web started on port {}".format(port),
+                           level="SUCCESS")
+            return
+
+        self._dash_web_tries = getattr(self, "_dash_web_tries", 0) + 1
+        if self._dash_web_tries < 25:          # รอสูงสุด ~10 วินาที
+            self.after(400, lambda: self.dashboard_confirm_web(port))
+            return
+
+        self.dashboard_set_web_status(
+            "เซิร์ฟเวอร์: เปิดไม่สำเร็จ (พอร์ต {})".format(port), "#bf616a")
+        self.write_log(
+            "Dashboard web: เปิดไม่สำเร็จภายใน 10 วินาที — ตรวจพอร์ต {}".format(port),
+            level="ERROR")
 
     def dashboard_open_web(self):
         if not getattr(self, "dash_web_started", False):
