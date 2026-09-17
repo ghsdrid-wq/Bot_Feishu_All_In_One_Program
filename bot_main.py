@@ -2279,8 +2279,21 @@ class App(ctk.CTk):
         self.out_entry = self.path_row(path, 1, "ตำแหน่งเก็บรูป", self.browse_folder)
         self.raw_path_entry = self.path_row(path, 2, "ตำแหน่งเก็บ Excel", self.browse_folder)
 
+        # ชื่อไฟล์ดิบ — โปรแกรมใช้ค่าพวกนี้ทั้งตอน export และตอนอ่านเข้า Dashboard
+        # (metrics/core.py เอา raw_path + ชื่อพวกนี้มาต่อกันเป็นพาธเต็ม)
+        # ชื่อ attribute ต้องตรงกับที่ save_config/load_values_to_ui มองหาเป๊ะ
+        files = self.make_card(page, "#3b4252", 22)
+        files.grid(row=3, column=0, padx=24, pady=8, sticky="ew")
+        files.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(files, text="ชื่อไฟล์ดิบ", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, columnspan=2, padx=16, pady=(16, 2), sticky="w")
+        ctk.CTkLabel(files, text="ชื่อไฟล์ที่ดึงมาเก็บใน \"ตำแหน่งเก็บ Excel\" ด้านบน — เว้นว่างได้ จะใช้ชื่อมาตรฐาน", text_color="#aeb8cc").grid(row=1, column=0, columnspan=2, padx=16, pady=(0, 6), sticky="w")
+        self.name_dws = self.setting_row(files, 2, "DWS9-11")
+        self.name_dwspda = self.setting_row(files, 3, "PDA ลงรถ")
+        self.name_auto = self.setting_row(files, 4, "PDA บรรจุมือ / กระสอบ")
+        self.name_realtime_db = self.setting_row(files, 5, "Realtime DB")
+
         export = self.make_card(page, "#3b4252", 22)
-        export.grid(row=3, column=0, padx=24, pady=8, sticky="ew")
+        export.grid(row=4, column=0, padx=24, pady=8, sticky="ew")
         for i in range(4):
             export.grid_columnconfigure(i, weight=1 if i in (1, 3) else 0)
         ctk.CTkLabel(export, text="ตั้งค่า DWS/JMS Export", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, columnspan=4, padx=18, pady=(16, 4), sticky="w")
@@ -2293,7 +2306,7 @@ class App(ctk.CTk):
         self.db_name_entry = self.setting_row_wide(export, 7, "DB Name")
 
         feishu = self.make_card(page, "#3b4252", 22)
-        feishu.grid(row=4, column=0, padx=24, pady=8, sticky="ew")
+        feishu.grid(row=5, column=0, padx=24, pady=8, sticky="ew")
         feishu.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(feishu, text="ตั้งค่า Bot Feishu", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 0), sticky="w")
         ctk.CTkLabel(feishu, text="App ID / App Secret ใช้ร่วมกันทั้งส่งรูป, Feishu webhook, DWS PLAN และ JMS USER", text_color="#aeb8cc").grid(row=1, column=0, columnspan=2, padx=16, pady=(4, 6), sticky="w")
@@ -2307,7 +2320,7 @@ class App(ctk.CTk):
 
 
         clients = self.make_card(page, "#3b4252", 22)
-        clients.grid(row=5, column=0, padx=24, pady=(8, 24), sticky="ew")
+        clients.grid(row=6, column=0, padx=24, pady=(8, 24), sticky="ew")
         clients.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(clients, text="ตั้งค่า DWS PLAN Clients", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 4), sticky="w")
         ctk.CTkLabel(clients, text="IP/Port สำหรับหน้า DWS PLAN และ Controller API", text_color="#aeb8cc").grid(row=1, column=0, padx=16, pady=(0, 6), sticky="w")
