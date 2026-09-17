@@ -335,10 +335,14 @@
     display:flex; justify-content:space-between;
   }
   .mob-foot b { font-size:17px; font-variant-numeric:tabular-nums; }
+  /* กราฟสองสัดส่วน — จอคอมกว้าง มือถือสูง */
+  .chart-narrow { display:none; }
   @media (max-width: 760px) {
     /* จอแคบ: การ์ดแทนตาราง — ตารางเต็มพับเก็บไว้ใน <details> */
     .mob-card { display:block; }
     .table-card { display:none; }
+    .chart-wide { display:none; }
+    .chart-narrow { display:block; }
     /* ตาราง error 24 คอลัมน์กว้างเกินจอ — ซ่อนตาราง แต่เก็บบรรทัด
        "ชั่วโมงที่ตก error มากสุด" กับการ์ดแยกตามช่องไว้ ซึ่งคือใจความหลัก */
     .err-hours .tscroll { display:none; }

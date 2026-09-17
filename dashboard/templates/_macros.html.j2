@@ -112,6 +112,39 @@
 {% endmacro %}
 
 
+
+{# วาด SVG กราฟจาก geometry ที่ส่งเข้ามา — ใช้ซ้ำทั้งจอคอมและมือถือ #}
+{% macro chart_svg(p, c) %}
+  <svg viewBox="0 0 {{ c.width }} {{ c.height }}" width="100%" height="{{ c.height }}"
+       preserveAspectRatio="xMidYMid meet"
+       role="img" aria-label="ยอดรายชั่วโมงของ {{ p.title }}">
+    {% for tick in c.ticks %}
+      <line x1="{{ c.pad_left }}" y1="{{ tick.y }}" x2="{{ c.width - 8 }}" y2="{{ tick.y }}"
+            stroke="var(--grid)" stroke-width="1"/>
+      <text x="{{ c.pad_left - 8 }}" y="{{ tick.y + 3.5 }}" text-anchor="end"
+            font-size="10" fill="var(--muted)">{{ tick.label }}</text>
+    {% endfor %}
+    {% for bar in c.bars %}
+      {% for seg in bar.segments %}
+        <rect x="{{ seg.x }}" y="{{ seg.y }}" width="{{ seg.w }}" height="{{ seg.h }}"
+              rx="3" fill="var(--series-{{ seg.series }})">
+          <title>{{ seg.label }} · {{ bar.range_label }} น. · {{ "{:,}".format(seg.qty) }} {{ p.unit }}</title>
+        </rect>
+      {% endfor %}
+      {% if bar.show_label %}
+        <text x="{{ bar.label_x }}" y="{{ bar.label_y }}" text-anchor="middle"
+              font-size="10.5" font-weight="600" fill="var(--ink)">{{ "{:,}".format(bar.total) }}</text>
+      {% endif %}
+      {% if bar.show_hour %}
+        <text x="{{ bar.label_x }}" y="{{ c.height - 6 }}" text-anchor="middle"
+              font-size="10" fill="var(--muted)">{{ bar.label }}</text>
+      {% endif %}
+    {% endfor %}
+    <line x1="{{ c.pad_left }}" y1="{{ c.baseline_y }}" x2="{{ c.width - 8 }}"
+          y2="{{ c.baseline_y }}" stroke="var(--rule)" stroke-width="1"/>
+  </svg>
+{% endmacro %}
+
 {% macro hourly_chart(p) %}
 <div class="card">
   <div class="chart-head">
@@ -124,31 +157,11 @@
     </div>
     {% endif %}
   </div>
-  <svg viewBox="0 0 {{ p.chart.width }} {{ p.chart.height }}" width="100%" height="{{ p.chart.height }}"
-       role="img" aria-label="ยอดรายชั่วโมงของ {{ p.title }}">
-    {% for tick in p.chart.ticks %}
-      <line x1="{{ p.chart.pad_left }}" y1="{{ tick.y }}" x2="{{ p.chart.width - 8 }}" y2="{{ tick.y }}"
-            stroke="var(--grid)" stroke-width="1"/>
-      <text x="{{ p.chart.pad_left - 8 }}" y="{{ tick.y + 3.5 }}" text-anchor="end"
-            font-size="10" fill="var(--muted)">{{ tick.label }}</text>
-    {% endfor %}
-    {% for bar in p.chart.bars %}
-      {% for seg in bar.segments %}
-        <rect x="{{ seg.x }}" y="{{ seg.y }}" width="{{ seg.w }}" height="{{ seg.h }}"
-              rx="3" fill="var(--series-{{ seg.series }})">
-          <title>{{ seg.label }} · {{ bar.range_label }} น. · {{ "{:,}".format(seg.qty) }} {{ p.unit }}</title>
-        </rect>
-      {% endfor %}
-      {% if bar.show_label %}
-        <text x="{{ bar.label_x }}" y="{{ bar.label_y }}" text-anchor="middle"
-              font-size="10.5" font-weight="600" fill="var(--ink)">{{ "{:,}".format(bar.total) }}</text>
-      {% endif %}
-      <text x="{{ bar.label_x }}" y="{{ p.chart.height - 6 }}" text-anchor="middle"
-            font-size="10" fill="var(--muted)">{{ bar.label }}</text>
-    {% endfor %}
-    <line x1="{{ p.chart.pad_left }}" y1="{{ p.chart.baseline_y }}" x2="{{ p.chart.width - 8 }}"
-          y2="{{ p.chart.baseline_y }}" stroke="var(--rule)" stroke-width="1"/>
-  </svg>
+  {# เรนเดอร์สองชุด: จอคอมกว้าง มือถือสูง — สลับกันด้วย CSS
+     ใช้ viewBox เดียวกันไม่ได้ เพราะ 1180x190 พอย่อลงจอ 310px
+     จะเหลือสูงราว 50px แล้วลอยกลางกล่อง อ่านไม่ออกและเปลืองที่ #}
+  <div class="chart-wide">{{ chart_svg(p, p.chart) }}</div>
+  <div class="chart-narrow">{{ chart_svg(p, p.chart_mobile) }}</div>
 </div>
 {% endmacro %}
 

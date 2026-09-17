@@ -173,6 +173,10 @@ def build_view(report: dict, health: Optional[list[dict]] = None,
         per_hour.append({"hour": hour, "stack": stack, "total": sum(stack.values())})
 
     chart = _build_chart(per_hour, lines)
+    # กราฟอีกชุดในสัดส่วนของมือถือ — ใช้ viewBox เดียวกับจอคอมไม่ได้
+    # เพราะ 1180x190 พอย่อลงจอ 310px จะเหลือสูงแค่ ~50px อ่านไม่ออก
+    chart_mobile = _build_chart(per_hour, lines, width=360, height=210,
+                                label_every=3)
     line_labels = [translate(name) for name in lines]
 
     # ---------- error ----------
@@ -302,6 +306,7 @@ def build_view(report: dict, health: Optional[list[dict]] = None,
         "lines": lines,
         "line_labels": line_labels,
         "chart": chart,
+        "chart_mobile": chart_mobile,
         "errors": errors,
         "error_status": error_status,
         "health": health or [],
@@ -419,7 +424,8 @@ def _shift_split(hours: list[int], cfg: dict) -> int:
 
 
 def _build_chart(per_hour: list[dict], lines: list[str],
-                 width: int = 1180, height: int = 190) -> dict:
+                 width: int = 1180, height: int = 190,
+                 label_every: int = 1) -> dict:
     """คำนวณ geometry ของกราฟแท่งซ้อนเอง — ไม่พึ่ง JS library เพราะหน้านี้ต้อง
     render ได้ตอนเครื่องไม่มีเน็ต (Playwright โหลด CDN ไม่ได้ = กราฟหาย)"""
     peak = max((h["total"] for h in per_hour), default=0) or 1
@@ -454,6 +460,8 @@ def _build_chart(per_hour: list[dict], lines: list[str],
             "label_y": round(y_cursor - 6, 1),
             # ป้ายตัวเลขเฉพาะชั่วโมงพีค — ไม่ใส่ทุกแท่ง
             "show_label": item["hour"] == peak_hour and item["total"] > 0,
+            # จอแคบใส่ป้ายชั่วโมงทุก label_every แท่ง ไม่งั้นตัวหนังสือทับกัน
+            "show_hour": idx % label_every == 0,
         })
 
     ticks = []
