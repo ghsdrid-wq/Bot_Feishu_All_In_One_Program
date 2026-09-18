@@ -451,6 +451,12 @@
   :root[data-shot="tables"] .sect-chart,
   :root[data-shot="tables"] .sect-shift,
   :root[data-shot="tables"] .split { display:none; }
+  /* รูปแคปเลื่อนไม่ได้ ถ้าปล่อยให้ตารางอยู่ในกล่องเลื่อน คอลัมน์ขวา
+     (รวม / ชม. / เฉลี่ย / สูงสุด) จะถูกตัดหายไปจากรูป
+     ปล่อยให้ตารางดันความกว้างหน้าเอง แล้ว render_png ขยาย viewport ตาม */
+  :root[data-shot="tables"] .tscroll { overflow:visible; }
+  :root[data-shot="tables"] .err-hours .tscroll { display:block; }
+  :root[data-shot="tables"] body { width:max-content; min-width:100%; }
   /* ---------- ปุ่มสลับมุมมอง สรุป / ตาราง ---------- */
   .view-toggle { display:inline-flex; border:1px solid var(--border); border-radius:999px; overflow:hidden; }
   .view-toggle button {

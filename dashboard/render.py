@@ -24,6 +24,9 @@ from metrics import aggregate, core
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(HERE, "templates")
 DEFAULT_WIDTH = 1440
+# เพดานความกว้างรูป — กว้างกว่านี้ไฟล์ใหญ่โดยไม่ได้อ่านง่ายขึ้น
+# (ตาราง 24 ชั่วโมง + คอลัมน์สรุป กว้างราว 2,000 px)
+MAX_SHOT_WIDTH = 2600
 
 
 def render_html(business_date: str, tab: Optional[str] = None,
@@ -80,6 +83,16 @@ def render_png(html: str, out_path: str, width: int = DEFAULT_WIDTH,
         )
         page.goto("file:///" + os.path.abspath(tmp_html).replace("\\", "/"))
         page.wait_for_load_state("networkidle")
+        # full_page ยืดความสูงให้เอง แต่ความกว้างยึดตาม viewport
+        # ตารางที่กว้างกว่านั้นจะถูกตัดขอบขวาหายไปจากรูป จึงขยาย viewport
+        # ให้เท่าความกว้างจริงของเนื้อหาก่อนแคป
+        full_width = page.evaluate(
+            "Math.ceil(Math.max(document.documentElement.scrollWidth,"
+            " document.body.scrollWidth))")
+        if full_width > width:
+            page.set_viewport_size({"width": min(full_width, MAX_SHOT_WIDTH),
+                                    "height": 200})
+            page.wait_for_timeout(120)      # ให้ layout เซ็ตตัวหลังเปลี่ยนความกว้าง
         page.screenshot(path=out_path, full_page=True)
         browser.close()
     return out_path
