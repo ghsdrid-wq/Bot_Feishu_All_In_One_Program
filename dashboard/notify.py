@@ -43,10 +43,12 @@ def settings() -> dict:
     def flag(key: str, default: bool) -> bool:
         return str(section.get(key, str(default))).strip().lower() in ("1", "true", "yes", "on")
 
-    # ดีฟอลต์เป็นแท็บตารางทั้งหมด ไม่รวม overview เพราะยอดรวมกับกราฟ
-    # อยู่บนตัวการ์ดอยู่แล้ว ส่งรูป overview ซ้ำอีกใบคือของซ้ำ
-    from metrics import aggregate
-    default_tabs = ",".join(t["key"] for t in aggregate.TABS)
+    # ส่งเฉพาะตารางที่ต้องดูรายจุดจริง ๆ
+    # - ไม่เอา overview เพราะยอดรวมกับกราฟอยู่บนตัวการ์ดแล้ว
+    # - ไม่เอา DWS กับ PDA_DWS แยก เพราะ DWS_ALL รวมทั้งสองไว้ในใบเดียว
+    # - ไม่เอา BAG เพราะดูแค่ยอดรวมบนการ์ดก็พอ ไม่ต้องดูรายจุด
+    # ยิ่งแนบรูปเยอะ แชทยิ่งยาวจนเลื่อนหาข้อความอื่นไม่เจอ
+    default_tabs = "AUTOPACK,DWS_ALL,PDA_AUTO"
     tabs = [t.strip() for t in section.get("send_tabs", default_tabs).split(",") if t.strip()]
     return {
         "send_enabled": flag("send_enabled", False),
