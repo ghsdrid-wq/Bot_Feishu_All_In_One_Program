@@ -798,6 +798,58 @@
 </script>
 
 <script>
+  // ย่อตารางให้พอดีความกว้างที่มี จะได้เห็นครบโดยไม่ต้องเลื่อนซ้ายขวา
+  //
+  // ใช้ zoom ไม่ใช่ transform:scale เพราะ zoom ทำให้กล่องหดความสูงตามจริง
+  // ส่วน scale ย่อแต่ภาพ ที่ว่างเดิมยังจองอยู่ จะเหลือช่องโหว่ใต้ตาราง
+  //
+  // ไม่ย่อต่ำกว่า MIN เพราะตัวเลขจะเล็กจนอ่านไม่ออก ถ้าแคบกว่านั้นจริง ๆ
+  // ก็ปล่อยให้เลื่อนเหมือนเดิม ดีกว่าได้ตารางที่อ่านไม่ได้ทั้งใบ
+  (function () {
+    var MIN = 0.55;
+    // โหมดแคปรูปขยาย viewport ให้พอดีเนื้อหาอยู่แล้ว ไม่ต้องย่อซ้ำ
+    if (document.documentElement.dataset.shot === "tables") { return; }
+
+    function fit(box) {
+      var table = box.querySelector("table");
+      if (!table) { return; }
+      table.style.zoom = "";
+      var avail = box.clientWidth;
+      var need = table.scrollWidth;
+      if (!avail || !need || need <= avail) { return; }
+      table.style.zoom = Math.max(MIN, avail / need);
+    }
+
+    function fitAll() {
+      document.querySelectorAll(".tscroll").forEach(fit);
+    }
+
+    // แผงของแท็บที่ยังไม่ได้เปิดถูกซ่อนอยู่ ความกว้างตอนโหลดเป็น 0
+    // วัดครั้งเดียวตอนโหลดจึงได้แค่แท็บแรก ต้องวัดซ้ำทุกครั้งที่มีอะไรเปลี่ยน
+    //
+    // ResizeObserver เป็นทางที่ตรงที่สุด แต่บางเบราว์เซอร์ฝังในแอปไม่ยิง
+    // callback ให้เลย (เจอมาแล้วตอนทดสอบ) จึงไม่พึ่งตัวเดียว
+    // สังเกตที่กล่อง ไม่ใช่ที่ตาราง — ตั้ง zoom แล้วตารางเปลี่ยนขนาด
+    // ถ้าสังเกตที่ตารางจะวนไม่จบ
+    if (window.ResizeObserver) {
+      var ro = new ResizeObserver(function (entries) {
+        entries.forEach(function (e) { fit(e.target); });
+      });
+      document.querySelectorAll(".tscroll").forEach(function (b) { ro.observe(b); });
+    }
+
+    fitAll();
+    window.addEventListener("load", fitAll);
+    window.addEventListener("resize", fitAll);
+    window.addEventListener("hashchange", function () { setTimeout(fitAll, 0); });
+    // กดสลับแท็บ / สลับมุมมอง / ติ๊กซ่อนจุดที่ไม่มียอด — ทุกอย่างทำให้
+    // ความกว้างหรือจำนวนแถวเปลี่ยน วัดใหม่หลังเบราว์เซอร์จัดหน้าเสร็จ
+    document.addEventListener("change", function () { setTimeout(fitAll, 0); });
+    document.addEventListener("click", function () { setTimeout(fitAll, 0); });
+  })();
+</script>
+
+<script>
   // กดค้างแล้วลากตารางไปซ้ายขวาได้ — บนมือถือเบราว์เซอร์ปัดนิ้วให้อยู่แล้ว
   // จึงข้าม pointerType === 'touch' ไป ไม่งั้นจะไปทับการปัดของระบบแล้วสะดุด
   (function () {
