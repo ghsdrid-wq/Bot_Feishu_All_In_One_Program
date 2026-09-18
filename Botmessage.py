@@ -14,6 +14,11 @@ except Exception:
     migrate_old_export_config = None
     save_config = None
 
+try:
+    import card_report
+except Exception:
+    card_report = None
+
 LogFunc = Callable[[str], None]
 RunFunc = Callable[[], bool]
 token_logger: Optional[LogFunc] = None
@@ -110,6 +115,43 @@ def upload_image(token: str, path: str, log: Optional[LogFunc] = None) -> str:
     return res["data"]["image_key"]
 
 
+def send_as_card() -> bool:
+    """ส่งรวมเป็นการ์ดใบเดียว หรือส่งรูปทีละใบแบบเดิม
+
+    ค่าเริ่มต้นเป็นการ์ด เพราะได้ตัวเลขสรุปอ่านก่อนเปิดรูป และกลุ่มไม่รก
+    ปิดได้ที่ [EXPORTS] send_as_card = false ถ้า client เก่าเกินจะแสดงการ์ด
+    """
+    config = load_config()
+    if "EXPORTS" not in config:
+        return True
+    value = config["EXPORTS"].get("send_as_card", "true").strip().lower()
+    return value not in {"0", "false", "no", "n", "off"}
+
+
+def image_captions() -> Dict[str, str]:
+    """ชื่อกำกับรูปในการ์ด
+
+    อ่านคีย์ caption ของแต่ละ [EXPORT:n] ถ้าไม่ได้ตั้งไว้ก็ใช้ชื่อไฟล์
+    ไม่ใช้ชื่อชีตเป็นค่าเริ่มต้น เพราะชื่อชีตเป็นของภายใน (เช่น "Autoformat")
+    คนในกลุ่มอ่านแล้วไม่รู้ว่าเป็นรายงานอะไร
+    """
+    captions: Dict[str, str] = {}
+    try:
+        config = load_config()
+        names = [x.strip() for x in config["EXPORTS"].get("items", "").split(",") if x.strip()]
+        for name in names:
+            sec = config[f"EXPORT:{name}"] if f"EXPORT:{name}" in config else None
+            if not sec:
+                continue
+            filename = sec.get("file", "").strip()
+            if not filename:
+                continue
+            caption = sec.get("caption", "").strip()
+            captions[filename] = caption or os.path.splitext(filename)[0]
+    except Exception:
+        pass
+    return captions
+
 def get_send_file_names() -> List[str]:
     config = load_config()
     if migrate_old_export_config:
@@ -199,6 +241,35 @@ def run_send(folder: str, log: Optional[LogFunc] = None, is_running: Optional[Ru
         for result in executor.map(process_image, valid_images):
             if result:
                 results.append(result)
+
+    # เรียงตามลำดับที่ตั้งไว้ใน config ไม่ใช่ลำดับที่อัปโหลดเสร็จ
+    # (อัปโหลดขนานกัน 3 เส้น ลำดับที่ได้กลับมาจึงสลับได้)
+    order = {os.path.join(folder, f): i for i, f in enumerate(get_send_file_names())}
+    results.sort(key=lambda r: order.get(r[0], 999))
+
+    if card_report and send_as_card():
+        if is_running and not is_running():
+            return
+        write("Sending: card")
+        if send_ui:
+            try:
+                send_ui("send")
+            except Exception:
+                pass
+        captions = image_captions()
+        images = [(captions.get(os.path.basename(img), os.path.splitext(os.path.basename(img))[0]), key)
+                  for img, key in results]
+        summary = card_report.load_summary()
+        if summary is None:
+            write("No dashboard data for this cycle - sending images only")
+        try:
+            card = card_report.build_card(images, summary)
+            write(f"Card size: {card_report.card_size(card):,} bytes")
+            card_report.send_card(token, chat_id, card)
+            return
+        except Exception as e:
+            # การ์ดพังไม่ควรทำให้รายงานไม่ถึงกลุ่ม ตกไปใช้ทางเดิมแทน
+            write(f"Card failed, falling back to plain images: {e}")
 
     for img, key in results:
         if is_running and not is_running():
