@@ -1365,6 +1365,10 @@ class App(ctk.CTk):
             self.config["DWS_JMS"]["end_date"] = self.end_date.get()
             self.config["DWS_JMS"]["start_hour"] = self.start_hour.get()
             self.config["DWS_JMS"]["end_hour"] = self.end_hour.get()
+        if hasattr(self, "send_as_card_var"):
+            if "EXPORTS" not in self.config:
+                self.config["EXPORTS"] = {}
+            self.config["EXPORTS"]["send_as_card"] = str(self.send_as_card_var.get()).lower()
         save_config(self.config)
         self.refresh_scheduler_snapshot()
         if hasattr(self, "controller_client_rows"):
@@ -2403,6 +2407,20 @@ class App(ctk.CTk):
         self.verify_token_entry = self.setting_row(feishu, 7, "VERIFY_TOKEN")
         self.ngrok_url_entry = self.setting_row(feishu, 8, "NGROK_URL")
 
+        # รูปแบบข้อความที่ส่งเข้ากลุ่ม — ต้องมีใน UI เพราะแก้จาก config.ini
+        # ตอนโปรแกรมเปิดอยู่ไม่มีผล (self.config โหลดครั้งเดียวตอนเปิด
+        # แล้วเขียนทับไฟล์ทั้งก้อนตอนบันทึก)
+        self.send_as_card_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            feishu, text="ส่งเป็นการ์ดใบเดียว (สรุป + กราฟกดได้ + รูปตาราง)",
+            variable=self.send_as_card_var, command=self.save_config,
+        ).grid(row=9, column=0, columnspan=2, padx=16, pady=(10, 4), sticky="w")
+        ctk.CTkLabel(
+            feishu,
+            text="ปิดไว้ = ส่งรูปทีละใบแบบเดิม (ใช้ตอนเจอเครื่องที่ Feishu เก่ากว่า 7.1 ซึ่งแสดงการ์ดไม่ได้)",
+            text_color="#aeb8cc",
+        ).grid(row=10, column=0, columnspan=2, padx=16, pady=(0, 14), sticky="w")
+
 
         clients = self.make_card(page, "#3b4252", 22)
         clients.grid(row=6, column=0, padx=24, pady=(8, 24), sticky="ew")
@@ -2634,6 +2652,10 @@ class App(ctk.CTk):
         ]:
             if hasattr(self, _attr):
                 getattr(self, _attr).set(as_bool(dws.get(_key, "false"), False))
+        if hasattr(self, "send_as_card_var"):
+            exports = self.config["EXPORTS"] if "EXPORTS" in self.config else {}
+            self.send_as_card_var.set(as_bool(exports.get("send_as_card", "true"), True))
+
         # ตั้งวันตามรอบงานจริง ไม่ใช่ "วันนี้" เฉยๆ
         # (เปิดโปรแกรมตอนตี 3 รอบงานคือของเมื่อวาน ไม่ใช่ของวันนี้)
         self.apply_shift_dates(reason="เปิดโปรแกรม")
