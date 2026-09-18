@@ -114,6 +114,76 @@
 
 
 {# วาด SVG กราฟจาก geometry ที่ส่งเข้ามา — ใช้ซ้ำทั้งจอคอมและมือถือ #}
+
+{# กราฟเส้นรายชั่วโมง — เส้นละหนึ่งชนิด วัดจากเส้นฐาน ไม่ซ้อนกัน
+   ใช้พิกัดชุดเดียวกับกราฟแท่ง แกน x จึงตรงกันทุกช่อง #}
+{% macro line_svg(p, c) %}
+  <svg viewBox="0 0 {{ c.width }} {{ c.height }}" width="100%" height="{{ c.height }}"
+       preserveAspectRatio="xMidYMid meet" class="linechart"
+       role="img" aria-label="ยอดรายชั่วโมงแยกตามชนิด">
+    {% for tick in c.ticks %}
+      <line x1="{{ c.pad_left }}" y1="{{ tick.y }}" x2="{{ c.width - 8 }}" y2="{{ tick.y }}"
+            stroke="var(--grid)" stroke-width="1"/>
+      <text x="{{ c.pad_left - 8 }}" y="{{ tick.y + 3.5 }}" text-anchor="end"
+            font-size="10" fill="var(--muted)">{{ tick.label }}</text>
+    {% endfor %}
+    {% for bar in c.bars %}
+      {% if bar.show_hour %}
+        <text x="{{ bar.label_x }}" y="{{ c.height - 6 }}" text-anchor="middle"
+              font-size="10" fill="var(--muted)">{{ bar.label }}</text>
+      {% endif %}
+    {% endfor %}
+    {% for ln in c.series_lines %}
+      <g class="ser s{{ ln.series }}" data-series="{{ ln.series }}">
+        <path d="{{ ln.path }}" fill="none" stroke="var(--series-{{ ln.series }})"
+              stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+        {% for pt in ln.points %}
+          {% if pt.qty %}
+            <circle cx="{{ pt.x }}" cy="{{ pt.y }}" r="3"
+                    fill="var(--series-{{ ln.series }})">
+              <title>{{ ln.label }} · {{ "%02d"|format(pt.hour) }}:00 · {{ "{:,}".format(pt.qty) }}</title>
+            </circle>
+          {% endif %}
+        {% endfor %}
+      </g>
+    {% endfor %}
+    <line x1="{{ c.pad_left }}" y1="{{ c.baseline_y }}" x2="{{ c.width - 8 }}"
+          y2="{{ c.baseline_y }}" stroke="var(--rule)" stroke-width="1"/>
+  </svg>
+{% endmacro %}
+
+{# กราฟแท่งซ้อนที่เลือกชนิดได้ — แต่ละชิ้นเก็บพิกัด "เดี่ยว" ไว้ด้วย
+   เวลาเลือกชนิดเดียว JS จะย้ายชิ้นนั้นลงไปตั้งบนเส้นฐานแทนที่จะลอยกลางอากาศ #}
+{% macro stack_svg(p, c) %}
+  <svg viewBox="0 0 {{ c.width }} {{ c.height }}" width="100%" height="{{ c.height }}"
+       preserveAspectRatio="xMidYMid meet" class="stackchart"
+       role="img" aria-label="ยอดรายชั่วโมงแบบแท่งซ้อน">
+    {% for tick in c.ticks %}
+      <line x1="{{ c.pad_left }}" y1="{{ tick.y }}" x2="{{ c.width - 8 }}" y2="{{ tick.y }}"
+            stroke="var(--grid)" stroke-width="1"/>
+      <text x="{{ c.pad_left - 8 }}" y="{{ tick.y + 3.5 }}" text-anchor="end"
+            font-size="10" fill="var(--muted)">{{ tick.label }}</text>
+    {% endfor %}
+    {% for bar in c.bars %}
+      {% for seg in bar.segments %}
+        <rect class="seg s{{ seg.series }}" data-series="{{ seg.series }}"
+              x="{{ seg.x }}" y="{{ seg.y }}" width="{{ seg.w }}" height="{{ seg.h }}"
+              data-y="{{ seg.y }}" data-h="{{ seg.h }}"
+              data-solo-y="{{ (c.baseline_y - seg.h)|round(1) }}"
+              rx="3" fill="var(--series-{{ seg.series }})">
+          <title>{{ seg.label }} · {{ bar.range_label }} น. · {{ "{:,}".format(seg.qty) }}</title>
+        </rect>
+      {% endfor %}
+      {% if bar.show_hour %}
+        <text x="{{ bar.label_x }}" y="{{ c.height - 6 }}" text-anchor="middle"
+              font-size="10" fill="var(--muted)">{{ bar.label }}</text>
+      {% endif %}
+    {% endfor %}
+    <line x1="{{ c.pad_left }}" y1="{{ c.baseline_y }}" x2="{{ c.width - 8 }}"
+          y2="{{ c.baseline_y }}" stroke="var(--rule)" stroke-width="1"/>
+  </svg>
+{% endmacro %}
+
 {% macro chart_svg(p, c) %}
   <svg viewBox="0 0 {{ c.width }} {{ c.height }}" width="100%" height="{{ c.height }}"
        preserveAspectRatio="xMidYMid meet"

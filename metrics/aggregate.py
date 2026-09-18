@@ -272,8 +272,12 @@ def build_overview(conn, business_date: str) -> dict:
             "not_in_service": kpi["not_in_service"],
             "best_station": kpi["best_station"], "best_qty": kpi["best_qty"],
             "per_hour": per_hour,
+            # avg_per_hour ใช้จัดอันดับ "ทำได้กี่ชิ้นต่อชั่วโมง" บนหน้าหลัก
+            # เทียบยอดรวมเฉยๆ ไม่ยุติธรรม เพราะบางจุดเดินไม่ครบชั่วโมง
             "top": [{"name": r["display_name"], "source": r["source"],
-                     "total": r["total"]} for r in top],
+                     "total": r["total"],
+                     "avg_per_hour": r["avg_per_hour"],
+                     "effective_hours": r["effective_hours"]} for r in top],
             "has_data": kpi["total_qty"] > 0,
         })
 

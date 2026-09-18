@@ -9,7 +9,7 @@
     color-scheme: light;
     --page:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink-2:#52514e;
     --muted:#898781; --grid:#e1e0d9; --rule:#c3c2b7; --border:rgba(11,11,11,0.10);
-    --series-1:#2a78d6; --series-2:#eb6834;
+    --series-1:#2a78d6; --series-2:#eb6834; --series-3:#16a34a; --series-4:#9333ea;
     --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;
     --q1:#cde2fb; --q2:#9ec5f4; --q3:#6da7ec; --q4:#3987e5; --q5:#256abf;
     --q1-ink:#0b0b0b; --q2-ink:#0b0b0b; --q3-ink:#0b0b0b; --q4-ink:#fff; --q5-ink:#fff;
@@ -22,7 +22,7 @@
     color-scheme: dark;
     --page:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink-2:#c3c2b7;
     --muted:#898781; --grid:#2c2c2a; --rule:#383835; --border:rgba(255,255,255,0.10);
-    --series-1:#3987e5; --series-2:#d95926;
+    --series-1:#3987e5; --series-2:#d95926; --series-3:#22c55e; --series-4:#a855f7;
     --q1:#104281; --q2:#184f95; --q3:#1c5cab; --q4:#256abf; --q5:#3987e5;
     --q1-ink:#fff; --q2-ink:#fff; --q3-ink:#fff; --down-bg:#4a1f1f; --accent:#3987e5;
     --ok-bg:#12340f;    --ok-ink:#7fdc7f;
@@ -33,7 +33,7 @@
     color-scheme: dark;
     --page:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink-2:#c3c2b7;
     --muted:#898781; --grid:#2c2c2a; --rule:#383835; --border:rgba(255,255,255,0.10);
-    --series-1:#3987e5; --series-2:#d95926;
+    --series-1:#3987e5; --series-2:#d95926; --series-3:#22c55e; --series-4:#a855f7;
     --q1:#104281; --q2:#184f95; --q3:#1c5cab; --q4:#256abf; --q5:#3987e5;
     --q1-ink:#fff; --q2-ink:#fff; --q3-ink:#fff; --down-bg:#4a1f1f; --accent:#3987e5;
     --ok-bg:#12340f;    --ok-ink:#7fdc7f;
@@ -340,6 +340,109 @@
     display:flex; justify-content:space-between;
   }
   .mob-foot b { font-size:17px; font-variant-numeric:tabular-nums; }
+  /* ================= หน้าหลัก =================
+     ตัวเลขเดียวที่ต้องเห็นก่อนคือยอดปล่อยรวม ที่เหลือเป็นตัวประกอบ
+     จึงให้ขนาดต่างกันชัดเจน ไม่ใช่การ์ดเท่ากันหมดแล้วต้องไล่อ่าน */
+  .hero-row { display:grid; grid-template-columns:minmax(260px,1.15fr) 2fr; gap:14px; margin-bottom:14px; }
+  .hero-main {
+    background:var(--card); border:1px solid var(--border); border-radius:14px;
+    padding:18px 20px; border-top:3px solid var(--accent);
+  }
+  .hero-label { font-size:13px; color:var(--muted); font-weight:600; }
+  .hero-label span { color:var(--ink-2); }
+  .hero-number {
+    font-size:52px; font-weight:800; line-height:1.05; letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums; margin:6px 0 10px;
+  }
+  .hero-number i { font-size:17px; font-weight:600; color:var(--muted); font-style:normal; margin-left:8px; }
+  .hero-meter { height:9px; border-radius:6px; background:var(--border); overflow:hidden; margin-bottom:7px; }
+  .hero-meter span { display:block; height:100%; border-radius:6px; }
+  .hero-meter.ok span { background:var(--good); }
+  .hero-meter.near span { background:var(--warning); }
+  .hero-meter.under span { background:var(--critical); }
+  .hero-sub { font-size:13px; color:var(--muted); }
+  .hero-sub b { color:var(--ink); font-variant-numeric:tabular-nums; }
+
+  .hero-side { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .hero-tile {
+    display:flex; flex-direction:column; gap:3px; text-decoration:none; color:inherit;
+    background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 16px;
+  }
+  .hero-tile:hover { border-color:var(--accent); }
+  .hero-tile.empty-src { opacity:.5; }
+  .hero-tile .t-name { font-size:13px; font-weight:650; color:var(--ink-2); }
+  .hero-tile .t-num { font-size:27px; font-weight:750; font-variant-numeric:tabular-nums; line-height:1.15; }
+  .hero-tile .t-unit { font-size:12px; color:var(--muted); }
+  .hero-tile .t-meter { display:block; height:6px; border-radius:4px; background:var(--border); overflow:hidden; margin-top:6px; }
+  .hero-tile .t-meter i { display:block; height:100%; border-radius:4px; }
+  .hero-tile .t-meter.ok i { background:var(--good); }
+  .hero-tile .t-meter.near i { background:var(--warning); }
+  .hero-tile .t-meter.under i { background:var(--critical); }
+  .hero-tile .t-foot { font-size:11.5px; color:var(--muted); margin-top:3px; }
+
+
+  .ov-split { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; }
+  .stat-list { display:flex; flex-direction:column; }
+  .stat-list > div {
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding:10px 0; border-top:1px solid var(--border); font-size:14px;
+  }
+  .stat-list > div:first-child { border-top:0; }
+  .stat-list span { color:var(--muted); }
+  .stat-list b { font-size:21px; font-weight:750; font-variant-numeric:tabular-nums; }
+  .stat-list b i { font-size:12px; font-weight:500; color:var(--muted); font-style:normal; margin-left:5px; }
+  .stat-list b.warn { color:var(--warning); }
+  .stat-list b.bad { color:var(--critical); }
+
+  .rank-list { display:flex; flex-direction:column; }
+  .rank {
+    display:grid; grid-template-columns:24px 1fr auto; gap:10px; align-items:center;
+    padding:9px 0; border-top:1px solid var(--border);
+  }
+  .rank:first-child { border-top:0; }
+  .rank .r-no {
+    width:22px; height:22px; border-radius:50%; background:var(--border);
+    display:grid; place-items:center; font-size:11.5px; font-weight:700; color:var(--ink-2);
+  }
+  .rank:first-child .r-no { background:var(--accent); color:#fff; }
+  .rank .r-name { font-size:14px; font-weight:650; min-width:0; }
+  .rank .r-name i { display:block; font-size:11.5px; font-weight:500; color:var(--muted); font-style:normal; }
+  .rank .r-rate { font-size:15px; font-weight:750; text-align:right; font-variant-numeric:tabular-nums; }
+  .rank .r-rate i { font-size:11px; font-weight:500; color:var(--muted); font-style:normal; margin-left:4px; }
+  /* ---------- กราฟคู่: เส้น (ซ้าย) + แท่งซ้อน (ขวา) ---------- */
+  /* เรียงบน-ล่าง: กราฟทั้งคู่ใช้แกนเวลาเดียวกัน วางซ้อนกันแล้วเทียบตรง
+     ชั่วโมงเดียวกันได้ทันที และแต่ละกราฟได้ความกว้างเต็มไม่ถูกบีบ */
+  .dual { display:grid; grid-template-columns:1fr; gap:14px; }
+  .dual-pane { min-width:0; }
+  .pane-title { font-size:12px; font-weight:650; color:var(--muted); margin-bottom:2px; }
+
+  /* เลือกชนิดแล้วตัวอื่นจาง — ใช้ opacity ไม่ใช่ซ่อน เพื่อให้ยังเห็นบริบทว่า
+     ชนิดที่เลือกเป็นสัดส่วนเท่าไหร่ของทั้งหมด */
+  .ov-chart .ser, .ov-chart .seg { transition:opacity .15s, y .15s, height .15s; }
+  .ov-chart[data-pick] .ser { opacity:.12; }
+  .ov-chart[data-pick] .seg { opacity:.10; }
+  .ov-chart[data-pick="1"] .ser.s1, .ov-chart[data-pick="1"] .seg.s1,
+  .ov-chart[data-pick="2"] .ser.s2, .ov-chart[data-pick="2"] .seg.s2,
+  .ov-chart[data-pick="3"] .ser.s3, .ov-chart[data-pick="3"] .seg.s3,
+  .ov-chart[data-pick="4"] .ser.s4, .ov-chart[data-pick="4"] .seg.s4 { opacity:1; }
+
+  .legend.pick { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .legend.pick .lg {
+    display:inline-flex; align-items:center; gap:6px; cursor:pointer;
+    appearance:none; border:1px solid transparent; border-radius:999px;
+    background:transparent; color:var(--ink-2);
+    font:inherit; font-size:12px; font-weight:600; padding:4px 10px;
+  }
+  .legend.pick .lg:hover { background:var(--border); }
+  .legend.pick .lg.on { border-color:var(--ink-2); color:var(--ink); }
+  .legend.pick .lg-all { color:var(--muted); }
+  /* เลือกดูกราฟเดียวแล้วอีกฝั่งหายไป ที่เหลือขยายเต็มความกว้าง
+     ค่าเริ่มต้นคือทั้งคู่ ไม่ต้องตั้ง data-chart */
+  .chart-head-right { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .ov-chart[data-chart="bar"]  .pane-line { display:none; }
+  .ov-chart[data-chart="line"] .pane-bar  { display:none; }
+  .ov-chart[data-chart="bar"]  .pane-title,
+  .ov-chart[data-chart="line"] .pane-title { display:none; }
   /* ---------- ปุ่มสลับมุมมอง สรุป / ตาราง ---------- */
   .view-toggle { display:inline-flex; border:1px solid var(--border); border-radius:999px; overflow:hidden; }
   .view-toggle button {
@@ -364,6 +467,8 @@
     .mob-card { display:block; }
     .table-card { display:none; }
     .chart-wide { display:none; }
+    .hero-row { grid-template-columns:1fr; }
+    .hero-number { font-size:44px; }
     /* หัวการ์ดบนจอแคบ: ชื่อขึ้นบรรทัดเดียว ปุ่มกับ checkbox ลงมาข้างล่าง */
     .chart-head h2 { flex:1 1 100%; }
     .chart-head .view-toggle { order:1; }
@@ -415,58 +520,118 @@
         </div>
       {% endfor %}
     </div>
-    <div class="ov-grid">
-      {% for src in overview.sources %}
-        <div class="ov {% if not src.has_data %}empty-src{% endif %}">
-          <div class="head">
-            <span class="name">{{ src.title }}</span>
-            <span class="unit">{{ src.unit }}</span>
-          </div>
-          <div class="big">{{ "{:,}".format(src.total) }}</div>
-          {% if src.day_target %}
-            {% set tone = 'ok' if src.achieved_pct >= 100 else ('near' if src.achieved_pct >= 85 else 'under') %}
-            <div class="ov-meter {{ tone }}"><span style="width:{{ [src.achieved_pct, 100]|min }}%"></span></div>
-            <div class="shifts"><b>{{ src.achieved_pct }}%</b> ของเป้า {{ "{:,}".format(src.day_target) }}</div>
-          {% endif %}
-          <div class="shifts">กะ A <b>{{ "{:,}".format(src.shift_a) }}</b> · กะ B <b>{{ "{:,}".format(src.shift_b) }}</b></div>
+    {# ---------- แถวตัวเลขหลัก ---------- #}
+    <div class="hero-row">
+      <div class="hero-main">
+        <div class="hero-label">ยอดปล่อยรวม <span>{{ hero.hero.title }}</span></div>
+        <div class="hero-number">{{ "{:,}".format(hero.hero.total) }}<i>{{ hero.hero.unit }}</i></div>
+        {% if hero.hero.day_target %}
+          {% set tone = "ok" if hero.hero.achieved_pct >= 100 else ("near" if hero.hero.achieved_pct >= 85 else "under") %}
+          <div class="hero-meter {{ tone }}"><span style="width:{{ [hero.hero.achieved_pct, 100]|min }}%"></span></div>
+          <div class="hero-sub"><b>{{ hero.hero.achieved_pct }}%</b> ของเป้า {{ "{:,}".format(hero.hero.day_target) }}</div>
+        {% endif %}
+        <div class="hero-sub">กะ A <b>{{ "{:,}".format(hero.hero.shift_a) }}</b> · กะ B <b>{{ "{:,}".format(hero.hero.shift_b) }}</b></div>
+      </div>
 
-          <svg class="spark" viewBox="0 0 {{ src.spark.width }} {{ src.spark.height }}"
-               width="100%" height="{{ src.spark.height }}" preserveAspectRatio="none"
-               role="img" aria-label="รูปร่างยอดรายชั่วโมงของ {{ src.title }}">
-            {% for b in src.spark.bars %}
-              <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" rx="1"
-                    fill="{% if b.peak %}var(--accent){% else %}var(--q2){% endif %}"/>
-            {% endfor %}
-          </svg>
-
-          <div class="foot">
-            {% if src.top %}
-              {% for t in src.top[:3] %}
-                <div class="row"><span>{{ t.name }}</span><span>{{ "{:,}".format(t.total) }}</span></div>
-              {% endfor %}
+      <div class="hero-side">
+        {% for o in hero.others %}
+          <a class="hero-tile{% if not o.has_data %} empty-src{% endif %}"
+             href="#{{ o.key }}" data-tab="{{ o.key }}">
+            <span class="t-name">{{ o.title }}</span>
+            <span class="t-num">{{ "{:,}".format(o.total) }}</span>
+            <span class="t-unit">{{ o.unit }}</span>
+            {% if o.day_target %}
+              {% set tone = "ok" if o.achieved_pct >= 100 else ("near" if o.achieved_pct >= 85 else "under") %}
+              <span class="t-meter {{ tone }}"><i style="width:{{ [o.achieved_pct, 100]|min }}%"></i></span>
+              <span class="t-foot">{{ o.achieved_pct }}% ของเป้า</span>
             {% else %}
-              <div class="row"><span>ยังไม่มีข้อมูลของวันนี้</span><span></span></div>
+              <span class="t-foot">จุดที่เดิน {{ o.active }}/{{ o.expected }}</span>
             {% endif %}
-            <div class="row" style="color:var(--muted);margin-top:4px">
-              <span>จุดที่เดิน {{ src.active }}/{{ src.expected }}</span>
-              <span style="color:var(--muted)">
-                {%- if src.error_qty %}error {{ src.error_rate_pct }}%{% endif -%}
-              </span>
-            </div>
-            {% if not single_tab %}
-              <a class="more" href="#{{ src.key }}" data-tab="{{ src.key }}">ดูรายละเอียด →</a>
-            {% endif %}
-          </div>
-        </div>
-      {% endfor %}
+          </a>
+        {% endfor %}
+      </div>
     </div>
 
-    <p class="empty" style="margin:2px 2px 10px">
-      หมายเหตุ: แต่ละแหล่งนับคนละหน่วยและคนละขั้นตอนของงาน
-      (พัสดุชิ้นเดียวถูกนับทั้งตอนคัดแยกและตอนสแกนลงรถ) จึงไม่มียอดรวมทั้งคลัง
-    </p>
+    {# ---------- ยอดปล่อยรายชั่วโมง (แท่งซ้อนทุกชนิด) ---------- #}
+    {% if hero.stacked.bars %}
+    <div class="card ov-chart">
+      <div class="chart-head">
+        <h2>ยอดปล่อยรายชั่วโมง<span class="h2-sub">ทุกชนิดรวมกัน · สูงสุด {{ "{:,}".format(hero.stacked.peak) }} ชิ้น</span></h2>
+        <div class="chart-head-right">
+          {# กดที่ชื่อชนิดเพื่อดูเฉพาะชนิดนั้น กดซ้ำเพื่อกลับมาดูทั้งหมด #}
+          <div class="legend pick">
+            {% for s in hero.stacked.series %}
+              <button type="button" class="lg s{{ s.series }}" data-pick="{{ s.series }}">
+                <span class="swatch" style="background:var(--series-{{ s.series }})"></span>{{ s.label }}</button>
+            {% endfor %}
+            <button type="button" class="lg lg-all on" data-pick="all">ทุกชนิด</button>
+          </div>
+          {# เลือกว่าจะดูกราฟไหน ไม่ใช่ทิศทาง — เส้นดูแนวโน้ม แท่งดูสัดส่วน #}
+          <div class="view-toggle" role="group" aria-label="กราฟที่แสดง">
+            <button type="button" data-chart-set="all">ทั้งหมด</button>
+            <button type="button" data-chart-set="bar">แนวตั้ง</button>
+            <button type="button" data-chart-set="line">แบบเส้น</button>
+          </div>
+        </div>
+      </div>
+      {# เส้นกับแท่งใช้พิกัดชุดเดียวกัน เลือกชนิดที่ฝั่งไหนก็ตอบสนองพร้อมกัน #}
+      <div class="dual">
+        <div class="dual-pane pane-line">
+          <div class="pane-title">แยกตามชนิด</div>
+          <div class="chart-wide">{{ m.line_svg(hero.chartctx, hero.stacked.chart) }}</div>
+          <div class="chart-narrow">{{ m.line_svg(hero.chartctx, hero.stacked.chart_mobile) }}</div>
+        </div>
+        <div class="dual-pane pane-bar">
+          <div class="pane-title">รวมทุกชนิด</div>
+          <div class="chart-wide">{{ m.stack_svg(hero.chartctx, hero.stacked.chart) }}</div>
+          <div class="chart-narrow">{{ m.stack_svg(hero.chartctx, hero.stacked.chart_mobile) }}</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
 
-    {{ m.health_card(health, health_is_today) }}
+    {# ---------- สองคอลัมน์ล่าง ---------- #}
+    <div class="ov-split">
+      <div class="card">
+        <h2>ภาพรวมตอนนี้</h2>
+        <div class="stat-list">
+          <div><span>จุดที่เดิน</span><b>{{ hero.active }}<i>/{{ hero.expected }}</i></b></div>
+          <div><span>เฉลี่ยต่อชั่วโมง</span><b>{{ "{:,}".format(hero.avg_per_hour) }}<i>ชิ้น</i></b></div>
+          {% if hero.peak_hour is not none %}
+            <div><span>ชั่วโมงที่ทำได้มากสุด</span><b>{{ "%02d"|format(hero.peak_hour) }}:00<i>น.</i></b></div>
+            <div><span>ยอดของชั่วโมงนั้น</span><b>{{ "{:,}".format(hero.peak_qty) }}<i>ชิ้น</i></b></div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>ต้องดู</h2>
+        <div class="stat-list warn-list">
+          <div><span>พัสดุตก error</span>
+            <b class="{% if hero.error_rate_pct > 2.5 %}bad{% elif hero.error_rate_pct > 1 %}warn{% endif %}">
+              {{ "{:,}".format(hero.error_qty) }}<i>{{ hero.error_rate_pct }}%</i></b></div>
+          <div><span>จุดที่ต่ำกว่าเกณฑ์</span>
+            <b class="{% if hero.below_target %}warn{% endif %}">{{ hero.below_target }}<i>จุด</i></b></div>
+          <div><span>เครื่องที่ไม่ส่งข้อมูล</span>
+            <b class="{% if hero.offline %}bad{% endif %}">{{ hero.offline }}<i>เครื่อง</i></b></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>จุดที่ทำได้มากสุด<span class="h2-sub">ต่อชั่วโมงที่เดินจริง</span></h2>
+        <div class="rank-list">
+          {% for r in hero.ranked %}
+            <div class="rank">
+              <span class="r-no">{{ loop.index }}</span>
+              <span class="r-name">{{ r.name }}<i>{{ r.source }}</i></span>
+              <span class="r-rate">{{ "{:,}".format(r.rate) }}<i>ชิ้น/ชม.</i></span>
+            </div>
+          {% else %}
+            <div class="rank"><span class="r-name">ยังไม่มีข้อมูลของรอบนี้</span></div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
   </section>
   {% endif %}
 
@@ -480,6 +645,75 @@
 </div>
 
 <script>
+  // เลือกชนิดที่ legend แล้วให้กราฟเส้นกับกราฟแท่งตอบสนองพร้อมกัน
+  //
+  // กราฟแท่งเป็นแบบซ้อน พิกัด y ของแต่ละชิ้นจึงขึ้นกับชิ้นที่อยู่ใต้มัน
+  // พอเลือกดูชนิดเดียว ถ้าปล่อยไว้ที่เดิมมันจะลอยกลางอากาศ
+  // จึงย้ายลงไปตั้งบนเส้นฐาน (data-solo-y) แล้วย้ายกลับเมื่อเลิกเลือก
+  (function () {
+    var card = document.querySelector(".ov-chart");
+    if (!card) { return; }
+
+    function apply(pick) {
+      if (pick === "all") { card.removeAttribute("data-pick"); }
+      else { card.setAttribute("data-pick", pick); }
+
+      card.querySelectorAll(".stackchart .seg").forEach(function (r) {
+        var solo = pick !== "all" && r.dataset.series === pick;
+        r.setAttribute("y", solo ? r.dataset.soloY : r.dataset.y);
+      });
+
+      card.querySelectorAll("[data-pick]").forEach(function (b) {
+        if (b === card) { return; }
+        b.classList.toggle("on", b.dataset.pick === pick);
+      });
+    }
+
+    card.querySelectorAll(".legend.pick .lg").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        // กดชนิดเดิมซ้ำ = เลิกเลือก กลับไปดูทั้งหมด
+        var now = card.getAttribute("data-pick");
+        apply(now === btn.dataset.pick ? "all" : btn.dataset.pick);
+      });
+    });
+
+    // กดที่เส้นหรือที่แท่งก็เลือกได้เหมือนกัน ไม่ต้องไปหา legend
+    card.addEventListener("click", function (ev) {
+      var hit = ev.target.closest("[data-series]");
+      if (!hit) { return; }
+      var now = card.getAttribute("data-pick");
+      apply(now === hit.dataset.series ? "all" : hit.dataset.series);
+    });
+  })();
+  // สลับทิศทางกราฟหน้าหลัก แล้วจำไว้เหมือนปุ่มสลับมุมมองตาราง
+  (function () {
+    var KEY = "dash-chart-pick";
+    var OK = { all: 1, bar: 1, line: 1 };
+    var saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (e) {}
+    if (!OK[saved]) { saved = "all"; }
+
+    function apply(mode) {
+      document.querySelectorAll(".ov-chart").forEach(function (c) {
+        // "ทั้งหมด" = ไม่ตั้ง attribute เลย ให้ CSS ปกติทำงาน
+        if (mode === "all") { c.removeAttribute("data-chart"); }
+        else { c.setAttribute("data-chart", mode); }
+      });
+      document.querySelectorAll("[data-chart-set]").forEach(function (b) {
+        b.classList.toggle("on", b.dataset.chartSet === mode);
+      });
+    }
+
+    apply(saved);
+
+    document.querySelectorAll("[data-chart-set]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        saved = btn.dataset.chartSet;
+        try { localStorage.setItem(KEY, saved); } catch (e) {}
+        apply(saved);
+      });
+    });
+  })();
   // สลับมุมมอง สรุป <-> ตาราง และจำค่าไว้ในเครื่องผู้ใช้
   // ค่าเริ่มต้นมาจาก CSS ตามความกว้างจอ ถ้าไม่เคยเลือกก็ไม่ไปยุ่ง
   (function () {

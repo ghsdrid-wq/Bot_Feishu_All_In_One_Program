@@ -473,9 +473,25 @@ def _build_chart(per_hour: list[dict], lines: list[str],
             "y": round(pad_top + plot_h - (value / peak * plot_h), 1),
         })
 
+    # เส้นของแต่ละชนิด — ใช้พิกัดชุดเดียวกับแท่ง เพื่อให้กราฟคู่ซ้าย-ขวาตรงกันเป๊ะ
+    # เส้นวัดจากเส้นฐานเสมอ (ไม่ซ้อนกัน) จึงเทียบชนิดต่อชนิดได้ตรงๆ
+    series_lines = []
+    for s_idx, line in enumerate(lines):
+        points = []
+        for idx, item in enumerate(per_hour):
+            qty = item["stack"].get(line, 0)
+            x = pad_left + slot * idx + slot / 2
+            y = pad_top + plot_h - (qty / peak * plot_h)
+            points.append({"x": round(x, 1), "y": round(y, 1),
+                           "qty": qty, "hour": item["hour"]})
+        path = "M" + " L".join(f'{pt["x"]},{pt["y"]}' for pt in points)
+        series_lines.append({"series": s_idx + 1, "label": translate(line),
+                             "path": path, "points": points})
+
     return {
         "width": width, "height": height, "bars": bars, "ticks": ticks,
         "baseline_y": pad_top + plot_h, "pad_left": pad_left, "peak": peak,
+        "series_lines": series_lines,
     }
 
 
@@ -535,6 +551,8 @@ def build_page(conn, business_date: str, only_tab: Optional[str] = None,
 
     show_overview = wanted is None or wanted == "overview"
     overview_view = _build_overview_view(overview) if show_overview else None
+    overview_hero = (_build_overview_hero(overview_view, health, core.load_config())
+                     if show_overview else None)
     overview_alerts = (_overview_alerts(overview_view, health, core.load_config())
                        if show_overview else [])
     return {
@@ -549,6 +567,7 @@ def build_page(conn, business_date: str, only_tab: Optional[str] = None,
         "single_tab": wanted is not None,
         "show_overview": show_overview,
         "overview": overview_view,
+        "hero": overview_hero,
         "overview_alerts": overview_alerts,
         "panels": panels,
         "health": health,
@@ -639,6 +658,137 @@ def _build_overview_view(overview: dict) -> dict:
                        "end_label": hour_end_label(h)}
                       for h in overview["hours"]]}
 
+
+
+# =====================================================================
+# หน้าหลัก — สรุปทั้งคลังในหน้าเดียว
+# =====================================================================
+
+# ยอดปล่อยรวมนับจาก AutoPacking อย่างเดียว
+# ชนิดอื่นเป็นคนละงานและมีโอกาสนับพัสดุชิ้นเดียวซ้ำกัน (เช่น PDA ลงรถ
+# ยิงพัสดุที่ผ่าน DWS มาแล้ว) เอามาบวกรวมจะได้ตัวเลขที่ไม่มีความหมาย
+HERO_SOURCE = "AUTOPACK"
+
+
+def _build_overview_hero(overview: dict, health: list, cfg: dict) -> dict:
+    """ตัวเลขชุดที่ต้องเห็นภายในวินาทีแรก"""
+    by_key = {s["key"]: s for s in overview["sources"]}
+    hero = by_key.get(HERO_SOURCE) or (overview["sources"][0]
+                                       if overview["sources"] else {})
+
+    others = [s for s in overview["sources"] if s["key"] != HERO_SOURCE]
+
+    # ชั่วโมงที่ทำได้มากสุด — บอกว่าพีคอยู่ช่วงไหนของกะ
+    per_hour = hero.get("per_hour") or []
+    hours = overview.get("hours") or []
+    peak_idx = per_hour.index(max(per_hour)) if any(per_hour) else None
+    if peak_idx is not None and peak_idx < len(hours):
+        _ph = hours[peak_idx]
+        peak_hour = _ph["hour"] if isinstance(_ph, dict) else _ph
+    else:
+        peak_hour = None
+
+    worked = hero.get("worked_hours") or 0
+    avg_per_hour = round(hero.get("total", 0) / worked) if worked else 0
+
+    # จุดที่ทำได้มากสุด รวมทุกชนิด เรียงตามยอดต่อชั่วโมงจริง
+    ranked = []
+    for src in overview["sources"]:
+        for t in src.get("top") or []:
+            rate = t.get("avg_per_hour") or 0
+            if rate <= 0:
+                continue
+            ranked.append({"name": t["name"], "source": src["title"],
+                           "key": src["key"], "rate": round(rate),
+                           "total": t.get("total", 0)})
+    ranked.sort(key=lambda r: -r["rate"])
+
+    # สิ่งผิดปกติ — นับจากทุกชนิด ไม่ใช่เฉพาะ AutoPacking
+    offline = sum(1 for h in (health or [])
+                  if h.get("health") in ("offline", "stale"))
+    below = 0
+    targets = cfg.get("targets") or {}
+    for src in overview["sources"]:
+        tgt = (targets.get(src["key"]) or {}).get("warn") or 0
+        if not tgt:
+            continue
+        for t in src.get("top") or []:
+            if 0 < (t.get("avg_per_hour") or 0) < tgt:
+                below += 1
+
+    return {
+        "hero": hero,
+        "others": others,
+        "peak_hour": peak_hour,
+        "peak_qty": max(per_hour) if any(per_hour) else 0,
+        "avg_per_hour": avg_per_hour,
+        "active": hero.get("active", 0),
+        "expected": hero.get("expected", 0),
+        "ranked": ranked[:6],
+        "error_qty": hero.get("error_qty", 0),
+        "error_rate_pct": hero.get("error_rate_pct", 0),
+        "below_target": below,
+        "offline": offline,
+        "stacked": _overview_stacked(overview),
+        # macro chart_svg ใช้ title/unit ไปทำ tooltip กับ aria-label
+        "chartctx": {"title": "ยอดปล่อยทุกชนิด", "unit": "ชิ้น"},
+    }
+
+
+def _overview_stacked(overview: dict) -> dict:
+    """กราฟแท่งซ้อนรายชั่วโมง — แต่ละชั้นคือชนิดการปล่อยงานหนึ่งชนิด
+
+    ใช้หน่วย "ชิ้น" เท่านั้น จึงไม่รวมกระสอบเข้ามา (คนละหน่วย ซ้อนกันไม่ได้)
+    """
+    parts = [s for s in overview["sources"] if s.get("unit") == "ชิ้น"]
+    hours = overview.get("hours") or []
+    if not parts or not hours:
+        return {"bars": [], "peak": 0, "series": []}
+
+    totals = []
+    for idx in range(len(hours)):
+        totals.append(sum((p["per_hour"][idx] if idx < len(p["per_hour"]) else 0)
+                          for p in parts))
+    peak = max(totals) if totals else 0
+
+    def hour_of(item):
+        """hours เป็น int ตอนมาจาก overview ดิบ และเป็น dict หลังผ่าน view"""
+        return item["hour"] if isinstance(item, dict) else item
+
+    bars = []
+    for idx, item in enumerate(hours):
+        hour = hour_of(item)
+        segs = []
+        for s_idx, part in enumerate(parts):
+            qty = part["per_hour"][idx] if idx < len(part["per_hour"]) else 0
+            if qty <= 0:
+                continue
+            segs.append({"series": s_idx + 1, "label": part["title"],
+                         "qty": qty,
+                         "pct": round(qty / peak * 100, 2) if peak else 0})
+        bars.append({"hour": hour, "label": hour_label(hour),
+                     "range_label": hour_range_label(hour),
+                     "total": totals[idx], "segments": segs,
+                     "pct": round(totals[idx] / peak * 100, 2) if peak else 0,
+                     "is_peak": peak > 0 and totals[idx] == peak})
+    # กราฟแท่งตั้ง — ใช้ตัวสร้าง geometry ตัวเดียวกับแท็บรายแหล่ง
+    # ชั้นของแท่งคือ "ชนิดการปล่อยงาน" แทนที่จะเป็นสาย AP1/AP2
+    stack_rows = []
+    for idx, item in enumerate(hours):
+        hour = hour_of(item)
+        stack = {p["title"]: (p["per_hour"][idx] if idx < len(p["per_hour"]) else 0)
+                 for p in parts}
+        stack_rows.append({"hour": hour, "stack": stack,
+                           "total": sum(stack.values())})
+    lines = [p["title"] for p in parts]
+    vertical = _build_chart(stack_rows, lines, width=1180, height=210)
+    vertical_mobile = _build_chart(stack_rows, lines, width=360, height=220,
+                                   label_every=3)
+
+    return {"bars": bars, "peak": peak,
+            "chart": vertical, "chart_mobile": vertical_mobile,
+            "series": [{"label": p["title"], "series": i + 1}
+                       for i, p in enumerate(parts)]}
 
 def _sparkline(values: list[int], width: int = 210, height: int = 34) -> dict:
     """กราฟเส้นจิ๋วในการ์ดสรุป — บอกรูปร่างของวัน ไม่ต้องอ่านค่า"""
