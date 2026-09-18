@@ -90,7 +90,7 @@ def _chart(spec: Dict[str, Any]) -> Dict[str, Any]:
             "chart_spec": spec, "preview": True, "margin": "4px 0"}
 
 
-def _summary_elements(summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _summary_elements(summary: Dict[str, Any], link: str = "") -> List[Dict[str, Any]]:
     hero, main = summary["hero"], summary["main"]
     out: List[Dict[str, Any]] = []
 
@@ -109,9 +109,14 @@ def _summary_elements(summary: Dict[str, Any]) -> List[Dict[str, Any]]:
             "**{}** {}".format(s["title"], _money(s["total"])) for s in others)})
 
     out.append({"tag": "markdown", "content":
-                "**ต้องดู** — พัสดุตก error {} ({}%) · จุดต่ำกว่าเกณฑ์ {} · เครื่องไม่ส่งข้อมูล {}".format(
+                "พัสดุตก error {} ({}%) · จุดต่ำกว่าเกณฑ์ {} · เครื่องไม่ส่งข้อมูล {}".format(
                     _money(hero.get("error_qty", 0)), hero.get("error_rate_pct", 0),
                     hero.get("below_target", 0), hero.get("offline", 0))})
+
+    # ปุ่มลิงก์อยู่ใต้ตัวเลขสรุปทั้งหมด ก่อนถึงกราฟ — ยังอยู่ในครึ่งบนที่เห็น
+    # ก่อนเลื่อน แต่ไม่ไปคั่นกลางบล็อกตัวเลขให้อ่านสะดุด
+    if link:
+        out.append(_link_button(link))
 
     rows = _chart_rows(hero, main)
     if rows:
@@ -138,7 +143,7 @@ def _link_button(url: str) -> Dict[str, Any]:
     ลิงก์ที่ปนอยู่ในบรรทัดข้อความคนเลื่อนผ่านโดยไม่เห็น"""
     return {
         "tag": "button",
-        "text": {"tag": "plain_text", "content": "เปิดหน้าเว็บ Dashboard"},
+        "text": {"tag": "plain_text", "content": "เปิดหน้าเว็บดูทุกแท็บ"},
         "type": "primary",
         "width": "fill",
         "size": "medium",
@@ -153,15 +158,11 @@ def build_card(images: Sequence[Tuple[str, str]],
                link: str = "") -> Dict[str, Any]:
     """images = ลำดับของ (คำบรรยาย, img_key) ที่อัปโหลดไว้แล้ว
 
-    link = ลิงก์หน้าเว็บ ถ้าใส่มาจะวางเป็นปุ่มไว้ใต้ยอดรวม (บนสุดของการ์ด)
+    link = ลิงก์หน้าเว็บ ถ้าใส่มาจะวางเป็นปุ่มไว้ใต้บล็อกตัวเลขสรุป ก่อนถึงกราฟ
     """
     elements: List[Dict[str, Any]] = []
     if summary:
-        parts = _summary_elements(summary)
-        if link:
-            # แทรกใต้ยอดรวมบรรทัดแรก ให้อยู่ครึ่งบนที่คนเห็นก่อนเลื่อน
-            parts.insert(1, _link_button(link))
-        elements.extend(parts)
+        elements.extend(_summary_elements(summary, link))
     elif link:
         elements.append(_link_button(link))
 
