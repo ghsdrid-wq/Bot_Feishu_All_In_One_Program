@@ -443,6 +443,14 @@
   .ov-chart[data-chart="line"] .pane-bar  { display:none; }
   .ov-chart[data-chart="bar"]  .pane-title,
   .ov-chart[data-chart="line"] .pane-title { display:none; }
+  /* โหมดแคปรูปส่งเข้าแชท: เอาเฉพาะตาราง
+     หน้าเว็บเต็มมีการ์ดยอด กราฟ และสรุปกะด้วย ซึ่งซ้ำกับตัวการ์ด Feishu
+     ที่แนบรูปนี้ไป พอแนบทั้งหน้าแชทเลยยาวจนเลื่อนหาอย่างอื่นไม่เจอ */
+  :root[data-shot="tables"] .alerts,
+  :root[data-shot="tables"] .kpi-row,
+  :root[data-shot="tables"] .sect-chart,
+  :root[data-shot="tables"] .sect-shift,
+  :root[data-shot="tables"] .split { display:none; }
   /* ---------- ปุ่มสลับมุมมอง สรุป / ตาราง ---------- */
   .view-toggle { display:inline-flex; border:1px solid var(--border); border-radius:999px; overflow:hidden; }
   .view-toggle button {

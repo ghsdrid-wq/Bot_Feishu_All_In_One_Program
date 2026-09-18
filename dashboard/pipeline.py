@@ -41,6 +41,9 @@ def _settings() -> dict:
         "enabled": flag("enabled", True),
         "render_png": flag("render_png", True),
         "hide_empty_png": flag("hide_empty_png", True),
+        # รูปที่ส่งเข้าแชทเอาเฉพาะตาราง — ยอดรวมกับกราฟอยู่บนตัวการ์ด Feishu
+        # อยู่แล้ว แนบทั้งหน้ามาอีกทำให้แชทยาวจนเลื่อนหาอย่างอื่นไม่เจอ
+        "tables_only_png": flag("tables_only_png", True),
         "png_dir": section.get("png_dir", "").strip()
                    or os.path.join(core.PROJECT_ROOT, "out"),
         # โฟลเดอร์ raw ของ JMS ใช้ตัวเดียวกับ [DWS_JMS] raw_path ของโปรแกรมหลัก
@@ -116,7 +119,8 @@ def run_cycle(log: Optional[LogFunc] = None,
             from dashboard import render
             paths = render.render_all_tabs(
                 business_date, cfg["png_dir"], db_path,
-                hide_empty=cfg["hide_empty_png"])
+                hide_empty=cfg["hide_empty_png"],
+                tables_only=cfg["tables_only_png"])
             summary["png"] = paths
             write(f"Dashboard PNG: {len(paths)} ใบ -> {cfg['png_dir']}")
         except Exception as exc:

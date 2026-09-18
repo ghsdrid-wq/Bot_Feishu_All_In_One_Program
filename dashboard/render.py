@@ -28,7 +28,8 @@ DEFAULT_WIDTH = 1440
 
 def render_html(business_date: str, tab: Optional[str] = None,
                 db_path: str = core.DEFAULT_DB_PATH,
-                theme: str = "light", hide_empty: bool = False) -> str:
+                theme: str = "light", hide_empty: bool = False,
+                tables_only: bool = False) -> str:
     """tab=None -> หน้าเต็มพร้อมแท็บทั้งหมด (สำหรับเว็บ)
     tab='AUTOPACK' -> เฉพาะแผงนั้น ไม่มีแถบแท็บ (สำหรับแคป PNG ส่ง Feishu)"""
     # อ่านอย่างเดียวพอ — การ render ไม่ได้เขียนอะไรลง DB
@@ -45,8 +46,15 @@ def render_html(business_date: str, tab: Optional[str] = None,
         lstrip_blocks=True,
     )
     html = env.get_template("page.html.j2").render(**model)
+    attrs = ""
     if theme == "dark":
-        html = html.replace('<html lang="th">', '<html lang="th" data-theme="dark">')
+        attrs += ' data-theme="dark"'
+    if tables_only:
+        # ซ่อนด้วย CSS ไม่ใช่ไม่เรนเดอร์ — ใช้เทมเพลตเดียวกับหน้าเว็บ
+        # ถ้าแยกเทมเพลตจะต้องตามแก้สองที่ทุกครั้งที่ตารางเปลี่ยน
+        attrs += ' data-shot="tables"'
+    if attrs:
+        html = html.replace('<html lang="th">', '<html lang="th"' + attrs + '>')
     return html
 
 
@@ -80,13 +88,16 @@ def render_png(html: str, out_path: str, width: int = DEFAULT_WIDTH,
 def render_all_tabs(business_date: str, out_dir: str,
                     db_path: str = core.DEFAULT_DB_PATH,
                     width: int = DEFAULT_WIDTH, theme: str = "light",
-                    hide_empty: bool = False) -> list[str]:
+                    hide_empty: bool = False,
+                    tables_only: bool = False) -> list[str]:
     """แคปทุกแท็บเป็น PNG คนละใบ — PNG กดแท็บไม่ได้ ถ้าจะส่งเข้า Feishu
     ต้องแยกเป็นหลายรูป (หรือส่งแค่ใบภาพรวมแล้วแนบลิงก์ไปหน้าเว็บ)"""
     tabs = ["overview"] + [tab["key"] for tab in aggregate.TABS]
     written = []
     for tab in tabs:
-        html = render_html(business_date, tab, db_path, theme, hide_empty)
+        # ภาพรวมไม่มีตาราง ถ้าตัดส่วนอื่นออกจะเหลือรูปเปล่า
+        html = render_html(business_date, tab, db_path, theme, hide_empty,
+                           tables_only and tab != "overview")
         path = os.path.join(out_dir, f"{business_date}_{tab}.png")
         render_png(html, path, width, theme=theme)
         written.append(path)
@@ -103,6 +114,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--all-tabs", metavar="DIR", help="แคปทุกแท็บลงโฟลเดอร์นี้")
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     parser.add_argument("--theme", default="light", choices=["light", "dark"])
+    parser.add_argument("--tables-only", action="store_true",
+                        help="แคปเฉพาะตาราง ตัดการ์ดยอด/กราฟ/สรุปกะออก (รูปที่ส่งเข้าแชท)")
     parser.add_argument("--hide-empty", action="store_true",
                         help="ซ่อนแถวของจุดที่ไม่มียอดทั้งวัน (ใช้กับ PNG ที่กดติ๊กไม่ได้)")
     core.use_utf8_console()
@@ -111,7 +124,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.all_tabs:
         os.makedirs(args.all_tabs, exist_ok=True)
         for path in render_all_tabs(args.date, args.all_tabs, args.db, args.width,
-                                    args.theme, args.hide_empty):
+                                    args.theme, args.hide_empty, args.tables_only):
             print(f"PNG  -> {path}  ({os.path.getsize(path) / 1024:,.0f} KB)")
         return 0
 

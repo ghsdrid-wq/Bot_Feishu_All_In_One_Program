@@ -216,7 +216,7 @@
 {% endmacro %}
 
 {% macro hourly_chart(p) %}
-<div class="card">
+<div class="card sect-chart">
   <div class="chart-head">
     <h2>ยอดรายชั่วโมง</h2>
     {% if p.lines|length > 1 %}
@@ -415,7 +415,7 @@
 {# สรุปรายกะ — เทียบเท่าตาราง "ยอดเฉลี่ยเครื่องปล่อยพัสดุกะ A และ B" ของรายงานเดิม
    ชั่วโมงรวม = ผลรวมชั่วโมงทำงานจริงของทุกจุดในกะนั้น (ไม่ใช่ความยาวของกะ) #}
 {% macro shift_cards(p) %}
-<div class="card">
+<div class="card sect-shift">
   <h2>สรุปรายกะ</h2>
   <div class="shifts-grid">
     {% for s in [
@@ -485,7 +485,7 @@
 
 
 {% macro error_card(p) %}
-<div class="card">
+<div class="card sect-errsum">
   <h2>พัสดุตก Error แยกตามช่อง</h2>
   {% if p.errors %}
     {% for err in p.errors %}
@@ -507,7 +507,7 @@
 
 
 {% macro health_card(health, is_today=True) %}
-<div class="card">
+<div class="card sect-health">
   <h2>สถานะแหล่งข้อมูลเครื่อง DWS
     {% if not is_today %}<span class="h2-sub">สถานะ ณ ปัจจุบัน ไม่ใช่ของวันที่กำลังดู</span>{% endif %}
   </h2>
