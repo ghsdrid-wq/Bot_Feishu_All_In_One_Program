@@ -20,6 +20,11 @@ if __package__ in (None, ""):
 import requests
 
 import Botmessage as feishu_api      # ช่องทางส่งเดียวกับที่บอทใช้ทุกวัน
+
+try:
+    import card_report
+except Exception:
+    card_report = None
 from metrics import core
 
 LogFunc = Callable[..., None]
@@ -38,7 +43,11 @@ def settings() -> dict:
     def flag(key: str, default: bool) -> bool:
         return str(section.get(key, str(default))).strip().lower() in ("1", "true", "yes", "on")
 
-    tabs = [t.strip() for t in section.get("send_tabs", "overview").split(",") if t.strip()]
+    # ดีฟอลต์เป็นแท็บตารางทั้งหมด ไม่รวม overview เพราะยอดรวมกับกราฟ
+    # อยู่บนตัวการ์ดอยู่แล้ว ส่งรูป overview ซ้ำอีกใบคือของซ้ำ
+    from metrics import aggregate
+    default_tabs = ",".join(t["key"] for t in aggregate.TABS)
+    tabs = [t.strip() for t in section.get("send_tabs", default_tabs).split(",") if t.strip()]
     return {
         "send_enabled": flag("send_enabled", False),
         "send_tabs": tabs,
@@ -74,6 +83,13 @@ def send_text(access_token: str, chat_id: str, text: str) -> None:
     if result.get("code") != 0:
         raise Exception(f"ส่งข้อความไม่สำเร็จ: {result}")
 
+
+def tab_titles() -> dict:
+    """key -> ชื่อไทยของแท็บ ใช้เป็นคำบรรยายรูปในการ์ด"""
+    from metrics import aggregate
+    titles = {t["key"]: t["title"] for t in aggregate.TABS}
+    titles["overview"] = "ภาพรวม"
+    return titles
 
 def build_caption(business_date: str, db_path: str, cfg: dict) -> str:
     """ข้อความนำหน้ารูป — ตัวเลขสำคัญเป็น "ข้อความจริง" ที่ copy/ค้นหาได้
@@ -132,6 +148,32 @@ def send_dashboard(business_date: str, png_dir: str,
         plan["dry_run"] = True
         return plan
 
+    link = ""
+    if cfg["send_link"] and cfg["public_url"] and cfg["token"]:
+        link = f"{cfg['public_url']}/?t={cfg['token']}"
+
+    if card_report is not None and feishu_api.send_as_card():
+        try:
+            titles = tab_titles()
+            images = []
+            for tab, path in files:
+                key = feishu_api.upload_image(access_token, path,
+                                              log=lambda m: write(m, level="INFO"))
+                images.append((titles.get(tab, tab), key))
+                write(f"อัปโหลดรูปแท็บ {tab} แล้ว ({os.path.getsize(path) / 1024:,.0f} KB)")
+            card = card_report.build_card(
+                images, card_report.load_summary(business_date),
+                title="สรุปยอดคลัง KKN", link=link)
+            write(f"ขนาดการ์ด {card_report.card_size(card):,} bytes")
+            card_report.send_card(access_token, cfg["chat_id"], card)
+            write(f"ส่งการ์ดเข้ากลุ่ม {target} แล้ว")
+            plan["sent"] = 1
+            plan["mode"] = "card"
+            return plan
+        except Exception as exc:
+            # การ์ดพังไม่ควรทำให้รายงานไม่ถึงกลุ่ม ตกไปใช้ทางเดิม
+            write(f"ส่งการ์ดไม่สำเร็จ ใช้วิธีเดิมแทน: {exc}", level="WARN")
+
     send_text(access_token, cfg["chat_id"], caption)
     write(f"ส่งข้อความสรุปเข้ากลุ่ม {target} แล้ว")
     for tab, path in files:
@@ -141,6 +183,7 @@ def send_dashboard(business_date: str, png_dir: str,
         write(f"ส่งรูปแท็บ {tab} แล้ว ({size_kb:,.0f} KB)")
 
     plan["sent"] = len(files) + 1
+    plan["mode"] = "images"
     return plan
 
 

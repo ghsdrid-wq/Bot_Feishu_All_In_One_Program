@@ -133,13 +133,37 @@ def _summary_elements(summary: Dict[str, Any]) -> List[Dict[str, Any]]:
 # =====================================================================
 # ประกอบการ์ด
 # =====================================================================
+def _link_button(url: str) -> Dict[str, Any]:
+    """ปุ่มเปิดหน้าเว็บ — ใช้ปุ่มแทนลิงก์ในข้อความเพราะต้องสังเกตเห็นง่าย
+    ลิงก์ที่ปนอยู่ในบรรทัดข้อความคนเลื่อนผ่านโดยไม่เห็น"""
+    return {
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": "เปิดหน้าเว็บ Dashboard"},
+        "type": "primary",
+        "width": "fill",
+        "size": "medium",
+        "margin": "8px 0 4px 0",
+        "behaviors": [{"type": "open_url", "default_url": url}],
+    }
+
+
 def build_card(images: Sequence[Tuple[str, str]],
                summary: Optional[Dict[str, Any]] = None,
-               title: str = "รายงานยอดปล่อย KKN") -> Dict[str, Any]:
-    """images = ลำดับของ (คำบรรยาย, img_key) ที่อัปโหลดไว้แล้ว"""
+               title: str = "รายงานยอดปล่อย KKN",
+               link: str = "") -> Dict[str, Any]:
+    """images = ลำดับของ (คำบรรยาย, img_key) ที่อัปโหลดไว้แล้ว
+
+    link = ลิงก์หน้าเว็บ ถ้าใส่มาจะวางเป็นปุ่มไว้ใต้ยอดรวม (บนสุดของการ์ด)
+    """
     elements: List[Dict[str, Any]] = []
     if summary:
-        elements.extend(_summary_elements(summary))
+        parts = _summary_elements(summary)
+        if link:
+            # แทรกใต้ยอดรวมบรรทัดแรก ให้อยู่ครึ่งบนที่คนเห็นก่อนเลื่อน
+            parts.insert(1, _link_button(link))
+        elements.extend(parts)
+    elif link:
+        elements.append(_link_button(link))
 
     if images:
         if elements:                      # ไม่มีสรุปก็ไม่ต้องมีเส้นคั่นลอยบรรทัดแรก
