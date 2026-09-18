@@ -457,6 +457,9 @@
   :root[data-shot="tables"] .tscroll { overflow:visible; }
   :root[data-shot="tables"] .err-hours .tscroll { display:block; }
   :root[data-shot="tables"] body { width:max-content; min-width:100%; }
+  /* ตัวห่อหน้ามี max-width ตายตัว ถ้าไม่ปลดล็อก ตารางที่กว้างกว่านั้น
+     จะทะลุออกนอกกรอบการ์ดสีขาว เห็นเป็นตัวเลขลอยอยู่นอกกล่อง */
+  :root[data-shot="tables"] .wrap { max-width:none; width:max-content; min-width:100%; }
   /* ---------- ปุ่มสลับมุมมอง สรุป / ตาราง ---------- */
   .view-toggle { display:inline-flex; border:1px solid var(--border); border-radius:999px; overflow:hidden; }
   .view-toggle button {
