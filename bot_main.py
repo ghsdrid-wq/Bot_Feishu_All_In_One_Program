@@ -1793,12 +1793,8 @@ class App(ctk.CTk):
             variable=self.prefire_minute_var, width=82,
             command=lambda _: self.save_config())
         self.prefire_menu.grid(row=2, column=1, padx=4, pady=(0, 6), sticky="w")
-        ctk.CTkLabel(
-            command,
-            text="นาที — สั่ง JMS สร้างไฟล์ล่วงหน้า ไม่ต้องยืนรอตอนถึงคิว "
-                 "(ต้องน้อยกว่า Run minute ไม่งั้นยอดชั่วโมงล่าสุดจะขาดท้าย)",
-            text_color="#aeb8cc", font=ctk.CTkFont(size=12), anchor="w").grid(
-            row=2, column=2, columnspan=7, padx=(8, 16), pady=(0, 6), sticky="w")
+        ctk.CTkLabel(command, text="นาที", text_color="#aeb8cc").grid(
+            row=2, column=2, padx=(8, 4), pady=(0, 6), sticky="w")
         self.start_hour = self.start_menu
         self.end_hour = self.end_menu
         self.btn_start = ctk.CTkButton(command, text="▣ Start Auto", height=40, fg_color="#5e81ac", hover_color="#4c6e93", command=self.start_scheduler)
