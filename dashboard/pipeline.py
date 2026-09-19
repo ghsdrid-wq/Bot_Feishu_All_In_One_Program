@@ -40,7 +40,10 @@ def _settings() -> dict:
     return {
         "enabled": flag("enabled", True),
         "render_png": flag("render_png", True),
-        "hide_empty_png": flag("hide_empty_png", True),
+        # รูปที่ส่งเข้าแชทโชว์ทุกจุด รวมจุดที่ไม่มียอดด้วย
+        # จุดที่ไม่มียอดคือข้อมูลเหมือนกัน — บอกว่าเครื่องนั้นไม่ได้เดินทั้งรอบ
+        # ซ่อนไปแล้วคนดูรูปจะไม่รู้ว่ามีจุดนั้นอยู่
+        "hide_empty_png": flag("hide_empty_png", False),
         # รูปที่ส่งเข้าแชทเอาเฉพาะตาราง — ยอดรวมกับกราฟอยู่บนตัวการ์ด Feishu
         # อยู่แล้ว แนบทั้งหน้ามาอีกทำให้แชทยาวจนเลื่อนหาอย่างอื่นไม่เจอ
         "tables_only_png": flag("tables_only_png", True),
