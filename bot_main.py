@@ -229,6 +229,8 @@ DWS_PULL_CLIENTS = ("DWS1", "DWS2", "DWS3", "DWS4",
 # ลำดับขั้นตอนของ pipeline — ลำดับในนี้คือลำดับที่ทำงานจริง
 # (key, ชื่อที่โชว์, ไอคอน, ติ๊กไว้ตั้งแต่แรกไหม)
 # ติ๊กรายขั้นตอนได้เลยบนหน้า BOT REPORT ไม่ต้องเลือกเป็นกลุ่มแล้ว
+_KEEP = object()          # ใช้แยก "ไม่ได้ส่งค่ามา" ออกจาก "ส่ง None มาจริง ๆ"
+
 PIPELINE_STEPS = [
     ("dws_mirror", "DWS1-8", "\U0001F5C2", False),
     ("dws", "DWS", "\U0001F4E5", True),
@@ -242,6 +244,13 @@ PIPELINE_STEPS = [
 
 # ขั้นตอนที่ต้องมีไฟล์ดิบพร้อมก่อน (ใช้ตัดสินว่าต้องเช็ค config DWS/JMS ไหม)
 RAW_STEP_KEYS = ("dws_mirror", "dws", "jms_auto", "jms_pda", "realtime")
+
+# สั่ง JMS สร้างไฟล์ล่วงหน้ากี่นาทีก่อนถึงรอบรัน
+# เซิร์ฟเวอร์ใช้เวลา 3-5 นาที ตั้ง 6 นาทีจึงพอให้เสร็จก่อนถึงคิวใช้งาน
+JMS_PREFIRE_LEAD_MINUTES = 6
+# มาร์กเกอร์ที่ยิงล่วงหน้าไว้ ใช้ได้นานแค่ไหน — เกินนี้ถือว่าเก่าเกินไป
+# ยิงใหม่ดีกว่าเอาไฟล์ที่ข้อมูลขาดท้ายไปหลายสิบนาที
+JMS_PREFIRE_MAX_AGE = 20 * 60
 
 
 bot_app = Flask(__name__)
@@ -4133,6 +4142,29 @@ class App(ctk.CTk):
                     pass
 
 
+    def prefire_jms_exports(self):
+        """สั่ง export ล่วงหน้าให้รอบถัดไป เรียกจาก scheduler ตอนใกล้ถึงเวลารัน
+
+        อ่านค่าจาก auto_run_settings ที่ snapshot ไว้ตอนกด Start Auto
+        ไม่แตะ widget ใด ๆ เพราะทำงานอยู่บน thread ของ scheduler
+        """
+        if self.running or self.stop_requested or not self.scheduler_running:
+            return
+        settings = dict(self.auto_run_settings or {})
+        steps = settings.get("steps") or {}
+        scan_types = [st for key, st in (("jms_auto", "建包扫描"),
+                                         ("jms_pda", "卸车扫描"))
+                      if steps.get(key)]
+        if not scan_types:
+            return
+        self.write_log(
+            f"Pre-firing JMS export {JMS_PREFIRE_LEAD_MINUTES} min ahead "
+            f"({len(scan_types)} scan type)",
+            level="START")
+        self.prewarm_jms_exports(scan_types,
+                                 time_range=settings.get("time_range"),
+                                 generation=None)
+
     def _jms_base_headers(self):
         base = "https://jmsgw.jtexpress.co.th/operatingplatform"
         headers = {
@@ -4156,17 +4188,23 @@ class App(ctk.CTk):
         start, end = self.get_time_range()
         self._export_jms(base, headers, start, end, "卸车扫描", self.get_dws_export_filename("name_dwspda", "DWSPDA.xlsx"))
 
-    def prewarm_jms_exports(self, scan_types):
+    def prewarm_jms_exports(self, scan_types, time_range=None, generation=_KEEP):
         """Fire asyncDownExcel หลาย scanType ต่อกัน เพื่อให้เซิร์ฟเวอร์ generate
         ขนานกัน (ลดเวลารวม AUTO+PDA). เก็บ marker พร้อม run_generation ไว้ให้
-        _export_jms ใช้ collect ต่อ — ถ้า prewarm ล้มก็ปล่อยให้ยิงใหม่แบบเรียง"""
+        _export_jms ใช้ collect ต่อ — ถ้า prewarm ล้มก็ปล่อยให้ยิงใหม่แบบเรียง
+
+        generation=None = ยิงล่วงหน้านอกรอบรัน (ยังไม่มี run_generation)
+        time_range = ใช้ช่วงเวลาที่ส่งมาแทนการอ่านจาก UI — ตอนยิงล่วงหน้า
+        เราอยู่คนละ thread กับ UI จะไปอ่าน DateEntry ตรง ๆ ไม่ได้
+        """
         self.jms_export_markers = {}
         if self.stop_requested:
             return
         try:
             base, headers = self._jms_base_headers()
-            start, end = self.get_time_range()
-            generation = getattr(self, "run_generation", None)
+            start, end = time_range if time_range else self.get_time_range()
+            generation = (getattr(self, "run_generation", None)
+                          if generation is _KEEP else generation)
             session = requests.Session()
             try:
                 for st in scan_types:
@@ -4175,7 +4213,7 @@ class App(ctk.CTk):
                     marker = self._jms_fire_export(session, base, headers, start, end, st)
                     if marker is None:
                         return
-                    self.jms_export_markers[st] = (marker, generation)
+                    self.jms_export_markers[st] = (marker, generation, time.time())
                     self.sleep_with_stop(2)
             finally:
                 session.close()
@@ -4657,9 +4695,14 @@ class App(ctk.CTk):
             markers = getattr(self, "jms_export_markers", None)
             entry = markers.pop(scanType, None) if isinstance(markers, dict) else None
             marker = None
-            if isinstance(entry, tuple) and len(entry) == 2:
-                m, gen = entry
+            if isinstance(entry, tuple) and len(entry) == 3:
+                m, gen, fired_at = entry
                 if gen == getattr(self, "run_generation", None):
+                    marker = m
+                elif gen is None and time.time() - fired_at <= JMS_PREFIRE_MAX_AGE:
+                    # ยิงล่วงหน้าไว้นอกรอบรัน ใช้ได้ถ้ายังไม่เก่าเกินไป
+                    age = int((time.time() - fired_at) / 60)
+                    self.log(f"Using pre-fired export ({age} min ago): {filename}", "JMS")
                     marker = m
 
             if marker is not None:
@@ -5040,6 +5083,7 @@ class App(ctk.CTk):
         self.begin_run_request()
         self.scheduler_running = True
         self.last_run_minute = None
+        self.last_prefire_minute = None
 
         self.set_ui_running(True)
         self.set_status("Auto Running", "#88c0d0", "#3b4252")
@@ -5087,6 +5131,16 @@ class App(ctk.CTk):
                     run_generation = self.begin_run_request()
                     self.set_next_run_display(self.get_next_scheduler_run_time(now + timedelta(minutes=1)))
                     self.task_queue.put(lambda settings=settings, g=run_generation: self.run_process(settings, g))
+
+                # ยิง export ล่วงหน้าก่อนถึงรอบรัน ให้เซิร์ฟเวอร์ทำตอนที่เราว่าง
+                prefire_minute = (minute - JMS_PREFIRE_LEAD_MINUTES) % 60
+                if (now.minute == prefire_minute
+                        and getattr(self, "last_prefire_minute", None) != now_key):
+                    self.last_prefire_minute = now_key
+                    target = now + timedelta(minutes=JMS_PREFIRE_LEAD_MINUTES)
+                    if self.in_send_window(target.hour) and not self.running:
+                        threading.Thread(target=self.prefire_jms_exports,
+                                         daemon=True).start()
 
                 # ตรวจ token เชิงรุกที่นาที :20/:40 (thread แยก ไม่บล็อกลูป)
                 if now.minute in TOKEN_HEALTHCHECK_MINUTES and getattr(self, "last_token_check_minute", None) != now_key:
