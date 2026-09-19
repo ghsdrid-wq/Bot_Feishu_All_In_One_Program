@@ -17,6 +17,7 @@
     --ok-bg:#d8f0d8;    --ok-ink:#14530f;
     --near-bg:#fdefcd;  --near-ink:#6b4a00;
     --under-bg:#fbdede; --under-ink:#8f1f1f;
+    --stripe:#eef1f6;
   }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
     color-scheme: dark;
@@ -28,6 +29,7 @@
     --ok-bg:#12340f;    --ok-ink:#7fdc7f;
     --near-bg:#3d2f06;  --near-ink:#f5cd6a;
     --under-bg:#451717; --under-ink:#f19a9a;
+    --stripe:#232322;
   } }
   :root[data-theme="dark"] {
     color-scheme: dark;
@@ -39,6 +41,7 @@
     --ok-bg:#12340f;    --ok-ink:#7fdc7f;
     --near-bg:#3d2f06;  --near-ink:#f5cd6a;
     --under-bg:#451717; --under-ink:#f19a9a;
+    --stripe:#232322;
   }
 
   * { box-sizing:border-box; }
@@ -238,6 +241,17 @@
   td.num.sub { background:var(--grid); color:var(--ink); font-weight:600; border-radius:3px; }
   tbody tr.sum th, tbody tr.sum td { border-top:1px solid var(--rule); font-weight:600; color:var(--ink); padding-top:5px; }
   tbody tr.sum.rate th, tbody tr.sum.rate td { border-top:0; font-weight:500; color:var(--muted); padding-top:0; }
+  /* แถบสลับสีรายแถว — กวาดสายตาตามแนวนอนข้าม 24 คอลัมน์แล้วไม่หลุดแถว
+     วางที่ <tr> ไม่ใช่ที่เซลล์ เพราะพื้นแถวถูกวาดใต้เซลล์ สีสถานะของเซลล์
+     (ถึงเป้า/เกือบถึง/ต่ำกว่าเกณฑ์) จึงทับลงไปได้ตามปกติ ไม่ถูกกลบ */
+  tbody tr.alt { background:var(--stripe); }
+  /* คอลัมน์ชื่อจุดถูกตรึงไว้และมีพื้นของตัวเอง ต้องย้อมตามแถวด้วย
+     ไม่งั้นแถบจะขาดตรงคอลัมน์แรก */
+  tbody tr.alt th {
+    background:var(--stripe);
+    box-shadow:5px 0 0 var(--stripe), 6px 0 0 var(--border);
+  }
+
   tr.offline th, tr.offline td { opacity:.45; }
   .tag { font-weight:400; color:var(--muted); font-size:10.5px; }
   .heat-legend { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--muted); margin-top:10px; flex-wrap:wrap; }

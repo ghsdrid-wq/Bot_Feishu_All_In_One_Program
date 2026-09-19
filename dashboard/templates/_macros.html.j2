@@ -333,8 +333,11 @@
           <tr class="group-head"><th>{{ g.label }}</th>
             <td colspan="{{ p.hours|length + 6 }}">{{ g.active }}/{{ g.stations }} จุดที่เดิน</td></tr>
         {% endif %}
+        {# แถบสลับสีติดมาจากฝั่งเซิร์ฟเวอร์ ไม่ใช้ nth-child เพราะใน tbody
+           มีแถวหัวกลุ่มกับแถวรวมปนอยู่ด้วย นับแบบ CSS แล้วลายจะเพี้ยน
+           และต้องเริ่มนับใหม่ทุกกลุ่ม (AP1 / AP2) #}
         {% for row in g.rows %}
-          <tr class="{% if not row.in_service %}offline {% endif %}{% if row.total == 0 %}empty-row{% endif %}">
+          <tr class="{% if loop.index is odd %}alt {% endif %}{% if not row.in_service %}offline {% endif %}{% if row.total == 0 %}empty-row{% endif %}">
             <th{% if not row.in_service %} title="ยังไม่ได้ใช้งาน"{% endif %}>{{ row.display_name }}</th>
             {% for cell in row.cells_a %}
               <td class="cell {{ cell.css }}{% if cell.latest %} latest{% endif %}" title="{{ cell.title }}">{{ cell.text }}</td>
@@ -457,7 +460,7 @@
       </thead>
       <tbody>
         {% for r in p.error_table.rows %}
-          <tr>
+          <tr class="{% if loop.index is odd %}alt{% endif %}">
             <th>{{ r.label }}</th>
             {% for v in r.cells %}
               <td class="num {% if v %}err{% endif %}">{{ "{:,}".format(v) if v else "–" }}</td>
