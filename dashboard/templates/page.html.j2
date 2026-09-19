@@ -14,14 +14,14 @@
     --q1:#cde2fb; --q2:#9ec5f4; --q3:#6da7ec; --q4:#3987e5; --q5:#256abf;
     --q1-ink:#0b0b0b; --q2-ink:#0b0b0b; --q3-ink:#0b0b0b; --q4-ink:#fff; --q5-ink:#fff;
     --down-bg:#fbe3e3; --accent:#2a78d6;
-    --ok-bg:#d8f0d8;    --ok-ink:#14530f;
-    --near-bg:#fdefcd;  --near-ink:#6b4a00;
-    --under-bg:#fbdede; --under-ink:#8f1f1f;
+    --ok-bg:#a9d08e;    --ok-ink:#1d3d10;
+    --near-bg:#d9e8a8;  --near-ink:#3b4413;
+    --under-bg:#ffe699; --under-ink:#5c4306;
     --stripe:#ddebf7; --head-bg:#2f75b5; --sum-bg:#bdd7ee;
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.78);
     --cell-mute:rgba(11,11,11,0.07);
     --shift-head:#fec60a; --shift-head-ink:#3a2c00;
-    --shift-col:#6f6f6f;  --shift-col-ink:#fff;
+    --shift-col:#fff2cc;  --shift-col-ink:#4a3a05;
   }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
     color-scheme: dark;
@@ -30,14 +30,14 @@
     --series-1:#3987e5; --series-2:#d95926; --series-3:#22c55e; --series-4:#a855f7;
     --q1:#104281; --q2:#184f95; --q3:#1c5cab; --q4:#256abf; --q5:#3987e5;
     --q1-ink:#fff; --q2-ink:#fff; --q3-ink:#fff; --down-bg:#4a1f1f; --accent:#3987e5;
-    --ok-bg:#12340f;    --ok-ink:#7fdc7f;
-    --near-bg:#3d2f06;  --near-ink:#f5cd6a;
-    --under-bg:#451717; --under-ink:#f19a9a;
+    --ok-bg:#274d17;    --ok-ink:#b9e59a;
+    --near-bg:#3b4413;  --near-ink:#d9e8a8;
+    --under-bg:#4a3d0d; --under-ink:#ffe699;
     --stripe:#17293c; --head-bg:#1c5cab; --sum-bg:#1f3b56;
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
     --cell-mute:rgba(255,255,255,0.09);
     --shift-head:#c79a06; --shift-head-ink:#241b00;
-    --shift-col:#55555a;  --shift-col-ink:#fff;
+    --shift-col:#3f3510;  --shift-col-ink:#ffe699;
   } }
   :root[data-theme="dark"] {
     color-scheme: dark;
@@ -46,14 +46,14 @@
     --series-1:#3987e5; --series-2:#d95926; --series-3:#22c55e; --series-4:#a855f7;
     --q1:#104281; --q2:#184f95; --q3:#1c5cab; --q4:#256abf; --q5:#3987e5;
     --q1-ink:#fff; --q2-ink:#fff; --q3-ink:#fff; --down-bg:#4a1f1f; --accent:#3987e5;
-    --ok-bg:#12340f;    --ok-ink:#7fdc7f;
-    --near-bg:#3d2f06;  --near-ink:#f5cd6a;
-    --under-bg:#451717; --under-ink:#f19a9a;
+    --ok-bg:#274d17;    --ok-ink:#b9e59a;
+    --near-bg:#3b4413;  --near-ink:#d9e8a8;
+    --under-bg:#4a3d0d; --under-ink:#ffe699;
     --stripe:#17293c; --head-bg:#1c5cab; --sum-bg:#1f3b56;
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
     --cell-mute:rgba(255,255,255,0.09);
     --shift-head:#c79a06; --shift-head-ink:#241b00;
-    --shift-col:#55555a;  --shift-col-ink:#fff;
+    --shift-col:#3f3510;  --shift-col-ink:#ffe699;
   }
 
   * { box-sizing:border-box; }
@@ -237,7 +237,9 @@
   .cell-ok      { background:var(--ok-bg);    color:var(--ok-ink);    font-weight:600; }
   .cell-near    { background:var(--near-bg);  color:var(--near-ink);  font-weight:600; }
   .cell-under   { background:var(--under-bg); color:var(--under-ink); font-weight:600; }
-  .cell-down    { background:var(--under-bg); color:var(--critical); font-weight:700; box-shadow:inset 0 0 0 1.5px var(--critical); }
+  /* เครื่องหยุดเดิมอาศัยพื้นแดงอ่อนช่วยบอก พอไล่เฉดเป็นเหลือง-เขียวแล้ว
+     ไม่มีสีแดงในตารางอีก จึงใช้พื้นแดงของตัวเองไม่ให้ปนกับระดับยอด */
+  .cell-down    { background:var(--down-bg); color:var(--critical); font-weight:700; box-shadow:inset 0 0 0 1.5px var(--critical); }
   /* คอลัมน์ชั่วโมงล่าสุด — บอกว่า "ตอนนี้อยู่ตรงไหน" ไม่ต้องไล่นับเอง */
   td.cell.latest { box-shadow:inset 0 0 0 2px var(--accent); }
   /* หัวคอลัมน์ชั่วโมงเป็นช่วงเต็ม วางสองบรรทัดเพื่อไม่ให้ตารางกว้างขึ้นเท่าตัว */
@@ -252,7 +254,7 @@
   .shift-edge { border-left:2px solid var(--rule); }
   thead th.sub-col { color:var(--ink-2); font-weight:650; }
   td.num.sub { background:var(--shift-col); color:var(--shift-col-ink); font-weight:600; border-radius:3px; }
-  td.num.sub.soft { color:var(--shift-col-ink); opacity:.75; font-weight:500; }
+  td.num.sub.soft { color:var(--shift-col-ink); opacity:.68; font-weight:500; }
   /* ช่องที่ไม่มีตัวเลข (แถวเฉลี่ยของกลุ่ม) ไม่ต้องลงสี ไม่งั้นเป็นบล็อกเทาเปล่า */
   td.num.sub:empty { background:transparent; }
   tbody tr.sum th, tbody tr.sum td { border-top:1px solid var(--rule); font-weight:600; color:var(--ink); padding-top:5px; }
