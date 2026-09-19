@@ -21,7 +21,7 @@
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.78);
     --cell-mute:rgba(11,11,11,0.07);
     --shift-head:#fec60a; --shift-head-ink:#3a2c00;
-    --shift-col:#9dc3e6;  --shift-col-ink:#123c63;
+    --shift-col:#c6ddf2;  --shift-col-ink:#1c4a75;
   }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
     color-scheme: dark;
@@ -37,7 +37,7 @@
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
     --cell-mute:rgba(255,255,255,0.09);
     --shift-head:#c79a06; --shift-head-ink:#241b00;
-    --shift-col:#1f4a73;  --shift-col-ink:#d6e7f7;
+    --shift-col:#22405c;  --shift-col-ink:#cfe2f5;
   } }
   :root[data-theme="dark"] {
     color-scheme: dark;
@@ -53,7 +53,7 @@
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
     --cell-mute:rgba(255,255,255,0.09);
     --shift-head:#c79a06; --shift-head-ink:#241b00;
-    --shift-col:#1f4a73;  --shift-col-ink:#d6e7f7;
+    --shift-col:#22405c;  --shift-col-ink:#cfe2f5;
   }
 
   * { box-sizing:border-box; }
@@ -216,8 +216,8 @@
   table { border-collapse:separate; border-spacing:2px; width:100%; }
   th, td { font-variant-numeric:tabular-nums; }
   thead th { font-size:10.5px; font-weight:500; color:var(--muted); padding:2px 0; text-align:center; }
-  thead th.name-col, tbody th { text-align:left; }
-  tbody th { font-size:12px; font-weight:550; color:var(--ink-2); padding-right:8px; white-space:nowrap; }
+  thead th.name-col, tbody th { text-align:center; }
+  tbody th { font-size:12px; font-weight:550; color:var(--ink-2); padding:0 8px; white-space:nowrap; }
 
   /* ตรึงคอลัมน์ชื่อจุดไว้ — เลื่อนไปขวาสุดแล้วยังรู้ว่าแถวไหนเป็นของเครื่องอะไร
      box-shadow ปิดช่องว่าง 2px ของ border-spacing ไม่ให้เห็นตัวเลขลอดออกมา */
@@ -225,7 +225,7 @@
     position:sticky; left:0; z-index:2;
     background:var(--surface);
     box-shadow:5px 0 0 var(--surface), 6px 0 0 var(--border);
-    min-width:94px; padding-right:12px;
+    min-width:94px; padding-left:10px; padding-right:10px;
   }
   thead th.name-col { z-index:3; }
   td.cell { text-align:center; font-size:11px; padding:3px 2px; border-radius:3px; min-width:40px; color:var(--ink); }
@@ -254,7 +254,7 @@
   .shift-edge { border-left:2px solid var(--rule); }
   thead th.sub-col { color:var(--ink-2); font-weight:650; }
   td.num.sub { background:var(--shift-col); color:var(--shift-col-ink); font-weight:600; border-radius:3px; }
-  td.num.sub.soft { color:var(--shift-col-ink); opacity:.68; font-weight:500; }
+  td.num.sub.soft { color:var(--shift-col-ink); opacity:.8; font-weight:500; }
   /* ช่องที่ไม่มีตัวเลข (แถวเฉลี่ยของกลุ่ม) ไม่ต้องลงสี ไม่งั้นเป็นบล็อกเทาเปล่า */
   td.num.sub:empty { background:transparent; }
   tbody tr.sum th, tbody tr.sum td { border-top:1px solid var(--rule); font-weight:600; color:var(--ink); padding-top:5px; }
