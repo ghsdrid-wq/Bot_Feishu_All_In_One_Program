@@ -152,9 +152,37 @@ def _link_button(url: str) -> Dict[str, Any]:
     }
 
 
+def _business_date() -> Optional[str]:
+    """วันรอบงานปัจจุบัน — ใช้ตอนไม่มี summary (เช่น รัน Bot Export เดี่ยว ๆ)"""
+    try:
+        from dashboard import pipeline as dash_pipeline
+        return dash_pipeline.current_business_date()
+    except Exception:
+        return None
+
+
+def _cycle_range(business_date: Optional[str]) -> str:
+    """ช่วงเวลาที่ยอดในการ์ดนี้ครอบคลุม: ต้นรอบงาน - ต้นชั่วโมงปัจจุบัน
+
+    บอกเป็นช่วงแทนที่จะบอกแค่วัน เพราะการ์ดถูกส่งซ้ำทุกชั่วโมงระหว่างรอบ
+    ใบที่ส่งตอนบ่ายกับตอนเช้าเป็นของรอบเดียวกันแต่ยอดไม่เท่ากัน
+    เห็นแค่วันอย่างเดียวจะแยกไม่ออกว่าใบไหนนับถึงกี่โมง
+    """
+    now = datetime.now()
+    end = now.strftime("%Y-%m-%d %H:00")
+    if not business_date:
+        return end
+    try:
+        from metrics import core
+        start_hour = int(core.load_config()["business_day"]["start_hour"])
+    except Exception:
+        return end
+    return "{} {:02d}:00 - {}".format(business_date, start_hour, end)
+
+
 def build_card(images: Sequence[Tuple[str, str]],
                summary: Optional[Dict[str, Any]] = None,
-               title: str = "รายงานยอดปล่อย KKN",
+               title: str = "ยอดปล่อยพัสดุ",
                link: str = "") -> Dict[str, Any]:
     """images = ลำดับของ (คำบรรยาย, img_key) ที่อัปโหลดไว้แล้ว
 
@@ -183,12 +211,8 @@ def build_card(images: Sequence[Tuple[str, str]],
                 "margin": "6px 0",
             })
 
-    # ต้นชั่วโมงที่ส่ง — เลื่อนดูย้อนหลังในแชทแล้วรู้ว่าการ์ดใบไหนของรอบไหน
-    # ปัดลงเป็นต้นชั่วโมง เพราะงานส่งตามรอบชั่วโมง ไม่ใช่ตามนาทีที่กดจริง
-    subtitle = "ส่งเมื่อ " + datetime.now().strftime("%Y-%m-%d %H:00")
-    header_title = title
-    if summary:
-        header_title = "{} — {}".format(title, summary["business_date"])
+    business_date = summary["business_date"] if summary else _business_date()
+    header_title = "{} {}".format(title, _cycle_range(business_date))
 
     return {
         "schema": "2.0",
@@ -197,7 +221,6 @@ def build_card(images: Sequence[Tuple[str, str]],
         "header": {
             "template": "blue",
             "title": {"tag": "plain_text", "content": header_title},
-            "subtitle": {"tag": "plain_text", "content": subtitle},
         },
         "body": {"elements": elements},
     }

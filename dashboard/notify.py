@@ -165,7 +165,7 @@ def send_dashboard(business_date: str, png_dir: str,
                 write(f"อัปโหลดรูปแท็บ {tab} แล้ว ({os.path.getsize(path) / 1024:,.0f} KB)")
             card = card_report.build_card(
                 images, card_report.load_summary(business_date),
-                title="สรุปยอดคลัง KKN", link=link)
+                link=link)
             write(f"ขนาดการ์ด {card_report.card_size(card):,} bytes")
             card_report.send_card(access_token, cfg["chat_id"], card)
             write(f"ส่งการ์ดเข้ากลุ่ม {target} แล้ว")
