@@ -1419,17 +1419,40 @@ class App(ctk.CTk):
         self.scheduler_end_hour = self.parse_hour_value(end_raw, 12)
         return self.scheduler_run_minute, self.scheduler_start_hour, self.scheduler_end_hour
 
+    def send_window(self):
+        """ชั่วโมงแรกและชั่วโมงสุดท้ายที่ยอมให้ส่งอัตโนมัติ
+
+        เริ่มหลังเวลาเริ่มรอบ 1 ชั่วโมง เพราะถ้าส่งตอนเริ่มรอบพอดี
+        ยังไม่มีใครปล่อยพัสดุ ยอดจะเป็นศูนย์ทั้งใบ
+        จบที่เวลาจบรอบ (เที่ยง) — หลังจากนั้นงานจบแล้ว ส่งไปก็ได้เลขเดิม
+        """
+        return (self.scheduler_start_hour + 1) % 24, self.scheduler_end_hour
+
+    def in_send_window(self, hour: int) -> bool:
+        first, last = self.send_window()
+        if first <= last:
+            return first <= hour <= last
+        return hour >= first or hour <= last     # คร่อมเที่ยงคืน
+
     def get_next_scheduler_run_time(self, now: Optional[datetime] = None) -> datetime:
         self.refresh_scheduler_snapshot()
         now = now or datetime.now()
         minute = self.scheduler_run_minute
         now_key = now.strftime("%Y-%m-%d %H:%M")
         if now.minute < minute:
-            return now.replace(minute=minute, second=0, microsecond=0)
-        if now.minute == minute and self.last_run_minute != now_key:
-            return now.replace(second=0, microsecond=0)
-        next_hour = now + timedelta(hours=1)
-        return next_hour.replace(minute=minute, second=0, microsecond=0)
+            candidate = now.replace(minute=minute, second=0, microsecond=0)
+        elif now.minute == minute and self.last_run_minute != now_key:
+            candidate = now.replace(second=0, microsecond=0)
+        else:
+            candidate = (now + timedelta(hours=1)).replace(
+                minute=minute, second=0, microsecond=0)
+        # เลื่อนไปชั่วโมงแรกที่อยู่ในหน้าต่างส่ง ไม่งั้น "Next auto run" จะโชว์
+        # เวลาที่ไม่มีการส่งจริง เช่น 13:05 ทั้งที่ต้องรอถึง 15:05
+        for _ in range(25):
+            if self.in_send_window(candidate.hour):
+                break
+            candidate += timedelta(hours=1)
+        return candidate
 
     def format_next_scheduler_run(self, next_run: Optional[datetime] = None) -> str:
         next_run = next_run or self.get_next_scheduler_run_time()
@@ -4936,7 +4959,9 @@ class App(ctk.CTk):
         next_run = self.get_next_scheduler_run_time()
         self.set_next_run_display(next_run)
         self.write_log(
-            f"Auto scheduler started | minute={self.scheduler_run_minute:02} | data_window={self.scheduler_start_hour:02}:00-{self.scheduler_end_hour:02}:00",
+            f"Auto scheduler started | minute={self.scheduler_run_minute:02} | "
+            f"data_window={self.scheduler_start_hour:02}:00-{self.scheduler_end_hour:02}:00 | "
+            f"send_window={self.send_window()[0]:02}:00-{self.send_window()[1]:02}:00",
             level="START",
         )
         self.write_log(f"Next auto run: {self.format_next_scheduler_run(next_run)}")
@@ -4949,6 +4974,17 @@ class App(ctk.CTk):
                 minute = self.scheduler_run_minute
                 now_key = now.strftime("%Y-%m-%d %H:%M")
                 if now.minute == minute and self.last_run_minute != now_key:
+                    if not self.in_send_window(now.hour):
+                        self.last_run_minute = now_key
+                        first, last = self.send_window()
+                        self.write_log(
+                            f"Skip auto run {now.strftime('%H:%M')} "
+                            f"(นอกช่วงส่ง {first:02}:00-{last:02}:00)"
+                        )
+                        self.set_next_run_display(
+                            self.get_next_scheduler_run_time(now + timedelta(minutes=1)))
+                        continue
+
                     if self.running:
                         self.last_run_minute = now_key
                         self.write_log(
