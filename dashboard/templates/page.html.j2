@@ -21,7 +21,7 @@
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.78);
     --cell-mute:rgba(11,11,11,0.07);
     --shift-head:#fec60a; --shift-head-ink:#3a2c00;
-    --shift-col:#ffffff;  --shift-col-ink:#13395e;
+    --shift-col:#ffffff;  --shift-col-ink:#13395e; --name-col:#ffffff;
   }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
     color-scheme: dark;
@@ -37,7 +37,7 @@
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
     --cell-mute:rgba(255,255,255,0.09);
     --shift-head:#c79a06; --shift-head-ink:#241b00;
-    --shift-col:#0e0e0e;  --shift-col-ink:#dfe9f5;
+    --shift-col:#0e0e0e;  --shift-col-ink:#dfe9f5; --name-col:#0e0e0e;
   } }
   :root[data-theme="dark"] {
     color-scheme: dark;
@@ -53,7 +53,7 @@
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
     --cell-mute:rgba(255,255,255,0.09);
     --shift-head:#c79a06; --shift-head-ink:#241b00;
-    --shift-col:#0e0e0e;  --shift-col-ink:#dfe9f5;
+    --shift-col:#0e0e0e;  --shift-col-ink:#dfe9f5; --name-col:#0e0e0e;
   }
 
   * { box-sizing:border-box; }
@@ -223,8 +223,8 @@
      box-shadow ปิดช่องว่าง 2px ของ border-spacing ไม่ให้เห็นตัวเลขลอดออกมา */
   thead th.name-col, tbody th {
     position:sticky; left:0; z-index:2;
-    background:var(--surface);
-    box-shadow:5px 0 0 var(--surface), 6px 0 0 var(--border);
+    background:var(--name-col);
+    box-shadow:5px 0 0 var(--name-col), 6px 0 0 var(--border);
     min-width:94px; padding-left:10px; padding-right:10px;
   }
   thead th.name-col { z-index:3; }
@@ -265,10 +265,8 @@
   tbody tr.alt { background:var(--stripe); }
   /* คอลัมน์ชื่อจุดถูกตรึงไว้และมีพื้นของตัวเอง ต้องย้อมตามแถวด้วย
      ไม่งั้นแถบจะขาดตรงคอลัมน์แรก */
-  tbody tr.alt th {
-    background:var(--stripe);
-    box-shadow:5px 0 0 var(--stripe), 6px 0 0 var(--border);
-  }
+  /* คอลัมน์ชื่อจุดไม่ย้อมตามแถบสลับสี ปล่อยขาวตลอดแนวเหมือนคอลัมน์สรุปกะ
+     เป็นขอบซ้ายที่สายตาใช้เล็งก่อนกวาดเข้าไปในตาราง */
 
   /* หัวตารางกับแถวรวมต้องแยกออกจากแถวข้อมูลให้ชัด ไม่ใช่แค่จางกว่า/เข้มกว่า
      แถบสลับสีนิดหน่อย เพราะสองแถวนี้คือหมุดที่คนใช้เล็งก่อนหาแถวของตัวเอง
@@ -293,8 +291,11 @@
     box-shadow:5px 0 0 var(--sum-bg), 6px 0 0 var(--border);
   }
   /* ช่อง Avg ในแถวรวมมีพื้นของตัวเองอยู่แล้ว ปล่อยไว้จะเป็นรอยด่าง */
-  /* แถวรวมอยู่ในคอลัมน์เดียวกัน ต้องคงสีไว้ให้แถบต่อเนื่องตลอดแนวตั้ง */
-  tbody tr.sum td.num.sub { background:var(--shift-col); color:var(--shift-col-ink); }
+  /* แถวรวมในคอลัมน์สรุปกะใช้พื้นของแถวตัวเอง ไม่ใช่พื้นขาวของคอลัมน์
+     เพราะเป็นยอดรวมของทั้งกลุ่ม ไม่ใช่ยอดของจุดใดจุดหนึ่ง ตัวเลขเป็นสีแดง
+     ให้เห็นทันทีว่าบรรทัดนี้คือยอดรวมที่ต้องอ่าน */
+  tbody tr.sum td.num.sub,
+  tbody tr.sum td.num.sub.soft { background:var(--sum-bg); color:var(--critical); }
 
   tr.offline th, tr.offline td { opacity:.45; }
   .tag { font-weight:400; color:var(--muted); font-size:10.5px; }
