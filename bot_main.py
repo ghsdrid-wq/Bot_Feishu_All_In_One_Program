@@ -3968,9 +3968,86 @@ class App(ctk.CTk):
         for col, length in widths.items():
             ws.column_dimensions[get_column_letter(col)].width = max(min_width, min(max_width, length + padding))
 
-    def autofit_excel_file(self, path):
-        """เปิดไฟล์ Excel ที่ดาวน์โหลด/สร้างมา แล้วปรับความกว้างคอลัมน์อัตโนมัติ ก่อนบันทึกทับ"""
+    @staticmethod
+    def _measure_column_widths(path, scan_rows=3000, min_width=8, max_width=60, padding=2):
+        """วัดความกว้างคอลัมน์โดยอ่านแค่แถวต้น ๆ แบบ read_only
+
+        read_only ไม่โหลดทั้งชีตเข้าหน่วยความจำ ไฟล์ 350,000 แถวใช้เวลา
+        ไม่ถึงวินาที เทียบกับ load_workbook ปกติที่ใช้นาทีกว่า
+        """
+        widths = {}
+        wb = openpyxl.load_workbook(path, read_only=True)
         try:
+            ws = wb.worksheets[0]
+            for row in ws.iter_rows(max_row=scan_rows, values_only=True):
+                for idx, value in enumerate(row, start=1):
+                    if value is None:
+                        continue
+                    # ตัวอักษร CJK/ไทยกว้าง นับเป็น 2 หน่วย
+                    length = sum(2 if ord(ch) > 0x2E80 else 1 for ch in str(value))
+                    if length > widths.get(idx, 0):
+                        widths[idx] = length
+        finally:
+            wb.close()
+        return {col: max(min_width, min(max_width, length + padding))
+                for col, length in widths.items()}
+
+    def _fast_autofit(self, path, widths):
+        """ยัดความกว้างคอลัมน์ลง XML ของ .xlsx ตรง ๆ โดยไม่แตะแถวข้อมูล
+
+        .xlsx คือ zip ที่มี XML ข้างใน ความกว้างคอลัมน์อยู่ในบล็อก <cols>
+        ก้อนเล็ก ๆ ก้อนเดียว การให้ openpyxl เปิดแล้วเซฟทับ = แปลงทุกเซลล์
+        กลับไปกลับมาโดยไม่จำเป็น (วัดแล้ว 80 วินาทีต่อไฟล์) ที่นี่คัดลอก zip
+        แล้วเปลี่ยนเฉพาะก้อนนั้น เหลือ ~2 วินาที
+
+        คืน False ถ้าไฟล์ไม่เข้าเงื่อนไข ให้ผู้เรียกไปใช้ทางเดิมแทน
+        """
+        import re as _re
+        import shutil
+        import zipfile
+
+        sheet_xml = None
+        with zipfile.ZipFile(path) as zin:
+            names = zin.namelist()
+            sheets = [n for n in names
+                      if n.startswith("xl/worksheets/") and n.endswith(".xml")]
+            # รองรับเฉพาะไฟล์ชีตเดียว ซึ่งเป็นรูปแบบของไฟล์ที่ JMS/DWS ส่งมา
+            # หลายชีตต้องไล่ rels หาว่าชีตไหนคือไฟล์ไหน ไม่คุ้มกับที่ได้
+            if len(sheets) != 1:
+                return False
+            sheet_name = sheets[0]
+            sheet_xml = zin.read(sheet_name).decode("utf-8")
+
+        cols = "".join(
+            '<col min="{0}" max="{0}" width="{1}" customWidth="1"/>'.format(col, width)
+            for col, width in sorted(widths.items()))
+        block = "<cols>{}</cols>".format(cols) if cols else ""
+
+        if "<cols>" in sheet_xml:
+            sheet_xml = _re.sub(r"<cols>.*?</cols>", block, sheet_xml, count=1, flags=_re.S)
+        elif "<sheetData" in sheet_xml:
+            sheet_xml = sheet_xml.replace("<sheetData", block + "<sheetData", 1)
+        else:
+            return False
+
+        tmp = path + ".autofit.tmp"
+        with zipfile.ZipFile(path) as zin, \
+                zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                data = (sheet_xml.encode("utf-8") if item.filename == sheet_name
+                        else zin.read(item.filename))
+                zout.writestr(item, data)
+        # เขียนไฟล์ชั่วคราวก่อนแล้วค่อยสลับ ไฟล์เดิมจึงไม่พังถ้าล้มกลางทาง
+        shutil.move(tmp, path)
+        return True
+
+    def autofit_excel_file(self, path):
+        """ปรับความกว้างคอลัมน์ของไฟล์ Excel ที่ดาวน์โหลด/สร้างมา"""
+        try:
+            widths = self._measure_column_widths(path)
+            if widths and self._fast_autofit(path, widths):
+                return
+            # ทางเดิม: ช้าแต่รองรับทุกรูปแบบไฟล์
             wb = openpyxl.load_workbook(path)
             for ws in wb.worksheets:
                 self._autofit_worksheet(ws)
@@ -4436,13 +4513,20 @@ class App(ctk.CTk):
     def _jms_collect_export(self, session, base, headers, scanType, filename, export_start_time, max_rounds=90):
         """poll หา record ที่เสร็จของรอบนี้ แล้ว stream ไฟล์ลงดิสก์
         คืน True=สำเร็จ, False=ครบเพดานแต่ไฟล์ยังไม่มา, None=ผู้ใช้กด stop
-        (แต่ละรอบ 10 วิ — max_rounds=90 ≈ 15 นาที)"""
+
+        max_rounds ยังหมายถึงเพดานเวลาเท่าเดิม (รอบละ 10 วิ) แต่จังหวะถามถี่
+        กว่านั้นตอนต้น — ไฟล์เล็กเซิร์ฟเวอร์ทำเสร็จใน 30-40 วินาที ถ้าถาม
+        ทุก 10 วิคงที่จะไปรู้ช้ากว่าที่เสร็จจริงได้ถึง 10 วินาที
+        """
         list_url = f"{base}/downLoadCenter/downLoadInfoList"
         sign_url = f"{base}/downLoadCenter/getDownloadSignedUrl"
 
         download_url = None
 
-        for _ in range(max_rounds):
+        deadline = time.time() + max_rounds * 10
+        started = time.time()
+
+        while time.time() < deadline:
 
             if self.stop_requested:
                 return None
@@ -4515,9 +4599,12 @@ class App(ctk.CTk):
             if download_url:
                 break
 
-            self.log("Waiting server file generation...", "JMS")
+            # ถี่ตอนต้นเพราะไฟล์เล็กเสร็จเร็ว แล้วค่อยถ่างออกเพื่อไม่ถล่มเซิร์ฟเวอร์
+            elapsed = time.time() - started
+            wait = 2 if elapsed < 30 else (5 if elapsed < 120 else 10)
+            self.log(f"Waiting server file generation... ({elapsed:.0f}s)", "JMS")
 
-            if not self.sleep_with_stop(10):
+            if not self.sleep_with_stop(wait):
                 return None
 
         if not download_url:
@@ -4589,8 +4676,8 @@ class App(ctk.CTk):
             marker = self._jms_fire_export(session, base, headers, start, end, scanType)
             if marker is None:
                 return
-            if not self.sleep_with_stop(30):
-                return
+            # ไม่ต้องรอเปล่า 30 วินาทีก่อน poll อีกแล้ว — รอบแรกห่างแค่ 2 วินาที
+            # ถามเร็วไปก็แค่ไม่เจอ record แล้ววนรอต่อ ไม่ได้เสียอะไร
             result = self._jms_collect_export(session, base, headers, scanType, filename, marker, max_rounds=90)
             if result is False:
                 raise Exception(f"{filename}: server export file not found (timeout)")
