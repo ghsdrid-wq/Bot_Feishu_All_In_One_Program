@@ -67,6 +67,44 @@ def load_summary(business_date: Optional[str] = None) -> Optional[Dict[str, Any]
     return {"business_date": business_date, "hero": hero, "main": main}
 
 
+def ensure_summary(business_date: Optional[str] = None,
+                   log: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+    """อ่านยอด ถ้ารอบนี้ยังไม่มีข้อมูลให้เก็บข้อมูลเองก่อนแล้วอ่านซ้ำ
+
+    ใช้ตอนรัน Bot Export โดยไม่ติ๊กขั้นตอน Dashboard — ไม่มีใคร ingest ข้อมูล
+    ของรอบนั้น การ์ดจึงเคยออกมามีแต่รูป ไม่มีตัวเลข
+
+    เก็บข้อมูลอย่างเดียว ไม่ทำรูป (render=False) เพราะรูปที่การ์ดนี้ใช้มาจาก
+    Excel อยู่แล้ว ไม่ต้องเปิด Chromium มาทำรูปซ้ำ
+
+    ถ้าขั้นตอน Dashboard ทำงานไปแล้วในรอบเดียวกัน load_summary จะได้ข้อมูล
+    ตั้งแต่ครั้งแรก ฟังก์ชันนี้จึงไม่ไป ingest ซ้ำให้เสียเวลา
+    """
+    write = log or (lambda _m: None)
+    summary = load_summary(business_date)
+    if summary is not None:
+        return summary
+
+    try:
+        from dashboard import pipeline as dash_pipeline
+        write("No summary for this cycle - ingesting before building card")
+        # ต่อ log เข้ากับของผู้เรียก ไม่งั้น pipeline จะ print ลง stdout
+        # ซึ่งหายไปเฉย ๆ เพราะโปรแกรมหลักเป็น GUI ไม่มี console
+        result = dash_pipeline.run_cycle(
+            log=lambda message, level="INFO": write(message),
+            business_date=business_date, render=False)
+        if result.get("skipped"):
+            write("Ingest skipped: {}".format(result["skipped"]))
+            return None
+        write("Ingested {} rows".format(result.get("rows", 0)))
+    except Exception as exc:
+        # เก็บข้อมูลไม่ได้ก็ยังส่งรูปได้ตามเดิม ห้ามล้มงานหลัก
+        write("Ingest failed, card will have images only: {}".format(exc))
+        return None
+
+    return load_summary(business_date)
+
+
 def _chart_rows(hero: Dict[str, Any], main: Dict[str, Any]) -> List[Dict[str, Any]]:
     """ตาราง long-format ที่ VChart กิน: หนึ่งแถว = หนึ่งชั่วโมง x หนึ่งชนิด"""
     all_bars = hero["stacked"]["bars"]

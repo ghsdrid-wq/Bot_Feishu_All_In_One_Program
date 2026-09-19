@@ -63,8 +63,13 @@ def current_business_date() -> str:
 def run_cycle(log: Optional[LogFunc] = None,
               business_date: Optional[str] = None,
               db_path: str = core.DEFAULT_DB_PATH,
-              should_stop: Optional[Callable[[], bool]] = None) -> dict:
-    """หนึ่งรอบเต็ม — เรียกได้จาก scheduler ของ bot_main"""
+              should_stop: Optional[Callable[[], bool]] = None,
+              render: bool = True) -> dict:
+    """หนึ่งรอบเต็ม — เรียกได้จาก scheduler ของ bot_main
+
+    render=False = เก็บข้อมูลลง DB อย่างเดียว ไม่ทำรูป ใช้ตอนที่ต้องการแค่
+    ตัวเลขไปทำการ์ด (ไม่ต้องเปิด Chromium ซึ่งกินเวลาและแรมเป็นสิบวินาที)
+    """
     write = log or _noop
     cfg = _settings()
     if not cfg["enabled"]:
@@ -117,7 +122,7 @@ def run_cycle(log: Optional[LogFunc] = None,
     # แคปหน้าเว็บเป็น PNG
     # ไม่ต้องตัดสินใจเรื่อง "ทำโหมดไหนบ้าง" ตรงนี้ — bot_main.run_process เป็นคนคุม
     # ลำดับ Excel -> Dashboard -> Feishu อยู่แล้ว ที่นี่ทำหน้าที่เดียวคือของโหมดนี้
-    if cfg["render_png"]:
+    if cfg["render_png"] and render:
         try:
             from dashboard import render
             paths = render.render_all_tabs(

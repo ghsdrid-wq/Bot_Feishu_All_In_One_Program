@@ -259,7 +259,9 @@ def run_send(folder: str, log: Optional[LogFunc] = None, is_running: Optional[Ru
         captions = image_captions()
         images = [(captions.get(os.path.basename(img), os.path.splitext(os.path.basename(img))[0]), key)
                   for img, key in results]
-        summary = card_report.load_summary()
+        # ถ้ารอบนี้ยังไม่มีข้อมูล (ไม่ได้ติ๊กขั้นตอน Dashboard) ให้เก็บข้อมูลเองก่อน
+        # จะได้ไม่ส่งการ์ดที่มีแต่รูปโดยไม่มีตัวเลขสรุป
+        summary = card_report.ensure_summary(log=write)
         if summary is None:
             write("No dashboard data for this cycle - sending images only")
         try:
