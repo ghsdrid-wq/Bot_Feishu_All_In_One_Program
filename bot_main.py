@@ -3587,8 +3587,12 @@ class App(ctk.CTk):
         return start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")
 
     def sleep_with_stop(self, seconds):
+        # ตอนยิง export ล่วงหน้าเราอยู่นอกรอบรัน self.running จึงเป็น False
+        # ถ้าไม่ยกเว้นไว้ การ retry ตอนเน็ตสะดุดจะเลิกทันทีโดยไม่ได้ลองใหม่
         for _ in range(seconds):
-            if self.stop_requested or not self.running:
+            if self.stop_requested:
+                return False
+            if not self.running and not getattr(self, "prefire_active", False):
                 return False
             self.mark_activity()
             time.sleep(1)
@@ -4142,6 +4146,15 @@ class App(ctk.CTk):
                     pass
 
 
+    def _jms_marker_usable(self, entry):
+        """มาร์กเกอร์ยังใช้ได้ไหม — ของรอบนี้ หรือของที่ยิงล่วงหน้าและยังไม่เก่า"""
+        if not (isinstance(entry, tuple) and len(entry) == 3):
+            return False
+        _marker, gen, fired_at = entry
+        if gen == getattr(self, "run_generation", None):
+            return True
+        return gen is None and time.time() - fired_at <= JMS_PREFIRE_MAX_AGE
+
     def prefire_jms_exports(self):
         """สั่ง export ล่วงหน้าให้รอบถัดไป เรียกจาก scheduler ตอนใกล้ถึงเวลารัน
 
@@ -4161,9 +4174,13 @@ class App(ctk.CTk):
             f"Pre-firing JMS export {JMS_PREFIRE_LEAD_MINUTES} min ahead "
             f"({len(scan_types)} scan type)",
             level="START")
-        self.prewarm_jms_exports(scan_types,
-                                 time_range=settings.get("time_range"),
-                                 generation=None)
+        self.prefire_active = True
+        try:
+            self.prewarm_jms_exports(scan_types,
+                                     time_range=settings.get("time_range"),
+                                     generation=None)
+        finally:
+            self.prefire_active = False
 
     def _jms_base_headers(self):
         base = "https://jmsgw.jtexpress.co.th/operatingplatform"
@@ -4197,7 +4214,13 @@ class App(ctk.CTk):
         time_range = ใช้ช่วงเวลาที่ส่งมาแทนการอ่านจาก UI — ตอนยิงล่วงหน้า
         เราอยู่คนละ thread กับ UI จะไปอ่าน DateEntry ตรง ๆ ไม่ได้
         """
-        self.jms_export_markers = {}
+        # เก็บมาร์กเกอร์ที่ยังใช้ได้ไว้ ทิ้งเฉพาะของเก่า — ของที่ยิงล่วงหน้าไว้
+        # ต้องรอดมาถึงตรงนี้ ไม่งั้นการยิงล่วงหน้าจะไม่มีผลอะไรเลย
+        existing = getattr(self, "jms_export_markers", None)
+        if not isinstance(existing, dict):
+            existing = {}
+        self.jms_export_markers = {k: v for k, v in existing.items()
+                                   if self._jms_marker_usable(v)}
         if self.stop_requested:
             return
         try:
@@ -4210,6 +4233,9 @@ class App(ctk.CTk):
                 for st in scan_types:
                     if self.stop_requested:
                         return
+                    if self._jms_marker_usable(self.jms_export_markers.get(st)):
+                        self.log(f"Already pre-fired, skip re-request: {st}", "JMS")
+                        continue
                     marker = self._jms_fire_export(session, base, headers, start, end, st)
                     if marker is None:
                         return
