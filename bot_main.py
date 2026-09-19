@@ -1296,6 +1296,10 @@ class App(ctk.CTk):
             self.config["TIME"]["run_minute"] = clean_input_value(self.minute_var.get()) or "5"
             self.config["TIME"]["start_hour"] = clean_input_value(self.start_hour_var.get()).replace(":00", "") or "15"
             self.config["TIME"]["end_hour"] = clean_input_value(self.end_hour_var.get()).replace(":00", "") or "12"
+            if "prefire_var" in self.__dict__:
+                self.config["TIME"]["prefire_enabled"] = str(self.prefire_var.get()).lower()
+                self.config["TIME"]["prefire_lead"] = clean_input_value(
+                    self.prefire_minute_var.get()) or str(JMS_PREFIRE_LEAD_MINUTES)
             self.config["FEISHU"]["APP_ID"] = entry_value(self.app_id_entry, collapse_internal_spaces=True)
             self.config["FEISHU"]["APP_SECRET"] = entry_value(self.app_secret_entry, collapse_internal_spaces=True)
             if hasattr(self, "chat_id_entry"):
@@ -1423,9 +1427,19 @@ class App(ctk.CTk):
                 start_raw = self.start_hour_var.get()
             if "end_hour_var" in self.__dict__:
                 end_raw = self.end_hour_var.get()
+        prefire_raw = time_config.get("prefire_enabled", "true")
+        lead_raw = time_config.get("prefire_lead", str(JMS_PREFIRE_LEAD_MINUTES))
+        if self.is_ui_thread():
+            if "prefire_var" in self.__dict__:
+                prefire_raw = str(self.prefire_var.get())
+            if "prefire_minute_var" in self.__dict__:
+                lead_raw = self.prefire_minute_var.get()
         self.scheduler_run_minute = self.parse_minute_value(minute_raw, 5)
         self.scheduler_start_hour = self.parse_hour_value(start_raw, 15)
         self.scheduler_end_hour = self.parse_hour_value(end_raw, 12)
+        self.scheduler_prefire = as_bool(prefire_raw, True)
+        self.scheduler_prefire_lead = self.parse_minute_value(
+            lead_raw, JMS_PREFIRE_LEAD_MINUTES)
         return self.scheduler_run_minute, self.scheduler_start_hour, self.scheduler_end_hour
 
     def send_window(self):
@@ -1766,6 +1780,25 @@ class App(ctk.CTk):
         self.end_menu.grid(row=1, column=8, padx=(4, 16), pady=10, sticky="w")
         self.start_date.bind("<<DateEntrySelected>>", lambda _e: self.save_config(), "+")
         self.end_date.bind("<<DateEntrySelected>>", lambda _e: self.save_config(), "+")
+
+        # ดึงล่วงหน้า — สั่ง JMS สร้างไฟล์ก่อนถึงรอบ ให้เซิร์ฟเวอร์ทำตอนเราว่าง
+        # ปิดได้ถ้าต้องการยอดเต็มเวลาถึงนาทีที่รันจริง
+        self.prefire_var = ctk.BooleanVar(value=True)
+        self.prefire_minute_var = ctk.StringVar(value=str(JMS_PREFIRE_LEAD_MINUTES))
+        ctk.CTkCheckBox(command, text="ดึงล่วงหน้า", variable=self.prefire_var,
+                        command=self.save_config, width=120).grid(
+            row=2, column=0, padx=(16, 4), pady=(0, 6), sticky="w")
+        self.prefire_menu = ctk.CTkOptionMenu(
+            command, values=[str(i) for i in range(1, 16)],
+            variable=self.prefire_minute_var, width=82,
+            command=lambda _: self.save_config())
+        self.prefire_menu.grid(row=2, column=1, padx=4, pady=(0, 6), sticky="w")
+        ctk.CTkLabel(
+            command,
+            text="นาที — สั่ง JMS สร้างไฟล์ล่วงหน้า ไม่ต้องยืนรอตอนถึงคิว "
+                 "(ต้องน้อยกว่า Run minute ไม่งั้นยอดชั่วโมงล่าสุดจะขาดท้าย)",
+            text_color="#aeb8cc", font=ctk.CTkFont(size=12), anchor="w").grid(
+            row=2, column=2, columnspan=7, padx=(8, 16), pady=(0, 6), sticky="w")
         self.start_hour = self.start_menu
         self.end_hour = self.end_menu
         self.btn_start = ctk.CTkButton(command, text="▣ Start Auto", height=40, fg_color="#5e81ac", hover_color="#4c6e93", command=self.start_scheduler)
@@ -2687,6 +2720,12 @@ class App(ctk.CTk):
         if hasattr(self, "send_as_card_var"):
             exports = self.config["EXPORTS"] if "EXPORTS" in self.config else {}
             self.send_as_card_var.set(as_bool(exports.get("send_as_card", "true"), True))
+
+        if "prefire_var" in self.__dict__:
+            time_cfg = self.config["TIME"] if "TIME" in self.config else {}
+            self.prefire_var.set(as_bool(time_cfg.get("prefire_enabled", "true"), True))
+            self.prefire_minute_var.set(
+                clean_input_value(time_cfg.get("prefire_lead", "")) or str(JMS_PREFIRE_LEAD_MINUTES))
 
         # ตั้งวันตามรอบงานจริง ไม่ใช่ "วันนี้" เฉยๆ
         # (เปิดโปรแกรมตอนตี 3 รอบงานคือของเมื่อวาน ไม่ใช่ของวันนี้)
@@ -4170,9 +4209,9 @@ class App(ctk.CTk):
                       if steps.get(key)]
         if not scan_types:
             return
+        lead = getattr(self, "scheduler_prefire_lead", JMS_PREFIRE_LEAD_MINUTES)
         self.write_log(
-            f"Pre-firing JMS export {JMS_PREFIRE_LEAD_MINUTES} min ahead "
-            f"({len(scan_types)} scan type)",
+            f"Pre-firing JMS export {lead} min ahead ({len(scan_types)} scan type)",
             level="START")
         self.prefire_active = True
         try:
@@ -5121,6 +5160,23 @@ class App(ctk.CTk):
             f"send_window={self.send_window()[0]:02}:00-{self.send_window()[1]:02}:00",
             level="START",
         )
+        if self.scheduler_prefire:
+            lead = self.scheduler_prefire_lead
+            self.write_log(
+                f"Pre-fire enabled | lead={lead} min | "
+                f"fires at :{(self.scheduler_run_minute - lead) % 60:02}",
+                level="INFO")
+            if lead >= self.scheduler_run_minute:
+                # ยิงก่อนหัวชั่วโมง = ไฟล์ตัดกลางชั่วโมงที่กำลังจะจบ
+                # ยอดของชั่วโมงนั้นในการ์ดใบนี้จะขาดท้ายไป
+                self.write_log(
+                    f"ดึงล่วงหน้า {lead} นาที มากกว่าหรือเท่ากับ Run minute "
+                    f"{self.scheduler_run_minute} — ไฟล์จะถูกตัดก่อนจบชั่วโมง "
+                    f"ยอดชั่วโมงล่าสุดจะขาดไป {lead - self.scheduler_run_minute} นาที "
+                    f"(ตั้ง Run minute ให้มากกว่า {lead} จะได้ยอดครบ)",
+                    level="WARN")
+        else:
+            self.write_log("Pre-fire disabled — ยอดเต็มเวลาถึงนาทีที่รันจริง", level="INFO")
         self.write_log(f"Next auto run: {self.format_next_scheduler_run(next_run)}")
         threading.Thread(target=self.scheduler_loop, daemon=True).start()
 
@@ -5159,11 +5215,13 @@ class App(ctk.CTk):
                     self.task_queue.put(lambda settings=settings, g=run_generation: self.run_process(settings, g))
 
                 # ยิง export ล่วงหน้าก่อนถึงรอบรัน ให้เซิร์ฟเวอร์ทำตอนที่เราว่าง
-                prefire_minute = (minute - JMS_PREFIRE_LEAD_MINUTES) % 60
-                if (now.minute == prefire_minute
+                lead = getattr(self, "scheduler_prefire_lead", JMS_PREFIRE_LEAD_MINUTES)
+                prefire_minute = (minute - lead) % 60
+                if (getattr(self, "scheduler_prefire", True)
+                        and now.minute == prefire_minute
                         and getattr(self, "last_prefire_minute", None) != now_key):
                     self.last_prefire_minute = now_key
-                    target = now + timedelta(minutes=JMS_PREFIRE_LEAD_MINUTES)
+                    target = now + timedelta(minutes=lead)
                     if self.in_send_window(target.hour) and not self.running:
                         threading.Thread(target=self.prefire_jms_exports,
                                          daemon=True).start()
