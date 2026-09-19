@@ -20,6 +20,8 @@
     --stripe:#ddebf7; --head-bg:#2f75b5; --sum-bg:#bdd7ee;
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.78);
     --cell-mute:rgba(11,11,11,0.07);
+    --shift-head:#fec60a; --shift-head-ink:#3a2c00;
+    --shift-col:#6f6f6f;  --shift-col-ink:#fff;
   }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
     color-scheme: dark;
@@ -34,6 +36,8 @@
     --stripe:#17293c; --head-bg:#1c5cab; --sum-bg:#1f3b56;
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
     --cell-mute:rgba(255,255,255,0.09);
+    --shift-head:#c79a06; --shift-head-ink:#241b00;
+    --shift-col:#55555a;  --shift-col-ink:#fff;
   } }
   :root[data-theme="dark"] {
     color-scheme: dark;
@@ -48,6 +52,8 @@
     --stripe:#17293c; --head-bg:#1c5cab; --sum-bg:#1f3b56;
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
     --cell-mute:rgba(255,255,255,0.09);
+    --shift-head:#c79a06; --shift-head-ink:#241b00;
+    --shift-col:#55555a;  --shift-col-ink:#fff;
   }
 
   * { box-sizing:border-box; }
@@ -245,7 +251,10 @@
   td.num.strong { color:var(--ink); font-weight:600; }
   .shift-edge { border-left:2px solid var(--rule); }
   thead th.sub-col { color:var(--ink-2); font-weight:650; }
-  td.num.sub { background:var(--cell-mute); color:var(--ink); font-weight:600; border-radius:3px; }
+  td.num.sub { background:var(--shift-col); color:var(--shift-col-ink); font-weight:600; border-radius:3px; }
+  td.num.sub.soft { color:var(--shift-col-ink); opacity:.75; font-weight:500; }
+  /* ช่องที่ไม่มีตัวเลข (แถวเฉลี่ยของกลุ่ม) ไม่ต้องลงสี ไม่งั้นเป็นบล็อกเทาเปล่า */
+  td.num.sub:empty { background:transparent; }
   tbody tr.sum th, tbody tr.sum td { border-top:1px solid var(--rule); font-weight:600; color:var(--ink); padding-top:5px; }
   tbody tr.sum.rate th, tbody tr.sum.rate td { border-top:0; font-weight:500; color:var(--muted); padding-top:0; }
   /* แถบสลับสีรายแถว — กวาดสายตาตามแนวนอนข้าม 24 คอลัมน์แล้วไม่หลุดแถว
@@ -270,7 +279,9 @@
   /* บรรทัดเวลาสิ้นสุดกับหัวคอลัมน์ย่อย เดิมใช้สีจาง ๆ บนพื้นอ่อน
      พอพื้นเป็นน้ำเงินเข้มต้องเปลี่ยนเป็นขาวโปร่ง ไม่งั้นอ่านไม่ออก */
   thead th.hr span:last-child { color:var(--head-ink-2); }
-  thead th.sub-col { color:var(--head-ink); }
+  /* คอลัมน์สรุปกะเป็นตัวเลขที่คนดูบ่อยสุดรองจากยอดรายชั่วโมง
+     ให้สีของตัวเองไปเลย จะได้เล็งเจอโดยไม่ต้องไล่นับคอลัมน์ */
+  thead th.sub-col { background:var(--shift-head); color:var(--shift-head-ink); }
   thead th.latest-col,
   thead th.hr.latest-col span:last-child { color:var(--head-ink); }
   thead th.latest-col { text-decoration:underline; text-underline-offset:3px; }
@@ -280,7 +291,8 @@
     box-shadow:5px 0 0 var(--sum-bg), 6px 0 0 var(--border);
   }
   /* ช่อง Avg ในแถวรวมมีพื้นของตัวเองอยู่แล้ว ปล่อยไว้จะเป็นรอยด่าง */
-  tbody tr.sum td.num.sub { background:transparent; }
+  /* แถวรวมอยู่ในคอลัมน์เดียวกัน ต้องคงสีไว้ให้แถบต่อเนื่องตลอดแนวตั้ง */
+  tbody tr.sum td.num.sub { background:var(--shift-col); color:var(--shift-col-ink); }
 
   tr.offline th, tr.offline td { opacity:.45; }
   .tag { font-weight:400; color:var(--muted); font-size:10.5px; }
