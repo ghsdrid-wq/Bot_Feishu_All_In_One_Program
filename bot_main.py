@@ -1566,6 +1566,33 @@ class App(ctk.CTk):
             "app_secret": app_secret,
         }
 
+    def on_prefire_toggled(self):
+        self.save_config()
+        self.sync_prefire_state()
+
+    def sync_prefire_state(self):
+        """ไม่ได้ติ๊กดึงล่วงหน้า = ช่องนาทีใช้ไม่ได้ ปิดไว้กันเข้าใจผิดว่ามีผล
+
+        ระหว่างมีงานรันอยู่ทุกอย่างถูกล็อกจาก set_ui_running อยู่แล้ว
+        ตรงนี้จึงไม่ไปปลดล็อกทับ
+        """
+        menu = self.__dict__.get("prefire_menu")
+        if menu is None:
+            return
+        if getattr(self, "runtime_locked", False) or self.running:
+            return
+        on = bool(self.prefire_var.get())
+        try:
+            menu.configure(state="normal" if on else "disabled")
+        except Exception:
+            pass
+        label = self.__dict__.get("prefire_unit")
+        if label is not None:
+            try:
+                label.configure(text_color="#aeb8cc" if on else "#5c6678")
+            except Exception:
+                pass
+
     def sync_auto_run_settings_after_save(self):
         if not getattr(self, "scheduler_running", False):
             return
@@ -1785,16 +1812,18 @@ class App(ctk.CTk):
         # ปิดได้ถ้าต้องการยอดเต็มเวลาถึงนาทีที่รันจริง
         self.prefire_var = ctk.BooleanVar(value=True)
         self.prefire_minute_var = ctk.StringVar(value=str(JMS_PREFIRE_LEAD_MINUTES))
-        ctk.CTkCheckBox(command, text="ดึงล่วงหน้า", variable=self.prefire_var,
-                        command=self.save_config, width=120).grid(
-            row=2, column=0, padx=(16, 4), pady=(0, 6), sticky="w")
+        self.prefire_chk = ctk.CTkCheckBox(
+            command, text="ดึงล่วงหน้า", variable=self.prefire_var,
+            command=self.on_prefire_toggled, width=120)
+        self.prefire_chk.grid(row=2, column=0, padx=(16, 4), pady=(0, 6), sticky="w")
         self.prefire_menu = ctk.CTkOptionMenu(
             command, values=[str(i) for i in range(1, 16)],
             variable=self.prefire_minute_var, width=82,
             command=lambda _: self.save_config())
         self.prefire_menu.grid(row=2, column=1, padx=4, pady=(0, 6), sticky="w")
-        ctk.CTkLabel(command, text="นาที", text_color="#aeb8cc").grid(
-            row=2, column=2, padx=(8, 4), pady=(0, 6), sticky="w")
+        self.prefire_unit = ctk.CTkLabel(command, text="นาที", text_color="#aeb8cc")
+        self.prefire_unit.grid(row=2, column=2, padx=(8, 4), pady=(0, 6), sticky="w")
+        self.sync_prefire_state()
         self.start_hour = self.start_menu
         self.end_hour = self.end_menu
         self.btn_start = ctk.CTkButton(command, text="▣ Start Auto", height=40, fg_color="#5e81ac", hover_color="#4c6e93", command=self.start_scheduler)
@@ -2722,6 +2751,7 @@ class App(ctk.CTk):
             self.prefire_var.set(as_bool(time_cfg.get("prefire_enabled", "true"), True))
             self.prefire_minute_var.set(
                 clean_input_value(time_cfg.get("prefire_lead", "")) or str(JMS_PREFIRE_LEAD_MINUTES))
+            self.sync_prefire_state()
 
         # ตั้งวันตามรอบงานจริง ไม่ใช่ "วันนี้" เฉยๆ
         # (เปิดโปรแกรมตอนตี 3 รอบงานคือของเมื่อวาน ไม่ใช่ของวันนี้)
@@ -3204,6 +3234,7 @@ class App(ctk.CTk):
         for w in [
             getattr(self, "minute_menu", None), getattr(self, "start_menu", None), getattr(self, "end_menu", None),
             getattr(self, "chk_bot_export", None), getattr(self, "chk_bot_chat", None),
+            getattr(self, "prefire_chk", None), getattr(self, "prefire_menu", None),
         ]:
             if w is None:
                 continue
@@ -3211,6 +3242,9 @@ class App(ctk.CTk):
                 w.configure(state=state)
             except Exception:
                 pass
+        if not active:
+            # ปลดล็อกแล้วช่องนาทีต้องกลับไปตามติ๊ก ไม่ใช่เปิดทิ้งไว้
+            self.sync_prefire_state()
 
         for key, btn in getattr(self, "nav_buttons", {}).items():
             try:
