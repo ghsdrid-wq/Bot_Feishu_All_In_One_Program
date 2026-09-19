@@ -17,6 +17,7 @@ component table ของ Feishu เพราะการ์ดกว้าง�
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import requests
@@ -94,12 +95,11 @@ def _summary_elements(summary: Dict[str, Any], link: str = "") -> List[Dict[str,
     hero, main = summary["hero"], summary["main"]
     out: List[Dict[str, Any]] = []
 
-    head = "**ยอดปล่อยรวม {}**\n<font color='blue'>**{}**</font> {}".format(
-        main["title"], _money(main["total"]), main.get("unit", ""))
-    if main.get("day_target"):
-        head += "  ·  **{}%** ของเป้า {}".format(
-            main.get("achieved_pct", 0), _money(main["day_target"]))
-    head += "\nกะ A {} · กะ B {}".format(
+    # ยอดรวมกับยอดแยกกะอยู่บรรทัดเดียวกัน เป็นตัวเลขชุดเดียวที่อ่านต่อกัน
+    # ไม่ใส่ % ของเป้า เพราะเป้าคิดจากชั่วโมงที่เดินจริง ซึ่งขยับทุกชั่วโมง
+    # เห็นตัวเลขเปอร์เซ็นต์เด้งไปมาในแชทแล้วเข้าใจผิดว่ายอดตก
+    head = "**ยอดปล่อยรวม {}**\n<font color='blue'>**{}**</font> {} · กะ A {} · กะ B {}".format(
+        main["title"], _money(main["total"]), main.get("unit", ""),
         _money(main.get("shift_a", 0)), _money(main.get("shift_b", 0)))
     out.append({"tag": "markdown", "content": head})
 
@@ -183,7 +183,9 @@ def build_card(images: Sequence[Tuple[str, str]],
                 "margin": "6px 0",
             })
 
-    subtitle = "กราฟกดดูได้ + ตารางเต็มแบบเดิม" if summary else "ตารางเต็มแบบเดิม"
+    # ต้นชั่วโมงที่ส่ง — เลื่อนดูย้อนหลังในแชทแล้วรู้ว่าการ์ดใบไหนของรอบไหน
+    # ปัดลงเป็นต้นชั่วโมง เพราะงานส่งตามรอบชั่วโมง ไม่ใช่ตามนาทีที่กดจริง
+    subtitle = "ส่งเมื่อ " + datetime.now().strftime("%Y-%m-%d %H:00")
     header_title = title
     if summary:
         header_title = "{} — {}".format(title, summary["business_date"])
