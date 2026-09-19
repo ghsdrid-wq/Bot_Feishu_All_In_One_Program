@@ -17,7 +17,7 @@
     --ok-bg:#d8f0d8;    --ok-ink:#14530f;
     --near-bg:#fdefcd;  --near-ink:#6b4a00;
     --under-bg:#fbdede; --under-ink:#8f1f1f;
-    --stripe:#eef1f6;
+    --stripe:#eef1f6; --head-bg:#d9d8cf; --sum-bg:#e6e5dd;
   }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
     color-scheme: dark;
@@ -29,7 +29,7 @@
     --ok-bg:#12340f;    --ok-ink:#7fdc7f;
     --near-bg:#3d2f06;  --near-ink:#f5cd6a;
     --under-bg:#451717; --under-ink:#f19a9a;
-    --stripe:#232322;
+    --stripe:#232322; --head-bg:#333330; --sum-bg:#2a2a27;
   } }
   :root[data-theme="dark"] {
     color-scheme: dark;
@@ -41,7 +41,7 @@
     --ok-bg:#12340f;    --ok-ink:#7fdc7f;
     --near-bg:#3d2f06;  --near-ink:#f5cd6a;
     --under-bg:#451717; --under-ink:#f19a9a;
-    --stripe:#232322;
+    --stripe:#232322; --head-bg:#333330; --sum-bg:#2a2a27;
   }
 
   * { box-sizing:border-box; }
@@ -251,6 +251,22 @@
     background:var(--stripe);
     box-shadow:5px 0 0 var(--stripe), 6px 0 0 var(--border);
   }
+
+  /* หัวตารางกับแถวรวมต้องแยกออกจากแถวข้อมูลให้ชัด ไม่ใช่แค่จางกว่า/เข้มกว่า
+     แถบสลับสีนิดหน่อย เพราะสองแถวนี้คือหมุดที่คนใช้เล็งก่อนหาแถวของตัวเอง
+     ใช้โทนอุ่นตัดกับแถบสลับสีที่เป็นโทนฟ้า ต่างกันทั้งความสว่างและสี */
+  thead th { background:var(--head-bg); }
+  thead th.name-col {
+    background:var(--head-bg);
+    box-shadow:5px 0 0 var(--head-bg), 6px 0 0 var(--border);
+  }
+  tbody tr.sum { background:var(--sum-bg); }
+  tbody tr.sum th {
+    background:var(--sum-bg);
+    box-shadow:5px 0 0 var(--sum-bg), 6px 0 0 var(--border);
+  }
+  /* ช่อง Avg ในแถวรวมมีพื้นของตัวเองอยู่แล้ว ปล่อยไว้จะเป็นรอยด่าง */
+  tbody tr.sum td.num.sub { background:transparent; }
 
   tr.offline th, tr.offline td { opacity:.45; }
   .tag { font-weight:400; color:var(--muted); font-size:10.5px; }
