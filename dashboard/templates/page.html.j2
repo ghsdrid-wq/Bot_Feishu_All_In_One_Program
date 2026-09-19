@@ -17,7 +17,9 @@
     --ok-bg:#d8f0d8;    --ok-ink:#14530f;
     --near-bg:#fdefcd;  --near-ink:#6b4a00;
     --under-bg:#fbdede; --under-ink:#8f1f1f;
-    --stripe:#eef1f6; --head-bg:#d9d8cf; --sum-bg:#e6e5dd;
+    --stripe:#ddebf7; --head-bg:#2f75b5; --sum-bg:#bdd7ee;
+    --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.78);
+    --cell-mute:rgba(11,11,11,0.07);
   }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
     color-scheme: dark;
@@ -29,7 +31,9 @@
     --ok-bg:#12340f;    --ok-ink:#7fdc7f;
     --near-bg:#3d2f06;  --near-ink:#f5cd6a;
     --under-bg:#451717; --under-ink:#f19a9a;
-    --stripe:#232322; --head-bg:#333330; --sum-bg:#2a2a27;
+    --stripe:#17293c; --head-bg:#1c5cab; --sum-bg:#1f3b56;
+    --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
+    --cell-mute:rgba(255,255,255,0.09);
   } }
   :root[data-theme="dark"] {
     color-scheme: dark;
@@ -41,7 +45,9 @@
     --ok-bg:#12340f;    --ok-ink:#7fdc7f;
     --near-bg:#3d2f06;  --near-ink:#f5cd6a;
     --under-bg:#451717; --under-ink:#f19a9a;
-    --stripe:#232322; --head-bg:#333330; --sum-bg:#2a2a27;
+    --stripe:#17293c; --head-bg:#1c5cab; --sum-bg:#1f3b56;
+    --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
+    --cell-mute:rgba(255,255,255,0.09);
   }
 
   * { box-sizing:border-box; }
@@ -219,8 +225,9 @@
   td.cell { text-align:center; font-size:11px; padding:3px 2px; border-radius:3px; min-width:40px; color:var(--ink); }
   /* สีช่อง = เทียบเป้า ไม่ใช่ขนาดยอด — ตัวเลขยังอยู่ครบ สีจึงไม่ใช่ช่องทางเดียว */
   .cell-nodata  { background:transparent; color:var(--muted); }
-  .cell-zero    { background:var(--grid); color:var(--muted); }
-  .cell-partial { background:var(--grid); color:var(--ink-2); }
+  /* ใช้สีโปร่งทับพื้นแถว ไม่ใช่สีทึบ ไม่งั้นจะเป็นรอยด่างบนแถบสลับสี */
+  .cell-zero    { background:var(--cell-mute); color:var(--muted); }
+  .cell-partial { background:var(--cell-mute); color:var(--ink-2); }
   .cell-ok      { background:var(--ok-bg);    color:var(--ok-ink);    font-weight:600; }
   .cell-near    { background:var(--near-bg);  color:var(--near-ink);  font-weight:600; }
   .cell-under   { background:var(--under-bg); color:var(--under-ink); font-weight:600; }
@@ -238,7 +245,7 @@
   td.num.strong { color:var(--ink); font-weight:600; }
   .shift-edge { border-left:2px solid var(--rule); }
   thead th.sub-col { color:var(--ink-2); font-weight:650; }
-  td.num.sub { background:var(--grid); color:var(--ink); font-weight:600; border-radius:3px; }
+  td.num.sub { background:var(--cell-mute); color:var(--ink); font-weight:600; border-radius:3px; }
   tbody tr.sum th, tbody tr.sum td { border-top:1px solid var(--rule); font-weight:600; color:var(--ink); padding-top:5px; }
   tbody tr.sum.rate th, tbody tr.sum.rate td { border-top:0; font-weight:500; color:var(--muted); padding-top:0; }
   /* แถบสลับสีรายแถว — กวาดสายตาตามแนวนอนข้าม 24 คอลัมน์แล้วไม่หลุดแถว
@@ -255,11 +262,18 @@
   /* หัวตารางกับแถวรวมต้องแยกออกจากแถวข้อมูลให้ชัด ไม่ใช่แค่จางกว่า/เข้มกว่า
      แถบสลับสีนิดหน่อย เพราะสองแถวนี้คือหมุดที่คนใช้เล็งก่อนหาแถวของตัวเอง
      ใช้โทนอุ่นตัดกับแถบสลับสีที่เป็นโทนฟ้า ต่างกันทั้งความสว่างและสี */
-  thead th { background:var(--head-bg); }
+  thead th { background:var(--head-bg); color:var(--head-ink); font-weight:600; }
   thead th.name-col {
-    background:var(--head-bg);
+    background:var(--head-bg); color:var(--head-ink);
     box-shadow:5px 0 0 var(--head-bg), 6px 0 0 var(--border);
   }
+  /* บรรทัดเวลาสิ้นสุดกับหัวคอลัมน์ย่อย เดิมใช้สีจาง ๆ บนพื้นอ่อน
+     พอพื้นเป็นน้ำเงินเข้มต้องเปลี่ยนเป็นขาวโปร่ง ไม่งั้นอ่านไม่ออก */
+  thead th.hr span:last-child { color:var(--head-ink-2); }
+  thead th.sub-col { color:var(--head-ink); }
+  thead th.latest-col,
+  thead th.hr.latest-col span:last-child { color:var(--head-ink); }
+  thead th.latest-col { text-decoration:underline; text-underline-offset:3px; }
   tbody tr.sum { background:var(--sum-bg); }
   tbody tr.sum th {
     background:var(--sum-bg);
