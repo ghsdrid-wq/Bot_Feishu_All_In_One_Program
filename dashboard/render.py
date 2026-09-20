@@ -61,10 +61,25 @@ def render_html(business_date: str, tab: Optional[str] = None,
     return html
 
 
+def use_bundled_browsers():
+    """ถ้ามีโฟลเดอร์ ms-playwright วางไว้ข้างโปรแกรม ให้ใช้ตัวนั้น
+
+    ปกติ Playwright หา browser จาก %LOCALAPPDATA% ของผู้ใช้ที่ลงมันไว้
+    เครื่องที่เพิ่งก๊อปโปรแกรมไปวางจะไม่มี ทำให้แคปรูปไม่ได้
+    วางโฟลเดอร์ browser ไว้ข้าง exe แล้วชี้ไปตรงนั้นแทน จะได้ย้ายเครื่องได้เลย
+    """
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        return                      # ผู้ใช้ตั้งเองไว้แล้ว ไม่ไปยุ่ง
+    bundled = os.path.join(core.PROJECT_ROOT, "ms-playwright")
+    if os.path.isdir(bundled):
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = bundled
+
+
 def render_png(html: str, out_path: str, width: int = DEFAULT_WIDTH,
                scale: int = 2, theme: str = "light") -> str:
     """แคปหน้าเต็มเป็น PNG — full_page ทำให้ไม่ต้องกะความสูงเอง
     (ปัญหาเดิมของ Excel คือต้องระบุ range A1:AK39 ตายตัว พอข้อมูลยาวขึ้นก็ตก)"""
+    use_bundled_browsers()
     from playwright.sync_api import sync_playwright
 
     tmp_html = os.path.splitext(out_path)[0] + ".html"

@@ -16,10 +16,20 @@ from typing import Any, Dict, Optional
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(HERE)
+
+# ตอน build เป็น exe โค้ดถูกฝังอยู่ใน _internal ซึ่งผู้ใช้ไม่ได้เข้าไปแก้
+# และถูกเขียนทับทุกครั้งที่ลงใหม่ ไฟล์ที่คนต้องแก้เอง (config.ini,
+# metrics_config.yaml) กับฐานข้อมูลที่ต้องอยู่ข้ามการอัปเดต จึงต้องอยู่
+# ข้าง ๆ ตัว exe ไม่ใช่ในโฟลเดอร์โค้ด
+if getattr(sys, "frozen", False):
+    PROJECT_ROOT = os.path.dirname(os.path.abspath(sys.executable))
+    DATA_ROOT = PROJECT_ROOT
+else:
+    PROJECT_ROOT = os.path.dirname(HERE)
+    DATA_ROOT = HERE
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "metrics_config.yaml")
-SCHEMA_PATH = os.path.join(HERE, "schema.sql")
-DEFAULT_DB_PATH = os.path.join(HERE, "store.db")
+SCHEMA_PATH = os.path.join(HERE, "schema.sql")   # ของอ่านอย่างเดียว ฝังไปกับโค้ดได้
+DEFAULT_DB_PATH = os.path.join(DATA_ROOT, "store.db")
 
 _config_cache: Optional[Dict[str, Any]] = None
 
