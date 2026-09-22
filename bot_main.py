@@ -233,9 +233,9 @@ _KEEP = object()          # ใช้แยก "ไม่ได้ส่งค�
 
 PIPELINE_STEPS = [
     ("dws_mirror", "DWS1-8", "\U0001F5C2", False),
-    ("dws", "DWS", "\U0001F4E5", True),
-    ("jms_auto", "JMS AUTO", "\U0001F4E6", True),
-    ("jms_pda", "JMS PDA", "\U0001F4F2", True),
+    ("dws", "DWS9-11", "\U0001F4E5", True),
+    ("jms_auto", "PDA AUTO", "\U0001F4E6", True),
+    ("jms_pda", "PDA DWS", "\U0001F4F2", True),
     ("realtime", "Realtime DB", "\U0001F9ED", True),
     ("excel", "Excel Image", "\U0001F5BC", True),
     ("dashboard", "Dashboard", "\U0001F4CA", False),
