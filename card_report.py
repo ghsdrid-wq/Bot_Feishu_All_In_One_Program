@@ -267,12 +267,17 @@ def build_card(images: Sequence[Tuple[str, str]],
     if images:
         if elements:                      # ไม่มีสรุปก็ไม่ต้องมีเส้นคั่นลอยบรรทัดแรก
             elements.append({"tag": "hr"})
-        elements.append({"tag": "markdown",
-                         "content": "**ตารางเต็ม** — กดที่รูปเพื่อดูเต็มความละเอียด"})
+            # บรรทัดนำรูปมีไว้คั่นจากบล็อกตัวเลขข้างบน การ์ดที่มีแต่รูป
+            # ไม่มีอะไรให้คั่น ใส่ไปก็เป็นบรรทัดเปล่าเปลือง
+            elements.append({"tag": "markdown",
+                             "content": "**ตารางเต็ม** — กดที่รูปเพื่อดูเต็มความละเอียด"})
+        # รูปเดียวไม่ต้องมีชื่อกำกับ เพราะหัวการ์ดบอกไปแล้วว่าคืออะไร
+        # จะซ้ำกันสองบรรทัดติด ๆ เปล่า ๆ
+        show_caption = len(images) > 1
         for caption, key in images:
             elements.append({
                 "tag": "img", "img_key": key,
-                "title": {"tag": "plain_text", "content": caption},
+                "title": {"tag": "plain_text", "content": caption if show_caption else ""},
                 "alt": {"tag": "plain_text", "content": caption},
                 # fit_horizontal = กว้างเต็มการ์ด ไม่ครอป / preview = กดแล้วขยาย
                 "scale_type": "fit_horizontal",
