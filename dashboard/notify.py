@@ -164,7 +164,11 @@ def send_dashboard(business_date: str, png_dir: str,
                 images.append((titles.get(tab, tab), key))
                 write(f"อัปโหลดรูปแท็บ {tab} แล้ว ({os.path.getsize(path) / 1024:,.0f} KB)")
             card = card_report.build_card(
-                images, card_report.load_summary(business_date),
+                images,
+                # ensure_summary อ่าน AutoPacking ซ้ำก่อน ไฟล์ของชั่วโมงที่เพิ่งจบ
+                # ถูกเขียนตอนหัวชั่วโมงพอดี ถ้าไม่อ่านซ้ำยอดชั่วโมงนั้นจะเป็น 0
+                card_report.ensure_summary(business_date,
+                                           log=lambda m: write(m, level="INFO")),
                 link=link)
             write(f"ขนาดการ์ด {card_report.card_size(card):,} bytes")
             card_report.send_card(access_token, cfg["chat_id"], card)

@@ -67,6 +67,36 @@ def load_summary(business_date: Optional[str] = None) -> Optional[Dict[str, Any]
     return {"business_date": business_date, "hero": hero, "main": main}
 
 
+def refresh_autopacking(log: Optional[Any] = None) -> None:
+    """อ่านไฟล์ดิบ AutoPacking ซ้ำก่อนสร้างการ์ด
+
+    AutoPacking ไม่ได้ดึงสดเหมือน DWS/PDA แต่อ่านจากไฟล์รายชั่วโมงที่โปรแกรม
+    อีกตัวเขียนให้ และไฟล์ของชั่วโมงที่เพิ่งจบถูกเขียน "ตอนหัวชั่วโมงพอดี"
+    (04.xlsx = ข้อมูลของ 03:00-04:00 เขียนตอน 04:00)
+
+    รอบรันเริ่มก่อนหัวชั่วโมงเมื่อไหร่ ไฟล์นั้นยังไม่เกิด ยอดชั่วโมงล่าสุด
+    จะเป็น 0 ทั้งที่ข้อมูลมีจริง — หัวการ์ดบอกว่านับถึงตอนนี้ แต่เนื้อในไม่ถึง
+
+    อ่านซ้ำตรงนี้อีกครั้งจึงปิดช่องว่างนั้น ต้นทุนแค่ 0.3 วินาที เพราะเป็น
+    ไฟล์เล็ก ๆ ในเครื่อง/แชร์ ไม่ได้ยิงเน็ตเวิร์กออกไปไหน
+    """
+    write = log or (lambda _m: None)
+    try:
+        from metrics import core, ingest_autopacking
+
+        conn = core.connect(core.DEFAULT_DB_PATH)
+        try:
+            result = ingest_autopacking.ingest_folder(conn)
+        finally:
+            conn.close()
+        if result.get("rows"):
+            write("Re-read AutoPacking before card: {} rows from {} files".format(
+                result["rows"], result.get("files", 0)))
+    except Exception as exc:
+        # อ่านไม่ได้ก็ใช้ของเดิมใน DB ต่อ ไม่ควรล้มการส่ง
+        write("Re-read AutoPacking skipped: {}".format(exc))
+
+
 def ensure_summary(business_date: Optional[str] = None,
                    log: Optional[Any] = None) -> Optional[Dict[str, Any]]:
     """อ่านยอด ถ้ารอบนี้ยังไม่มีข้อมูลให้เก็บข้อมูลเองก่อนแล้วอ่านซ้ำ
@@ -81,6 +111,8 @@ def ensure_summary(business_date: Optional[str] = None,
     ตั้งแต่ครั้งแรก ฟังก์ชันนี้จึงไม่ไป ingest ซ้ำให้เสียเวลา
     """
     write = log or (lambda _m: None)
+    # อ่านไฟล์ AutoPacking ซ้ำก่อนเสมอ ถูกมากและปิดช่องว่างชั่วโมงล่าสุด
+    refresh_autopacking(write)
     summary = load_summary(business_date)
     if summary is not None:
         return summary
