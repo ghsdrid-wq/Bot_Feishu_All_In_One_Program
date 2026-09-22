@@ -156,8 +156,13 @@ def _chart_rows(hero: Dict[str, Any], main: Dict[str, Any]) -> List[Dict[str, An
     return rows
 
 
+# ความสูงกราฟในการ์ด — ใช้ px ตายตัวแทน aspect_ratio เพราะ 16:9 บนการ์ด
+# กว้าง ~600px จะสูงราว 340px ต่อกราฟ กินพื้นที่แชทเกินความจำเป็น
+CHART_HEIGHT = "240px"
+
+
 def _chart(spec: Dict[str, Any]) -> Dict[str, Any]:
-    return {"tag": "chart", "aspect_ratio": "16:9", "color_theme": "brand",
+    return {"tag": "chart", "height": CHART_HEIGHT, "color_theme": "brand",
             "chart_spec": spec, "preview": True, "margin": "4px 0"}
 
 
@@ -194,14 +199,18 @@ def _summary_elements(summary: Dict[str, Any], link: str = "") -> List[Dict[str,
         legend = {"visible": True, "orient": "bottom"}
         unit = main.get("unit", "")
         out.append({"tag": "hr"})
+        # กราฟเดียวพอ — แท่งซ้อนบอกทั้งยอดรวมของชั่วโมง (ความสูงแท่ง) และ
+        # สัดส่วนของแต่ละชนิด (สี) ส่วนกราฟเส้นที่เคยมีคู่กันบอกซ้ำของเดิม
+        # แต่กินพื้นที่แชทอีกเท่าตัว
+        #
+        # ไม่โชว์ตัวเลขบนแท่ง เพราะแท่งซ้อนจะมีเลขเต็มไปหมดรวมทั้งเลข 0
+        # ของชนิดที่ไม่ได้เดิน — กราฟใน Feishu กดดูค่าได้อยู่แล้ว
         out.append(_chart({
-            "type": "line", "title": {"text": "แยกตามชนิด ({}/ชั่วโมง)".format(unit)},
+            "type": "bar", "title": {"text": "ยอดรายชั่วโมง ({})".format(unit)},
             "data": {"values": rows}, "xField": "hour", "yField": "value",
-            "seriesField": "type", "legends": legend, "axes": axes}))
-        out.append(_chart({
-            "type": "bar", "title": {"text": "รวมทุกชนิด ({}/ชั่วโมง)".format(unit)},
-            "data": {"values": rows}, "xField": "hour", "yField": "value",
-            "seriesField": "type", "stack": True, "legends": legend, "axes": axes}))
+            "seriesField": "type", "stack": True,
+            "label": {"visible": False},
+            "legends": legend, "axes": axes}))
     return out
 
 
