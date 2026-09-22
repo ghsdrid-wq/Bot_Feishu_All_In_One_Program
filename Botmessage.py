@@ -19,6 +19,10 @@ try:
 except Exception:
     card_report = None
 
+# หัวการ์ดของรายการที่ส่งแยก — คนละงานกับยอด KPI จึงต้องบอกให้ชัดว่าของใคร
+SEPARATE_CARD_TITLE = "ข้อมูลสำหรับฝ่าย QC"
+
+
 LogFunc = Callable[[str], None]
 RunFunc = Callable[[], bool]
 token_logger: Optional[LogFunc] = None
@@ -115,6 +119,18 @@ def upload_image(token: str, path: str, log: Optional[LogFunc] = None) -> str:
     return res["data"]["image_key"]
 
 
+def get_separate_file_names() -> List[str]:
+    """ไฟล์ที่ติ๊ก "แยก" ไว้ — ส่งเป็นข้อความของตัวเองทีหลัง ไม่ปนกับยอด KPI"""
+    if not get_export_items:
+        return []
+    try:
+        config = load_config()
+        return [x.filename for x in get_export_items(config, only_enabled=True)
+                if x.send_enabled and x.separate]
+    except Exception:
+        return []
+
+
 def send_as_card() -> bool:
     """ส่งรวมเป็นการ์ดใบเดียว หรือส่งรูปทีละใบแบบเดิม
 
@@ -159,7 +175,8 @@ def get_send_file_names() -> List[str]:
         if save_config:
             save_config(config)
     if get_export_items:
-        return [x.filename for x in get_export_items(config, only_enabled=True) if x.send_enabled]
+        return [x.filename for x in get_export_items(config, only_enabled=True)
+                if x.send_enabled and not x.separate]
 
     files = []
     if "EXPORT" in config:
@@ -194,6 +211,60 @@ def send_image_chat(token: str, chat_id: str, image_key: str):
     if res.get("code") != 0:
         raise Exception(f"Send image failed: {res}")
     
+def run_send_separate(folder: str, log: Optional[LogFunc] = None,
+                      is_running: Optional[RunFunc] = None) -> None:
+    """ส่งรายการที่ติ๊ก "แยก" เป็นการ์ดของตัวเอง
+
+    ไม่ใส่ยอดสรุปกับกราฟลงไป เพราะเป็นคนละงานกับยอด KPI คนที่ดูข้อมูลชุดนี้
+    ไม่ได้ต้องการตัวเลข KPI มาปน
+    """
+    def write(msg: str) -> None:
+        log(msg) if log else print(msg)
+
+    names = get_separate_file_names()
+    if not names:
+        return
+
+    images = []
+    captions = image_captions()
+    for filename in names:
+        path = os.path.join(folder, filename)
+        if os.path.exists(path):
+            images.append((captions.get(filename, os.path.splitext(filename)[0]), path))
+        else:
+            write(f"Missing file (separate): {path}")
+    if not images:
+        return
+
+    cfg = get_feishu()
+    token = get_token(cfg["APP_ID"], cfg["APP_SECRET"])
+
+    uploaded = []
+    for caption, path in images:
+        if is_running and not is_running():
+            return
+        write(f"Uploading (separate): {path}")
+        uploaded.append((caption, upload_image(token, path, log=write)))
+
+    if is_running and not is_running():
+        return
+
+    if card_report and send_as_card():
+        try:
+            card = card_report.build_card(uploaded, None, title=SEPARATE_CARD_TITLE)
+            write(f"Separate card size: {card_report.card_size(card):,} bytes")
+            card_report.send_card(token, cfg["CHAT_ID"], card)
+            write("Separate report sent")
+            return
+        except Exception as e:
+            write(f"Separate card failed, falling back to plain images: {e}")
+
+    for _caption, key in uploaded:
+        if is_running and not is_running():
+            return
+        send_image_chat(token, cfg["CHAT_ID"], key)
+
+
 def run_send(folder: str, log: Optional[LogFunc] = None, is_running: Optional[RunFunc] = None) -> None:
     global token_logger
 

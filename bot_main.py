@@ -735,6 +735,7 @@ class SheetRow(ctk.CTkFrame):
         self.enabled_var = ctk.BooleanVar(value=as_bool(sec.get("enabled", "true"), True))
         self.send_var = ctk.BooleanVar(value=as_bool(sec.get("send_enabled", "true"), True))
         self.delete_var = ctk.BooleanVar(value=as_bool(sec.get("delete_by_start", "false"), False))
+        self.separate_var = ctk.BooleanVar(value=as_bool(sec.get("separate", "false"), False))
 
         self.use_chk = ctk.CTkCheckBox(self, text="Use", variable=self.enabled_var, command=self.on_enabled_changed, width=56)
         self.use_chk.grid(row=0, column=0, padx=(10, 4), pady=8)
@@ -760,6 +761,12 @@ class SheetRow(ctk.CTkFrame):
         self.send_chk = ctk.CTkCheckBox(self, text="Send", variable=self.send_var, command=self.save, width=64)
         self.send_chk.grid(row=0, column=6, padx=4, pady=8)
 
+        # ติ๊กแล้วรายการนี้จะไม่ไปรวมในการ์ดยอด KPI แต่ส่งเป็นข้อความของตัวเอง
+        # หลังส่งยอดเสร็จ ใช้กับรายงานที่เป็นคนละงาน เช่นข้อมูลของฝ่าย QC
+        self.separate_chk = ctk.CTkCheckBox(self, text="แยก", variable=self.separate_var,
+                                            command=self.save, width=60)
+        self.separate_chk.grid(row=0, column=7, padx=4, pady=8)
+
         self.disabled_badge = ctk.CTkLabel(
             self,
             text="",
@@ -770,7 +777,7 @@ class SheetRow(ctk.CTkFrame):
             text_color="#aeb8cc",
             font=ctk.CTkFont(size=11, weight="bold"),
         )
-        self.disabled_badge.grid(row=0, column=7, padx=4, pady=8)
+        self.disabled_badge.grid(row=0, column=8, padx=4, pady=8)
 
         self.delete_btn = ctk.CTkButton(
             self,
@@ -780,7 +787,7 @@ class SheetRow(ctk.CTkFrame):
             hover_color="#bf616a",
             command=self.delete,
         )
-        self.delete_btn.grid(row=0, column=8, padx=(4, 10), pady=8)
+        self.delete_btn.grid(row=0, column=9, padx=(4, 10), pady=8)
 
         self.apply_visual_state()
 
@@ -808,6 +815,7 @@ class SheetRow(ctk.CTkFrame):
         sec["range"] = self.entries["range"].get().strip()
         sec["file"] = self.entries["file"].get().strip()
         sec["delete_by_start"] = str(self.delete_var.get()).lower()
+        sec["separate"] = str(self.separate_var.get()).lower()
         self.app.save_config()
         self.apply_visual_state(parent_enabled=self.parent_enabled)
 
@@ -856,7 +864,7 @@ class SheetRow(ctk.CTkFrame):
                 placeholder_text_color="#5e6779" if not active else "#7b8496",
             )
 
-        for widget in [self.delete_chk, self.send_chk]:
+        for widget in [self.delete_chk, self.send_chk, self.separate_chk]:
             widget.configure(state="normal" if active else "disabled", text_color=muted_text)
 
         # Keep delete button available when merely disabled, but lock it while running.
@@ -5167,6 +5175,11 @@ class App(ctk.CTk):
                             )
                     if wanted("dashboard") and self.running and self.is_run_generation_active(run_generation):
                         self.send_dashboard_to_feishu()
+                    # ส่งรายการที่ติ๊ก "แยก" ท้ายสุด หลังยอด KPI ไปถึงกลุ่มแล้ว
+                    if wanted("excel") and self.running and self.is_run_generation_active(run_generation):
+                        Botmessage.run_send_separate(
+                            out, log=self.write_log,
+                            is_running=lambda: self.running and self.is_run_generation_active(run_generation))
                     self.set_pipeline_state("feishu", "ok")
                     pipeline_error_key = None
                 finally:

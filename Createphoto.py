@@ -186,6 +186,8 @@ class ExportItem:
     delete_by_start: bool
     enabled: bool = True
     send_enabled: bool = True
+    # ส่งแยกเป็นข้อความของตัวเอง ไม่รวมในการ์ดยอด KPI
+    separate: bool = False
 
 
 @dataclass(frozen=True)
@@ -423,6 +425,7 @@ def get_export_items(config: Optional[configparser.ConfigParser] = None, only_en
             delete_by_start=as_bool(sec.get("delete_by_start", "false")),
             enabled=as_bool(sec.get("enabled", "true"), True),
             send_enabled=as_bool(sec.get("send_enabled", "true"), True),
+            separate=as_bool(sec.get("separate", "false"), False),
         )
         if only_enabled and not item.enabled:
             continue
