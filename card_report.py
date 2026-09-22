@@ -148,17 +148,22 @@ def _chart_rows(hero: Dict[str, Any], main: Dict[str, Any]) -> List[Dict[str, An
         per_hour = src.get("per_hour") or []
         for bar in live:
             idx = all_bars.index(bar)
+            value = per_hour[idx] if idx < len(per_hour) else 0
+            if not value:
+                # ข้ามค่า 0 ไปเลย แท่งซ้อนไม่ต้องวาดชิ้นที่สูงศูนย์อยู่แล้ว
+                # และเป็นต้นเหตุที่ป้ายตัวเลขรก ไม่ใช่ตัวป้ายเอง
+                continue
             rows.append({
                 "hour": bar["label"],
                 "type": src["title"],
-                "value": per_hour[idx] if idx < len(per_hour) else 0,
+                "value": value,
             })
     return rows
 
 
 # ความสูงกราฟในการ์ด — ใช้ px ตายตัวแทน aspect_ratio เพราะ 16:9 บนการ์ด
 # กว้าง ~600px จะสูงราว 340px ต่อกราฟ กินพื้นที่แชทเกินความจำเป็น
-CHART_HEIGHT = "240px"
+CHART_HEIGHT = "280px"
 
 
 def _chart(spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -209,7 +214,8 @@ def _summary_elements(summary: Dict[str, Any], link: str = "") -> List[Dict[str,
             "type": "bar", "title": {"text": "ยอดรายชั่วโมง ({})".format(unit)},
             "data": {"values": rows}, "xField": "hour", "yField": "value",
             "seriesField": "type", "stack": True,
-            "label": {"visible": False},
+            # โชว์ตัวเลขบนแท่ง อ่านยอดได้โดยไม่ต้องกด
+            "label": {"visible": True},
             "legends": legend, "axes": axes}))
     return out
 
