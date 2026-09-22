@@ -2347,9 +2347,51 @@ class App(ctk.CTk):
         self.controller_log_box.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
         self.update_bot_ui()
 
+    def get_jms_blocked_keywords(self):
+        raw = self.config["JMS_USER"].get("blocked_keywords", "") if "JMS_USER" in self.config else ""
+        return [k.strip().upper() for k in raw.split(",") if k.strip()]
+
+    def set_jms_blocked_keywords(self, keywords):
+        if "JMS_USER" not in self.config:
+            self.config["JMS_USER"] = {}
+        self.config["JMS_USER"]["blocked_keywords"] = ",".join(keywords)
+        save_config(self.config)
+        self.render_jms_blocked_keywords()
+
+    def add_jms_blocked_keyword(self):
+        keyword = clean_input_value(self.jms_block_entry.get(), collapse_internal_spaces=True).replace(" ", "").upper()
+        self.jms_block_entry.delete(0, "end")
+        keywords = self.get_jms_blocked_keywords()
+        if not keyword or keyword in keywords:
+            return
+        self.set_jms_blocked_keywords(keywords + [keyword])
+        self.jms_log(f"[BLOCK ADD] {keyword}")
+
+    def remove_jms_blocked_keyword(self, keyword):
+        self.set_jms_blocked_keywords([k for k in self.get_jms_blocked_keywords() if k != keyword])
+        self.jms_log(f"[BLOCK REMOVE] {keyword}")
+
+    def render_jms_blocked_keywords(self):
+        for child in self.jms_block_list_frame.winfo_children():
+            child.destroy()
+        keywords = self.get_jms_blocked_keywords()
+        if not keywords:
+            ctk.CTkLabel(self.jms_block_list_frame, text="ยังไม่มี keyword", text_color="#7b8598").grid(row=0, column=0, sticky="w")
+            return
+        for idx, keyword in enumerate(keywords):
+            ctk.CTkButton(
+                self.jms_block_list_frame, text=f"{keyword}  ✕", width=0, height=28,
+                fg_color="#bf616a", hover_color="#a54f58",
+                command=lambda k=keyword: self.remove_jms_blocked_keyword(k),
+            ).grid(row=0, column=idx, padx=(0, 6), sticky="w")
+
+    def get_jms_blocked_match(self, staff_no):
+        staff = str(staff_no or "").strip().upper()
+        return next((k for k in self.get_jms_blocked_keywords() if staff.startswith(k)), None)
+
     def build_controller_jms_tab(self, tab):
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(1, weight=1)
+        tab.grid_rowconfigure(2, weight=1)
         control = self.make_card(tab, "#3b4252", 18)
         control.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
         self.btn_start_jms = ctk.CTkButton(control, text="START BOT", width=120, fg_color="#a3be8c", hover_color="#8ca876", text_color="#2e3440", command=self.start_jms_placeholder)
@@ -2359,8 +2401,22 @@ class App(ctk.CTk):
         self.jms_status_label.grid(row=0, column=1, padx=14, pady=14, sticky="w")
         ctk.CTkLabel(control, text="เมื่อเปิด JMS Bot แล้ว คำสั่งรีรหัส/ปลดล็อคจาก Feishu จะถูกประมวลผล", text_color="#aeb8cc").grid(row=0, column=2, padx=14, pady=14, sticky="w")
 
+        # รหัสที่ขึ้นต้นด้วย keyword เหล่านี้ จะไม่ยอมให้รีรหัส/เปิดใช้งาน
+        block_card = self.make_card(tab, "#3b4252", 18)
+        block_card.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="ew")
+        block_card.grid_columnconfigure(3, weight=1)
+        ctk.CTkLabel(block_card, text="Blocked Keywords", text_color="#eceff4", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=4, padx=16, pady=(12, 2), sticky="w")
+        ctk.CTkLabel(block_card, text="รหัสที่ขึ้นต้นด้วย keyword เหล่านี้ จะรีรหัส/เปิดใช้งานไม่ได้", text_color="#aeb8cc").grid(row=1, column=0, columnspan=4, padx=16, pady=(0, 6), sticky="w")
+        self.jms_block_entry = ctk.CTkEntry(block_card, placeholder_text="เช่น 999004", width=200)
+        self.jms_block_entry.grid(row=2, column=0, padx=(16, 8), pady=(0, 12), sticky="w")
+        self.jms_block_entry.bind("<Return>", lambda _e: self.add_jms_blocked_keyword())
+        ctk.CTkButton(block_card, text="Add", width=70, fg_color="#5e81ac", hover_color="#4c6e93", command=self.add_jms_blocked_keyword).grid(row=2, column=1, padx=(0, 12), pady=(0, 12))
+        self.jms_block_list_frame = ctk.CTkFrame(block_card, fg_color="transparent")
+        self.jms_block_list_frame.grid(row=2, column=2, columnspan=2, padx=(0, 16), pady=(0, 12), sticky="w")
+        self.render_jms_blocked_keywords()
+
         log_card = self.make_card(tab, "#2e3440", 18)
-        log_card.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nsew")
+        log_card.grid(row=2, column=0, padx=10, pady=(0, 10), sticky="nsew")
         log_card.grid_columnconfigure(0, weight=1)
         log_card.grid_rowconfigure(1, weight=1)
         top = ctk.CTkFrame(log_card, fg_color="transparent")
@@ -5634,6 +5690,12 @@ class App(ctk.CTk):
 
         success_text, fail_text = [], []
         for staff_no in staff_list:
+            blocked = self.get_jms_blocked_match(staff_no)
+            if blocked and command_type != "LOOKUP_ONLY":
+                fail_text.append(f"❌ รหัส {staff_no} ถูกระงับการใช้งาน (รหัสขึ้นต้นด้วย {blocked} ยกเลิกใช้งานแล้ว) ไม่สามารถรีรหัส/เปิดใช้งานได้")
+                self.jms_log(f"[BLOCKED] {staff_no} (keyword {blocked})")
+                write_log(status="BLOCKED", user=staff_no, action=command_type, detail=f"BLOCKED KEYWORD : {blocked}")
+                continue
             try:
                 self.jms_log(f"[SEARCH] {staff_no}")
                 user = search_user(staff_no)
