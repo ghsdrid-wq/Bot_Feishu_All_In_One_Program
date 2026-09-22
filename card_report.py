@@ -148,15 +148,12 @@ def _chart_rows(hero: Dict[str, Any], main: Dict[str, Any]) -> List[Dict[str, An
         per_hour = src.get("per_hour") or []
         for bar in live:
             idx = all_bars.index(bar)
-            value = per_hour[idx] if idx < len(per_hour) else 0
-            if not value:
-                # ข้ามค่า 0 ไปเลย แท่งซ้อนไม่ต้องวาดชิ้นที่สูงศูนย์อยู่แล้ว
-                # และเป็นต้นเหตุที่ป้ายตัวเลขรก ไม่ใช่ตัวป้ายเอง
-                continue
+            # ส่งค่า 0 เข้าไปด้วย ไม่กรองทิ้ง — ถ้ากรอง ชนิดที่ไม่มียอดเลย
+            # ทั้งรอบจะหายไปจากทั้งกราฟและคำอธิบายสี คนดูจะไม่รู้ว่ามีชนิดนั้นอยู่
             rows.append({
                 "hour": bar["label"],
                 "type": src["title"],
-                "value": value,
+                "value": per_hour[idx] if idx < len(per_hour) else 0,
             })
     return rows
 
