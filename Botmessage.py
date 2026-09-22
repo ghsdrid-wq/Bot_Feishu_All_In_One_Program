@@ -20,7 +20,7 @@ except Exception:
     card_report = None
 
 # หัวการ์ดของรายการที่ส่งแยก — คนละงานกับยอด KPI จึงต้องบอกให้ชัดว่าของใคร
-SEPARATE_CARD_TITLE = "ข้อมูลสำหรับฝ่าย QC"
+SEPARATE_CARD_TITLE = "พัสดุเกินเวลา 48 ชั่วโมง"
 
 
 LogFunc = Callable[[str], None]
