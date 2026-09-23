@@ -97,6 +97,30 @@ def refresh_autopacking(log: Optional[Any] = None) -> None:
         write("Re-read AutoPacking skipped: {}".format(exc))
 
 
+def _only_autopacking(business_date: str) -> bool:
+    """รอบนี้มีแต่ข้อมูล AutoPacking ยังไม่มีแหล่งอื่นเลยใช่ไหม
+
+    AutoPacking ถูกอ่านซ้ำทุกครั้งก่อนสร้างการ์ด (refresh_autopacking) ถ้าดู
+    แค่ว่า "มีข้อมูลไหม" จะเจอของ AutoPacking เสมอ แล้วเข้าใจผิดว่าเก็บข้อมูล
+    ครบแล้ว ทั้งที่ DWS/PDA/JMS ยังไม่ได้ถูกดึงเลย
+    """
+    try:
+        import sqlite3
+        from metrics import core
+
+        conn = sqlite3.connect(core.DEFAULT_DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM fact_hourly "
+                "WHERE business_date = ? AND source <> 'AUTOPACK' LIMIT 1",
+                (business_date,)).fetchone()
+        finally:
+            conn.close()
+        return row is None
+    except Exception:
+        return False
+
+
 def ensure_summary(business_date: Optional[str] = None,
                    log: Optional[Any] = None) -> Optional[Dict[str, Any]]:
     """อ่านยอด ถ้ารอบนี้ยังไม่มีข้อมูลให้เก็บข้อมูลเองก่อนแล้วอ่านซ้ำ
@@ -111,15 +135,25 @@ def ensure_summary(business_date: Optional[str] = None,
     ตั้งแต่ครั้งแรก ฟังก์ชันนี้จึงไม่ไป ingest ซ้ำให้เสียเวลา
     """
     write = log or (lambda _m: None)
+    if not business_date:
+        try:
+            from dashboard import pipeline as dash_pipeline
+            business_date = dash_pipeline.current_business_date()
+        except Exception:
+            business_date = None
+
     # อ่านไฟล์ AutoPacking ซ้ำก่อนเสมอ ถูกมากและปิดช่องว่างชั่วโมงล่าสุด
     refresh_autopacking(write)
     summary = load_summary(business_date)
-    if summary is not None:
+    # มีข้อมูลแล้วก็ยังต้องเช็กว่าครบทุกแหล่งไหม — ไม่ใช่แค่ AutoPacking
+    # ที่เพิ่งอ่านซ้ำเข้าไปเอง ไม่งั้นรอบที่ไม่ได้ติ๊กขั้นตอน Dashboard
+    # จะได้การ์ดที่ DWS/PDA/กระสอบ เป็นศูนย์หมด
+    if summary is not None and not (business_date and _only_autopacking(business_date)):
         return summary
 
     try:
         from dashboard import pipeline as dash_pipeline
-        write("No summary for this cycle - ingesting before building card")
+        write("Cycle data incomplete - ingesting before building card")
         # ต่อ log เข้ากับของผู้เรียก ไม่งั้น pipeline จะ print ลง stdout
         # ซึ่งหายไปเฉย ๆ เพราะโปรแกรมหลักเป็น GUI ไม่มี console
         result = dash_pipeline.run_cycle(
@@ -130,9 +164,9 @@ def ensure_summary(business_date: Optional[str] = None,
             return None
         write("Ingested {} rows".format(result.get("rows", 0)))
     except Exception as exc:
-        # เก็บข้อมูลไม่ได้ก็ยังส่งรูปได้ตามเดิม ห้ามล้มงานหลัก
-        write("Ingest failed, card will have images only: {}".format(exc))
-        return None
+        # เก็บข้อมูลไม่ได้ก็ใช้เท่าที่มี ห้ามล้มงานหลัก
+        write("Ingest failed: {}".format(exc))
+        return summary
 
     return load_summary(business_date)
 
