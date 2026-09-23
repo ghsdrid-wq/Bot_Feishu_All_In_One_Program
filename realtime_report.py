@@ -21,8 +21,8 @@ from openpyxl.utils import get_column_letter
 
 LogFunc = Callable[..., None]
 
-SHEET_TABLE = "table"
-SHEET_RAW = "data"
+SHEET_TABLE = "TABLE"
+SHEET_RAW = "DATA"
 
 # หัวคอลัมน์ในไฟล์ดิบที่ต้องใช้ ชื่อมาจาก JMS ตรง ๆ
 COL_OPERATE = "ประเภทการดำเนินงานล่าสุด"
@@ -43,7 +43,7 @@ OPERATE_ROWS: Sequence[Tuple[str, str]] = (
 # คอลัมน์ชั่วโมงที่เกิน ตรงกับที่ขอไปใน payload ของ JMS
 OVERTIME_HOURS: Sequence[int] = (4, 6, 8, 12, 24, 36, 48)
 
-TITLE = "พัสดุเกินเวลา 4-48"
+TITLE = "พัสดุเกินเวลา 4-48  ชั่วโมง"
 
 # สีเดียวกับไฟล์เดิม (Office accent1 อ่อน 40% และ 80%) เขียนเป็นรหัสสีตรง ๆ
 # จะได้ไม่ต้องพึ่งธีมของเครื่องที่เปิดไฟล์
@@ -81,7 +81,8 @@ def read_raw(path: str) -> Tuple[List[str], List[tuple]]:
     try:
         # ปกติไฟล์ดิบมีชีตเดียว แต่ถ้าเผลอชี้มาที่ไฟล์ที่แปลงแล้ว ให้หยิบชีต
         # ข้อมูลดิบในนั้นแทน จะได้ไม่ไปอ่านตารางสรุปมาเป็นข้อมูลตั้งต้น
-        name = SHEET_RAW if SHEET_RAW in book.sheetnames else book.sheetnames[0]
+        names = {n.casefold(): n for n in book.sheetnames}
+        name = names.get(SHEET_RAW.casefold(), book.sheetnames[0])
         sheet = book[name]
         # ไฟล์ที่ JMS ส่งมาประกาศขนาดตารางไว้ผิด (บอกว่ามีคอลัมน์เดียว) โหมด
         # read_only เชื่อค่านั้นแล้วตัดคอลัมน์ที่เหลือทิ้ง ต้องสั่งให้อ่านของจริง
@@ -137,7 +138,7 @@ def _write_table(sheet, counts: Dict[str, Dict[int, int]], pulled_at: datetime) 
     columns = len(OVERTIME_HOURS) + 2  # ชื่อแถว + ชั่วโมง + ผลรวม
 
     sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=columns)
-    title = sheet.cell(row=1, column=1, value=f"{TITLE}  ({pulled_at:%Y-%m-%d %H:%M})")
+    title = sheet.cell(row=1, column=1, value=f"{TITLE} {pulled_at:%Y-%m-%d}")
     title.font = Font(name=FONT_NAME, size=18)
     title.alignment = Alignment(horizontal="left", vertical="center")
     sheet.row_dimensions[1].height = TITLE_HEIGHT
