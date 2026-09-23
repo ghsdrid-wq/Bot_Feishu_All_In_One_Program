@@ -21,8 +21,8 @@ from openpyxl.utils import get_column_letter
 
 LogFunc = Callable[..., None]
 
-SHEET_TABLE = "ตาราง"
-SHEET_RAW = "ข้อมูลดิบ"
+SHEET_TABLE = "table"
+SHEET_RAW = "data"
 
 # หัวคอลัมน์ในไฟล์ดิบที่ต้องใช้ ชื่อมาจาก JMS ตรง ๆ
 COL_OPERATE = "ประเภทการดำเนินงานล่าสุด"
@@ -79,7 +79,10 @@ def read_raw(path: str) -> Tuple[List[str], List[tuple]]:
     """อ่านไฟล์ดิบทั้งไฟล์ คืนหัวคอลัมน์กับข้อมูล"""
     book = openpyxl.load_workbook(path, read_only=True, data_only=True)
     try:
-        sheet = book[book.sheetnames[0]]
+        # ปกติไฟล์ดิบมีชีตเดียว แต่ถ้าเผลอชี้มาที่ไฟล์ที่แปลงแล้ว ให้หยิบชีต
+        # ข้อมูลดิบในนั้นแทน จะได้ไม่ไปอ่านตารางสรุปมาเป็นข้อมูลตั้งต้น
+        name = SHEET_RAW if SHEET_RAW in book.sheetnames else book.sheetnames[0]
+        sheet = book[name]
         # ไฟล์ที่ JMS ส่งมาประกาศขนาดตารางไว้ผิด (บอกว่ามีคอลัมน์เดียว) โหมด
         # read_only เชื่อค่านั้นแล้วตัดคอลัมน์ที่เหลือทิ้ง ต้องสั่งให้อ่านของจริง
         sheet.reset_dimensions()
