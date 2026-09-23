@@ -1214,6 +1214,7 @@ class App(ctk.CTk):
         self.nav_drag_started = False
         self.nav_drag_start_y = 0
         self.lockable_inputs = []
+        self.paste_buttons = []
         self.lockable_buttons = []
         self.button_color_map = {}
         self.stop_requested = False
@@ -1975,10 +1976,43 @@ class App(ctk.CTk):
         ent.bind("<KeyRelease>", lambda _e: self.after(1, normalize) if (collapse_internal_spaces or digits_only) else self.save_config_debounced(), "+")
         return ent
 
-    def setting_row_wide(self, parent, row, label):
+    def paste_into_entry(self, entry):
+        """วางค่าจากคลิปบอร์ดลงช่องนี้ แทนที่ของเดิมทั้งหมด"""
+        try:
+            text = self.clipboard_get()
+        except Exception:
+            self.write_log("วางไม่ได้ — คลิปบอร์ดว่างหรืออ่านไม่ได้", level="WARN")
+            return
+        try:
+            if entry.cget("state") == "disabled":
+                return
+        except Exception:
+            pass
+        text = clean_input_value(text, collapse_internal_spaces=True)
+        entry.delete(0, "end")
+        entry.insert(0, text)
+        entry.focus_set()
+        self.save_config()
+
+    def add_paste_button(self, parent, row, column, entry, padx=(0, 16)):
+        """ปุ่มวางค่าข้างช่องกรอก
+
+        มีเพราะ Ctrl+V ใช้ไม่ได้ตอนสลับแป้นเป็นภาษาไทย ซึ่งเป็นสภาพปกติของ
+        เครื่องที่ใช้งานจริง จะได้ไม่ต้องสลับแป้นไปมาทุกครั้งที่เปลี่ยน token
+        """
+        btn = ctk.CTkButton(
+            parent, text="วาง", width=54, fg_color="#4c566a", hover_color="#5e6779",
+            command=lambda: self.paste_into_entry(entry))
+        btn.grid(row=row, column=column, padx=padx, pady=10, sticky="e")
+        self.paste_buttons.append(btn)
+        return btn
+
+    def setting_row_wide(self, parent, row, label, paste: bool = False):
         ctk.CTkLabel(parent, text=label, text_color="#d8dee9", width=150, anchor="w").grid(row=row, column=0, padx=(18, 10), pady=10, sticky="w")
         ent = ctk.CTkEntry(parent, fg_color="#434c5e", border_color="#5e6779")
-        ent.grid(row=row, column=1, columnspan=3, padx=(8, 16), pady=10, sticky="ew")
+        ent.grid(row=row, column=1, columnspan=2, padx=(8, 4), pady=10, sticky="ew")
+        if paste:
+            self.add_paste_button(parent, row, 3, ent)
         self.bind_clean_entry(ent, collapse_internal_spaces=("token" in label.lower() or "chat" in label.lower() or "secret" in label.lower() or "app id" in label.lower()), digits_only=("จำนวนรายการ" in label or "download size" in label.lower()))
         self.lockable_inputs.append(ent)
         return ent
@@ -2566,10 +2600,10 @@ class App(ctk.CTk):
         export = self.make_card(page, "#3b4252", 22)
         export.grid(row=4, column=0, padx=24, pady=8, sticky="ew")
         for i in range(4):
-            export.grid_columnconfigure(i, weight=1 if i in (1, 3) else 0)
+            export.grid_columnconfigure(i, weight=1 if i == 1 else 0)
         ctk.CTkLabel(export, text="ตั้งค่า DWS/JMS Export", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, columnspan=4, padx=18, pady=(16, 4), sticky="w")
         ctk.CTkLabel(export, text="ตั้งค่า JMS_TOKEN และฐานข้อมูล DWS (MySQL)", text_color="#aeb8cc").grid(row=1, column=0, columnspan=4, padx=18, pady=(0, 4), sticky="w")
-        self.auth_token_entry = self.setting_row_wide(export, 2, "JMS_TOKEN")
+        self.auth_token_entry = self.setting_row_wide(export, 2, "JMS_TOKEN", paste=True)
         self.db_host_entry = self.setting_row_wide(export, 3, "DB Host")
         self.db_port_entry = self.setting_row_wide(export, 4, "DB Port")
         self.db_user_entry = self.setting_row_wide(export, 5, "DB User")
@@ -2581,9 +2615,9 @@ class App(ctk.CTk):
         feishu.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(feishu, text="ตั้งค่า Bot Feishu", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 0), sticky="w")
         ctk.CTkLabel(feishu, text="App ID / App Secret ใช้ร่วมกันทั้งส่งรูป, Feishu webhook, DWS PLAN และ JMS USER", text_color="#aeb8cc").grid(row=1, column=0, columnspan=2, padx=16, pady=(4, 6), sticky="w")
-        self.app_id_entry = self.setting_row(feishu, 2, "App ID")
-        self.app_secret_entry = self.setting_row(feishu, 3, "App Secret")
-        self.chat_id_entry = self.setting_row(feishu, 4, "Chat ID")
+        self.app_id_entry = self.setting_row(feishu, 2, "App ID", paste=True)
+        self.app_secret_entry = self.setting_row(feishu, 3, "App Secret", paste=True)
+        self.chat_id_entry = self.setting_row(feishu, 4, "Chat ID", paste=True)
         self.bot_name_entry = self.setting_row(feishu, 5, "BOT_NAME")
         self.bot_port_entry = self.setting_row(feishu, 6, "BOT_PORT")
         self.verify_token_entry = self.setting_row(feishu, 7, "VERIFY_TOKEN")
@@ -2626,10 +2660,12 @@ class App(ctk.CTk):
         self.lockable_buttons.append(btn)
         return ent
 
-    def setting_row(self, parent, row, label):
+    def setting_row(self, parent, row, label, paste: bool = False):
         ctk.CTkLabel(parent, text=label, text_color="#d8dee9", width=130, anchor="w").grid(row=row, column=0, padx=(16, 8), pady=10, sticky="w")
         ent = ctk.CTkEntry(parent)
-        ent.grid(row=row, column=1, padx=(8, 16), pady=10, sticky="ew")
+        ent.grid(row=row, column=1, padx=(8, 4), pady=10, sticky="ew")
+        if paste:
+            self.add_paste_button(parent, row, 2, ent)
         self.bind_clean_entry(ent, collapse_internal_spaces=("token" in label.lower() or "chat" in label.lower() or "secret" in label.lower() or "app id" in label.lower()), digits_only=("จำนวนรายการ" in label or "download size" in label.lower()))
         self.lockable_inputs.append(ent)
         return ent
@@ -3277,6 +3313,11 @@ class App(ctk.CTk):
                 pass
 
         input_state = "disabled" if active else "normal"
+        for btn in getattr(self, "paste_buttons", []):
+            try:
+                btn.configure(state=input_state)
+            except Exception:
+                pass
         for ent in getattr(self, "lockable_inputs", []):
             try:
                 ent.configure(
