@@ -40,6 +40,7 @@ from Createphoto import (
     unique_key,
 )
 import Botmessage
+import realtime_report
 from Botmessage import run_send
 
 # Skip stale Feishu redelivery after the app comes back online.
@@ -4648,7 +4649,11 @@ class App(ctk.CTk):
         with open(save_path, "wb") as f:
             f.write(file_resp.content)
 
-        self.autofit_excel_file(save_path)
+        # แปลงไฟล์ดิบเป็นรายงานในตัวเอง ได้ทั้งชีตตารางสรุปและชีตข้อมูลดิบ
+        # พัสดุเกินเวลาเป็นงานของ QC จึงไม่ต้องไปพึ่ง Power Query ในไฟล์ยอด KPI
+        # ไม่เรียก autofit ต่อท้าย เพราะ realtime_report จัดความกว้างคอลัมน์
+        # ของทั้งสองชีตไว้แล้ว ปล่อยให้ autofit รื้อจะทำให้ตารางในรูปเพี้ยน
+        realtime_report.build_report(save_path, log=self.log_realtime)
 
         self.log(
             f"Downloaded {os.path.basename(save_path)}",
@@ -4656,6 +4661,10 @@ class App(ctk.CTk):
         )
 
         return save_path
+
+    def log_realtime(self, msg, level=None):
+        """ตัวส่ง log ให้ realtime_report ใช้ โดยยึดรูปแบบเดิมของขั้นตอนนี้"""
+        self.log(msg, "REALTIME", level or "INFO")
 
     def _jms_post(self, session, url, payload, headers, retries=2, timeout=(10, 60)):
         """POST ไปยัง JMS พร้อม retry เมื่อ network สะดุดชั่วคราว
