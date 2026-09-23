@@ -118,37 +118,22 @@ def upload_image(token: str, path: str, log: Optional[LogFunc] = None) -> str:
     return res["data"]["image_key"]
 
 
-def get_export_group_names(include_disabled: bool = False) -> List[str]:
+def get_export_group_names() -> List[str]:
     """ชื่อกลุ่มที่มีรูปให้ส่ง เรียงตามลำดับรายการใน config
 
-    ไม่นับกลุ่มว่าง เพราะกลุ่มว่างคือการ์ดยอด KPI ซึ่งส่งด้วยเส้นทางหลักอยู่แล้ว
-
-    include_disabled=True นับรายการที่ปิด Use ไว้ด้วย ใช้ตอนหาว่ากลุ่มไหนถูก
-    ตั้งไว้เป็นลำดับแรก ซึ่งต้องเป็นคำตอบเดิมไม่ว่ารอบนั้นจะเปิดอะไรไว้บ้าง
+    ไม่นับกลุ่มว่าง เพราะกลุ่มว่างคือการ์ดชุดแรกซึ่งส่งด้วยเส้นทางหลักอยู่แล้ว
     """
     if not get_export_items:
         return []
     try:
         config = load_config()
         names: List[str] = []
-        for item in get_export_items(config, only_enabled=not include_disabled):
+        for item in get_export_items(config, only_enabled=True):
             if item.send_enabled and item.group and item.group not in names:
                 names.append(item.group)
         return names
     except Exception:
         return []
-
-
-def has_ungrouped_images(include_disabled: bool = False) -> bool:
-    """มีรูปที่ยังไม่ได้ตั้งกลุ่มอยู่ไหม คือมีการ์ดยอด KPI ใบปกติหรือเปล่า"""
-    if not get_export_items:
-        return False
-    try:
-        config = load_config()
-        return any(x.send_enabled and not x.group
-                   for x in get_export_items(config, only_enabled=not include_disabled))
-    except Exception:
-        return False
 
 
 def get_group_file_names(group: str) -> List[str]:
@@ -300,7 +285,8 @@ def run_send_group(folder: str, group: str, log: Optional[LogFunc] = None,
         send_image_chat(token, cfg["CHAT_ID"], key)
 
 
-def run_send(folder: str, log: Optional[LogFunc] = None, is_running: Optional[RunFunc] = None) -> None:
+def run_send(folder: str, log: Optional[LogFunc] = None, is_running: Optional[RunFunc] = None,
+             with_summary: bool = True) -> None:
     global token_logger
 
     def write(msg: str) -> None:
@@ -372,8 +358,8 @@ def run_send(folder: str, log: Optional[LogFunc] = None, is_running: Optional[Ru
                   for img, key in results]
         # ถ้ารอบนี้ยังไม่มีข้อมูล (ไม่ได้ติ๊กขั้นตอน Dashboard) ให้เก็บข้อมูลเองก่อน
         # จะได้ไม่ส่งการ์ดที่มีแต่รูปโดยไม่มีตัวเลขสรุป
-        summary = card_report.ensure_summary(log=write)
-        if summary is None:
+        summary = card_report.ensure_summary(log=write) if with_summary else None
+        if with_summary and summary is None:
             write("No dashboard data for this cycle - sending images only")
         try:
             card = card_report.build_card(images, summary)

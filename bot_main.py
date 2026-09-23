@@ -1322,6 +1322,8 @@ class App(ctk.CTk):
             self.config["TIME"]["run_minute"] = clean_input_value(self.minute_var.get()) or "5"
             self.config["TIME"]["start_hour"] = clean_input_value(self.start_hour_var.get()).replace(":00", "") or "15"
             self.config["TIME"]["end_hour"] = clean_input_value(self.end_hour_var.get()).replace(":00", "") or "12"
+            if "summary_header_var" in self.__dict__:
+                self.config["EXPORTS"]["add_summary_header"] = str(self.summary_header_var.get()).lower()
             if "prefire_var" in self.__dict__:
                 self.config["TIME"]["prefire_enabled"] = str(self.prefire_var.get()).lower()
                 self.config["TIME"]["prefire_lead"] = clean_input_value(
@@ -1865,8 +1867,16 @@ class App(ctk.CTk):
         pipeline.grid(row=2, column=0, padx=24, pady=6, sticky="ew")
         for i in range(8):
             pipeline.grid_columnconfigure(i, weight=1)
-        ctk.CTkLabel(pipeline, text="ลำดับการทำงาน", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, columnspan=8, padx=16, pady=(14, 0), sticky="w")
-        ctk.CTkLabel(pipeline, text="ติ๊กเลือกว่าจะทำขั้นตอนไหน ที่ไม่ติ๊กจะข้ามไป", text_color="#aeb8cc", font=ctk.CTkFont(size=12)).grid(row=1, column=0, columnspan=8, padx=16, pady=(2, 0), sticky="w")
+        ctk.CTkLabel(pipeline, text="ลำดับการทำงาน", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, columnspan=7, padx=16, pady=(14, 0), sticky="w")
+        ctk.CTkLabel(pipeline, text="ติ๊กเลือกว่าจะทำขั้นตอนไหน ที่ไม่ติ๊กจะข้ามไป", text_color="#aeb8cc", font=ctk.CTkFont(size=12)).grid(row=1, column=0, columnspan=7, padx=16, pady=(2, 0), sticky="w")
+
+        # ปกติการ์ดที่ส่งเข้ากลุ่มมีแต่รูปของตัวเอง ติ๊กช่องนี้แล้วการ์ดใบแรก
+        # ของรอบจะมียอดสรุปกับกราฟพ่วงขึ้นหัวให้
+        self.summary_header_var = ctk.BooleanVar(value=False)
+        self.summary_header_chk = ctk.CTkCheckBox(
+            pipeline, text="เพิ่มหัว Dashboard", variable=self.summary_header_var,
+            command=self.save_config, width=150)
+        self.summary_header_chk.grid(row=0, column=7, rowspan=2, padx=(4, 16), pady=(14, 0), sticky="e")
         stages = PIPELINE_STEPS
         stage_wrap = ctk.CTkFrame(pipeline, fg_color="transparent")
         stage_wrap.grid(row=2, column=0, columnspan=8, padx=8, pady=(4, 10), sticky="ew")
@@ -2827,6 +2837,9 @@ class App(ctk.CTk):
         if hasattr(self, "send_as_card_var"):
             exports = self.config["EXPORTS"] if "EXPORTS" in self.config else {}
             self.send_as_card_var.set(as_bool(exports.get("send_as_card", "true"), True))
+        if "summary_header_var" in self.__dict__:
+            exports = self.config["EXPORTS"] if "EXPORTS" in self.config else {}
+            self.summary_header_var.set(as_bool(exports.get("add_summary_header", "false"), False))
 
         if "prefire_var" in self.__dict__:
             time_cfg = self.config["TIME"] if "TIME" in self.config else {}
@@ -4934,22 +4947,20 @@ class App(ctk.CTk):
             session.close()
         
 
-    def get_feishu_group_names(self, include_disabled: bool = False) -> List[str]:
+    def get_feishu_group_names(self) -> List[str]:
         """ชื่อกลุ่มทั้งหมดที่ต้องส่งเป็นก้อนของตัวเอง เรียงตามลำดับที่ตั้งไว้
 
         รวมกลุ่มจากรูป (EXPORT) กับกลุ่มจากสมุดงาน (WORKBOOK) เข้าด้วยกัน
         กลุ่มที่มีแต่ไฟล์ Excel ไม่มีรูป ก็ยังต้องได้ส่ง
-
-        include_disabled=True นับของที่ปิด Use ไว้ด้วย ใช้ตอนหาลำดับที่ตั้งไว้
         """
-        names: List[str] = list(Botmessage.get_export_group_names(include_disabled))
+        names: List[str] = list(Botmessage.get_export_group_names())
         keys = [x.strip() for x in self.config["WORKBOOKS"].get("items", "").split(",") if x.strip()]
         for key in keys:
             section = f"WORKBOOK:{key}"
             if section not in self.config:
                 continue
             sec = self.config[section]
-            if not include_disabled and not as_bool(sec.get("enabled", "true"), True):
+            if not as_bool(sec.get("enabled", "true"), True):
                 continue
             if not as_bool(sec.get("send_excel", "false"), False):
                 continue
@@ -4958,18 +4969,16 @@ class App(ctk.CTk):
                 names.append(group)
         return names
 
-    def get_summary_owner_block(self) -> Optional[str]:
-        """ก้อนที่เป็นเจ้าของยอดสรุปกับกราฟ ตามลำดับที่ตั้งไว้ใน config
+    def summary_header_enabled(self) -> bool:
+        """ติ๊ก "เพิ่มหัว Dashboard" ไว้ไหม
 
-        ยึดลำดับจาก config ทั้งหมด ไม่ใช่จากก้อนที่เหลือในรอบนั้น ไม่งั้นพอปิด
-        ไฟล์ยอด KPI ไว้ ก้อนของงานอื่นที่เลื่อนขึ้นมาเป็นก้อนแรกจะรับยอด KPI
-        ไปด้วย ทั้งที่เป็นคนละงานกัน ถ้าก้อนนั้นไม่ได้อยู่ในรอบนี้ ก็ไม่มีใคร
-        ได้ยอดสรุป ซึ่งถูกแล้วเพราะรอบนั้นไม่ได้ทำยอด KPI
+        ปกติทุกการ์ดส่งเพียว ๆ คือมีแต่รูปของตัวเอง ติ๊กช่องนี้แล้วการ์ดใบแรก
+        ของรอบจะมียอดสรุปกับกราฟพ่วงขึ้นหัวให้
         """
-        if Botmessage.has_ungrouped_images(include_disabled=True):
-            return ""
-        ordered = self.get_feishu_group_names(include_disabled=True)
-        return ordered[0] if ordered else None
+        if self.is_ui_thread() and "summary_header_var" in self.__dict__:
+            return bool(self.summary_header_var.get())
+        exports = self.config["EXPORTS"] if "EXPORTS" in self.config else {}
+        return as_bool(exports.get("add_summary_header", "false"), False)
 
     def get_selected_excel_files_for_feishu(self, group: str = "",
                                             include_generated: Optional[bool] = None):
@@ -5307,13 +5316,11 @@ class App(ctk.CTk):
                             "ไม่มีอะไรให้ส่ง — รูปตารางมาจากขั้นตอน Excel Image "
                             "ถ้าไม่ติ๊กไว้จะไม่มีรูปใหม่ให้ส่ง",
                             level="WARN")
-                    # ก้อนแรกที่ได้ส่งจริงเป็นตัวรับไฟล์ดิบกับการ์ด Dashboard
-                    # ส่วนยอดสรุปกับกราฟไปตามลำดับที่ตั้งไว้ใน config ซึ่งอาจไม่
-                    # ได้อยู่ในรอบนี้ก็ได้ ถ้าไม่อยู่ก็ไม่ต้องมีใครรับไป
+                    # ทุกการ์ดส่งเพียว ๆ คือมีแต่รูปของกลุ่มตัวเอง ยอดสรุปกับ
+                    # กราฟจะพ่วงให้เฉพาะตอนติ๊ก "เพิ่มหัว Dashboard" ไว้ และพ่วง
+                    # ที่การ์ดใบแรกของรอบใบเดียว
                     primary_block = blocks[0] if blocks else None
-                    summary_owner = self.get_summary_owner_block()
-                    if summary_owner not in blocks:
-                        summary_owner = None
+                    add_header = self.summary_header_enabled()
                     dashboard_sent = False
 
                     for block in blocks:
@@ -5324,9 +5331,10 @@ class App(ctk.CTk):
                             Botmessage.run_send_group(
                                 out, block, log=self.write_log,
                                 is_running=still_running,
-                                with_summary=block == summary_owner)
+                                with_summary=is_primary and add_header)
                         else:
-                            run_send(out, log=self.write_log, is_running=still_running)
+                            run_send(out, log=self.write_log, is_running=still_running,
+                                     with_summary=is_primary and add_header)
                         if still_running():
                             # ไฟล์ดิบจาก DWS/JMS เป็นของชุดยอด KPI จึงไปกับก้อน
                             # ที่ถือยอดสรุป ไม่ใช่ตกค้างอยู่ก้อนชื่อว่างที่อาจไม่มี
