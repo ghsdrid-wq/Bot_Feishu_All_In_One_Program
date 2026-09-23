@@ -2001,7 +2001,8 @@ class App(ctk.CTk):
         เครื่องที่ใช้งานจริง จะได้ไม่ต้องสลับแป้นไปมาทุกครั้งที่เปลี่ยน token
         """
         btn = ctk.CTkButton(
-            parent, text="วาง", width=54, fg_color="#4c566a", hover_color="#5e6779",
+            parent, text="📋", width=36,
+            font=ctk.CTkFont(size=15), fg_color="#4c566a", hover_color="#5e6779",
             command=lambda: self.paste_into_entry(entry))
         btn.grid(row=row, column=column, padx=padx, pady=10, sticky="e")
         self.paste_buttons.append(btn)
