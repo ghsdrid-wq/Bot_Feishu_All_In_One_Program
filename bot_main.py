@@ -250,6 +250,10 @@ RAW_STEP_KEYS = ("dws_mirror", "dws", "jms_auto", "jms_pda", "realtime")
 
 # สั่ง JMS สร้างไฟล์ล่วงหน้ากี่นาทีก่อนถึงรอบรัน
 # เซิร์ฟเวอร์ใช้เวลา 3-5 นาที ตั้ง 6 นาทีจึงพอให้เสร็จก่อนถึงคิวใช้งาน
+# เมื่อ JMS บอกว่ามีงาน export ค้างอยู่แล้ว ให้รับไฟล์ของงานนั้นได้
+# ถ้าไม่เก่าเกินเท่านี้ เกินกว่านี้ถือว่าเป็นยอดคนละรอบ ไม่ควรเอามาส่ง
+REALTIME_REUSE_MAX_AGE = 15 * 60
+
 JMS_PREFIRE_LEAD_MINUTES = 6
 # มาร์กเกอร์ที่ยิงล่วงหน้าไว้ ใช้ได้นานแค่ไหน — เกินนี้ถือว่าเก่าเกินไป
 # ยิงใหม่ดีกว่าเอาไฟล์ที่ข้อมูลขาดท้ายไปหลายสิบนาที
@@ -4474,10 +4478,15 @@ class App(ctk.CTk):
         if self.is_token_error_text(self.extract_response_message(export_data)):
             raise Exception("JMS_TOKEN หมดอายุหรือไม่ถูกต้อง กรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า")
 
+        # JMS ไม่ยอมสร้างงานใหม่เมื่อยังมีงานเดิมค้างอยู่ ถ้ายังยืนกรานรอไฟล์ที่
+        # สร้างหลังเวลานี้ ก็จะรอไฟล์ที่ไม่มีวันมา แล้วพังตอนหมดเวลา
+        reuse_existing = False
+
         if (
             export_data.get("code") == 0
             and "กำลังยุ่ง" in str(export_data.get("msg", ""))
         ):
+            reuse_existing = True
             self.log(
                 "Export task already exists, waiting file generation...",
                 "REALTIME"
@@ -4510,6 +4519,13 @@ class App(ctk.CTk):
         }
 
         download_url = None
+        download_time = ""
+
+        # ปกติรับเฉพาะไฟล์ที่สร้างหลังจากเพิ่งสั่ง แต่ถ้า JMS ไม่ได้สร้างงานใหม่
+        # ให้ย้อนกรอบไปรับงานที่ค้างอยู่ได้ โดยยังไม่รับของที่เก่าเกินไป
+        accept_since = export_start_time
+        if reuse_existing:
+            accept_since = datetime.now() - timedelta(seconds=REALTIME_REUSE_MAX_AGE)
 
         for _ in range(60):
 
@@ -4557,7 +4573,7 @@ class App(ctk.CTk):
                 except Exception:
                     continue
 
-                if row_time < export_start_time:
+                if row_time < accept_since:
                     continue
 
                 if (
@@ -4600,6 +4616,7 @@ class App(ctk.CTk):
                             )
 
                     if download_url:
+                        download_time = create_time
                         break
 
             if download_url:
@@ -4610,7 +4627,15 @@ class App(ctk.CTk):
 
         if not download_url:
             raise Exception(
-                "Cannot find completed realtime export file"
+                "Cannot find completed realtime export file — "
+                f"ไม่มีงาน export ที่เสร็จแล้วตั้งแต่ {accept_since:%H:%M:%S} "
+                "ลองใหม่อีกครั้งหลังงานเดิมใน JMS ทำเสร็จ"
+            )
+
+        if reuse_existing:
+            self.log(
+                f"Using existing JMS export created {download_time}",
+                "REALTIME"
             )
 
         # ==================================================
