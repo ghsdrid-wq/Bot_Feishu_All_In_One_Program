@@ -229,11 +229,13 @@ def send_image_chat(token: str, chat_id: str, image_key: str):
         raise Exception(f"Send image failed: {res}")
     
 def run_send_group(folder: str, group: str, log: Optional[LogFunc] = None,
-                   is_running: Optional[RunFunc] = None) -> None:
+                   is_running: Optional[RunFunc] = None,
+                   with_summary: bool = False) -> None:
     """ส่งรูปของกลุ่มหนึ่งเป็นการ์ดของตัวเอง ใช้ชื่อกลุ่มเป็นหัวการ์ด
 
-    ไม่ใส่ยอดสรุปกับกราฟลงไป เพราะเป็นคนละงานกับยอด KPI คนที่ดูข้อมูลชุดนี้
-    ไม่ได้ต้องการตัวเลข KPI มาปน
+    ปกติไม่ใส่ยอดสรุปกับกราฟ เพราะกลุ่มที่แยกออกมาเป็นคนละงานกับยอด KPI
+    ยกเว้นกรณีที่ผู้ใช้ย้ายไฟล์หลักเข้ากลุ่มจนไม่เหลือรูปนอกกลุ่มเลย
+    ก้อนแรกจะรับยอดสรุปไปแทน ตัวเลข KPI จะได้ไม่หายไปทั้งรอบ
     """
     def write(msg: str) -> None:
         log(msg) if log else print(msg)
@@ -268,7 +270,8 @@ def run_send_group(folder: str, group: str, log: Optional[LogFunc] = None,
 
     if card_report and send_as_card():
         try:
-            card = card_report.build_card(uploaded, None, title=group)
+            summary = card_report.ensure_summary(log=write) if with_summary else None
+            card = card_report.build_card(uploaded, summary, title=group)
             write(f"Group card size ({group}): {card_report.card_size(card):,} bytes")
             card_report.send_card(token, cfg["CHAT_ID"], card)
             write(f"Group card sent: {group}")
@@ -301,8 +304,13 @@ def run_send(folder: str, log: Optional[LogFunc] = None, is_running: Optional[Ru
     token_logger = write
     token = get_token(app_id, app_secret)
 
+    wanted_names = get_send_file_names()
+    if not wanted_names:
+        write("No ungrouped images - skipping KPI card")
+        return
+
     valid_images: List[str] = []
-    for filename in get_send_file_names():
+    for filename in wanted_names:
         img = os.path.join(folder, filename)
         if os.path.exists(img):
             valid_images.append(img)

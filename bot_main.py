@@ -32,6 +32,7 @@ from core.logger import write_log
 from Createphoto import (
     run_create,
     export_group_of,
+    workbook_group,
     migrate_old_export_config,
     save_config,
     resource_path,
@@ -761,10 +762,9 @@ class SheetRow(ctk.CTkFrame):
         self.send_chk = ctk.CTkCheckBox(self, text="Send", variable=self.send_var, command=self.save, width=64)
         self.send_chk.grid(row=0, column=6, padx=4, pady=8)
 
-        # ตั้งชื่อกลุ่มแล้วรายการนี้จะแยกออกจากการ์ดยอด KPI ไปรวมกับรายการอื่น
-        # ที่ชื่อกลุ่มเดียวกัน เป็นการ์ดของกลุ่มเอง แล้วไฟล์ของกลุ่มตามมาติด ๆ
-        # เว้นว่าง = อยู่ในการ์ดยอด KPI ตามเดิม
-        self._entry("group", export_group_of(sec), 7, "กลุ่ม", width=104)
+        # ข้อความที่ขึ้นเหนือรูปตารางนี้ในการ์ด เว้นว่างแล้วจะใช้ชื่อไฟล์แทน
+        # กลุ่มไม่ได้ตั้งตรงนี้ แต่ตั้งที่ไฟล์ Excel ชีตในไฟล์เดียวกันไปด้วยกันเสมอ
+        self._entry("caption", sec.get("caption", ""), 7, "หัวตาราง", width=150)
 
         self.disabled_badge = ctk.CTkLabel(
             self,
@@ -814,8 +814,9 @@ class SheetRow(ctk.CTkFrame):
         sec["range"] = self.entries["range"].get().strip()
         sec["file"] = self.entries["file"].get().strip()
         sec["delete_by_start"] = str(self.delete_var.get()).lower()
-        sec["group"] = self.entries["group"].get().strip()
-        sec.pop("separate", None)  # ค่าเดิมถูกย้ายมาเป็นชื่อกลุ่มแล้ว
+        sec["caption"] = self.entries["caption"].get().strip()
+        sec.pop("group", None)     # กลุ่มย้ายไปอยู่ที่ไฟล์ Excel แล้ว
+        sec.pop("separate", None)  # ของเดิมก่อนมีระบบกลุ่ม
         self.app.save_config()
         self.apply_visual_state(parent_enabled=self.parent_enabled)
 
@@ -972,7 +973,7 @@ class WorkbookCard(ctk.CTkFrame):
 
         labels = ctk.CTkFrame(self, fg_color="transparent")
         labels.grid(row=1, column=0, padx=16, pady=(4, 0), sticky="ew")
-        for i, (txt, width) in enumerate([("", 56), ("No.", 64), ("Sheet", 120), ("Range", 110), ("Output File", 120), ("", 74), ("", 64), ("กลุ่ม", 104), ("Status", 82)]):
+        for i, (txt, width) in enumerate([("", 56), ("No.", 64), ("Sheet", 120), ("Range", 110), ("Output File", 120), ("", 74), ("", 64), ("หัวตาราง", 150), ("Status", 82)]):
             labels.grid_columnconfigure(i, weight=1 if i in [2, 3, 4] else 0)
             ctk.CTkLabel(labels, text=txt, text_color="#aeb8cc", width=width, anchor="w").grid(row=0, column=i, padx=4, sticky="ew")
 
@@ -4920,15 +4921,20 @@ class App(ctk.CTk):
                 names.append(group)
         return names
 
-    def get_selected_excel_files_for_feishu(self, group: str = ""):
+    def get_selected_excel_files_for_feishu(self, group: str = "",
+                                            include_generated: Optional[bool] = None):
         """ไฟล์ .xlsx ของกลุ่มหนึ่ง
 
-        group="" คือชุดยอด KPI ปกติ ชื่อกลุ่มอื่นคือก้อนที่แยกออกไป ซึ่งจะถูก
-        ส่งต่อท้ายการ์ดของกลุ่มนั้นทันที ไฟล์จะได้ไม่ไปแทรกกลางงานอื่น
+        group="" คือไฟล์ Excel ที่ยังไม่ได้ตั้งกลุ่ม ชื่อกลุ่มอื่นคือก้อนที่แยก
+        ออกไป ซึ่งจะถูกส่งต่อท้ายการ์ดของกลุ่มนั้นทันที ไฟล์จะได้ไม่ไปแทรก
+        กลางงานอื่น
 
-        ไฟล์ดิบที่โปรแกรมดึงมาเอง (DWS/JMS) ไม่มีแนวคิดสมุดงาน จึงอยู่ใน
-        ชุดยอด KPI เสมอ
+        ไฟล์ดิบที่โปรแกรมดึงมาเอง (DWS/JMS) ไม่มีแนวคิดสมุดงาน จึงไม่มีกลุ่ม
+        ของตัวเอง ให้ include_generated เป็นตัวบอกว่าก้อนไหนรับไป ปกติคือก้อน
+        ที่ถือยอดสรุป
         """
+        if include_generated is None:
+            include_generated = not group
         paths = []
         seen = set()
         raw_dir = self.get_raw_export_folder()
@@ -4952,7 +4958,7 @@ class App(ctk.CTk):
             ("send_realtime_file_var", "send_realtime_file", "name_realtime_db", "RealtimeDB.xlsx"),
         ]
         for var_attr, flag_key, name_key, default_name in (
-                generated if not group else []):
+                generated if include_generated else []):
             if flag_key in active_send:
                 selected = bool(active_send.get(flag_key))
             elif self.is_ui_thread() and hasattr(self, var_attr):
@@ -5057,10 +5063,12 @@ class App(ctk.CTk):
             raise Exception(f"Send file message failed: {res}")
         return res
 
-    def send_selected_excel_files_to_feishu(self, is_running=None, group: str = ""):
+    def send_selected_excel_files_to_feishu(self, is_running=None, group: str = "",
+                                            include_generated: Optional[bool] = None):
         if is_running is None:
             is_running = lambda: self.running
-        files = self.get_selected_excel_files_for_feishu(group=group)
+        files = self.get_selected_excel_files_for_feishu(
+            group=group, include_generated=include_generated)
         if not files:
             return
 
@@ -5210,28 +5218,42 @@ class App(ctk.CTk):
                 self.set_progress(76)
                 try:
                     Botmessage.send_ui = lambda stage: self.set_status(stage.capitalize(), "#88c0d0", "#3b4252")
+                    still_running = lambda: self.running and self.is_run_generation_active(run_generation)
+
+                    # ส่งทีละก้อน ก้อนหนึ่งคือการ์ดของกลุ่ม แล้วไฟล์ .xlsx ของ
+                    # กลุ่มเดียวกันตามมาติด ๆ ไม่สลับไปมาระหว่างงานคนละชนิด
+                    # ก้อนแรกสุดเป็นเจ้าของยอดสรุป กราฟ และการ์ด Dashboard
+                    # (ก้อนชื่อว่างคือรูปของไฟล์ Excel ที่ยังไม่ได้ตั้งกลุ่ม)
+                    #
                     # ส่งรูป Excel เฉพาะตอนที่ทำ Excel ในรอบนี้ ไม่งั้นจะส่งรูปเก่าซ้ำ
-                    if wanted("excel"):
-                        run_send(out, log=self.write_log, is_running=lambda: self.running and self.is_run_generation_active(run_generation))
-                        if self.running and self.is_run_generation_active(run_generation):
-                            self.send_selected_excel_files_to_feishu(
-                                is_running=lambda: self.running and self.is_run_generation_active(run_generation)
-                            )
-                    if wanted("dashboard") and self.running and self.is_run_generation_active(run_generation):
-                        self.send_dashboard_to_feishu()
-                    # กลุ่มที่แยกออกมา ส่งทีละก้อนหลังยอด KPI ไปถึงห้องแล้ว
-                    # ก้อนหนึ่ง = การ์ดของกลุ่ม แล้วไฟล์ของกลุ่มเดียวกันตามมาติด ๆ
-                    # ไม่สลับไปมาระหว่างงานคนละชนิด
-                    if wanted("excel") and self.running and self.is_run_generation_active(run_generation):
-                        still_running = lambda: self.running and self.is_run_generation_active(run_generation)
-                        for group_name in self.get_feishu_group_names():
-                            if not still_running():
-                                break
+                    blocks = ([""] + self.get_feishu_group_names()) if wanted("excel") else []
+                    blocks = [b for b in blocks
+                              if b or Botmessage.get_send_file_names()]
+                    summary_owner = blocks[0] if blocks else None
+                    dashboard_sent = False
+
+                    for block in blocks:
+                        if not still_running():
+                            break
+                        owns_summary = block == summary_owner
+                        if block:
                             Botmessage.run_send_group(
-                                out, group_name, log=self.write_log, is_running=still_running)
-                            if still_running():
-                                self.send_selected_excel_files_to_feishu(
-                                    is_running=still_running, group=group_name)
+                                out, block, log=self.write_log,
+                                is_running=still_running, with_summary=owns_summary)
+                        else:
+                            run_send(out, log=self.write_log, is_running=still_running)
+                        if still_running():
+                            # ไฟล์ดิบจาก DWS/JMS เป็นของชุดยอด KPI จึงไปกับก้อน
+                            # ที่ถือยอดสรุป ไม่ใช่ตกค้างอยู่ก้อนชื่อว่างที่อาจไม่มี
+                            self.send_selected_excel_files_to_feishu(
+                                is_running=still_running, group=block,
+                                include_generated=owns_summary)
+                        if owns_summary and wanted("dashboard") and still_running():
+                            self.send_dashboard_to_feishu()
+                            dashboard_sent = True
+
+                    if wanted("dashboard") and not dashboard_sent and still_running():
+                        self.send_dashboard_to_feishu()
                     self.set_pipeline_state("feishu", "ok")
                     pipeline_error_key = None
                 finally:

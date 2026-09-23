@@ -186,8 +186,8 @@ class ExportItem:
     delete_by_start: bool
     enabled: bool = True
     send_enabled: bool = True
-    # ชื่อกลุ่มที่รายการนี้สังกัด เว้นว่าง = อยู่ในการ์ดยอด KPI
-    # รายการที่ชื่อกลุ่มเดียวกันจะรวมเป็นการ์ดใบเดียว ใช้ชื่อกลุ่มเป็นหัวการ์ด
+    # ชื่อกลุ่มที่รายการนี้สังกัด สืบทอดมาจากไฟล์ Excel ที่ชีตนี้อยู่
+    # ชีตในไฟล์เดียวกันจึงไปอยู่การ์ดเดียวกันเสมอ ไม่ต้องตั้งทีละชีต
     group: str = ""
 
 
@@ -413,13 +413,24 @@ LEGACY_SEPARATE_GROUP = "พัสดุเกินเวลา 48 ชั่ว
 
 
 def export_group_of(sec) -> str:
-    """ชื่อกลุ่มของรายการหนึ่ง รองรับค่า separate แบบเก่าที่ยังค้างใน config"""
+    """ชื่อกลุ่มของไฟล์ Excel หนึ่งไฟล์ รองรับค่า separate แบบเก่าที่ยังค้างอยู่"""
     group = str(sec.get("group", "") or "").strip()
     if group:
         return group
     if as_bool(sec.get("separate", "false"), False):
         return LEGACY_SEPARATE_GROUP
     return ""
+
+
+def workbook_group(config, workbook_key: str) -> str:
+    """ชื่อกลุ่มของไฟล์ Excel ที่ชีตหนึ่งสังกัดอยู่
+
+    ตั้งกลุ่มที่ไฟล์ทีเดียว ชีตทั้งหมดในไฟล์นั้นก็ไปอยู่การ์ดเดียวกันหมด
+    """
+    section = f"WORKBOOK:{workbook_key}"
+    if not workbook_key or section not in config:
+        return ""
+    return export_group_of(config[section])
 
 
 def get_export_items(config: Optional[configparser.ConfigParser] = None, only_enabled: bool = True) -> List[ExportItem]:
@@ -441,7 +452,7 @@ def get_export_items(config: Optional[configparser.ConfigParser] = None, only_en
             delete_by_start=as_bool(sec.get("delete_by_start", "false")),
             enabled=as_bool(sec.get("enabled", "true"), True),
             send_enabled=as_bool(sec.get("send_enabled", "true"), True),
-            group=export_group_of(sec),
+            group=workbook_group(config, sec.get("workbook", "").strip()),
         )
         if only_enabled and not item.enabled:
             continue
