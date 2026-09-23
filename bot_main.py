@@ -1976,25 +1976,55 @@ class App(ctk.CTk):
         ent.bind("<KeyRelease>", lambda _e: self.after(1, normalize) if (collapse_internal_spaces or digits_only) else self.save_config_debounced(), "+")
         return ent
 
-    def paste_into_entry(self, entry):
-        """วางค่าจากคลิปบอร์ดลงช่องนี้ แทนที่ของเดิมทั้งหมด"""
-        try:
-            text = self.clipboard_get()
-        except Exception:
-            self.write_log("วางไม่ได้ — คลิปบอร์ดว่างหรืออ่านไม่ได้", level="WARN")
-            return
+    @staticmethod
+    def shorten_secret(value: str, keep_head: int = 12, keep_tail: int = 6) -> str:
+        """ย่อค่ายาว ๆ ให้อ่านออกในกล่องยืนยัน โดยยังพอเทียบได้ว่าคนละตัวกัน"""
+        text = str(value)
+        if len(text) <= keep_head + keep_tail + 3:
+            return text
+        return f"{text[:keep_head]}…{text[-keep_tail:]}"
+
+    def paste_into_entry(self, entry, label: str = ""):
+        """วางค่าจากคลิปบอร์ดลงช่องนี้
+
+        ช่องที่มีค่าอยู่แล้วต้องยืนยันก่อนทับ เพราะปุ่มนี้บันทึกทันทีและไม่มี
+        ทางย้อนกลับ เผลอกดผิดช่องแล้วค่าเดิมหายไปเลย
+        """
         try:
             if entry.cget("state") == "disabled":
                 return
         except Exception:
             pass
+        try:
+            text = self.clipboard_get()
+        except Exception:
+            self.write_log("วางไม่ได้ — คลิปบอร์ดว่างหรืออ่านไม่ได้", level="WARN")
+            return
         text = clean_input_value(text, collapse_internal_spaces=True)
+        if not text:
+            self.write_log("วางไม่ได้ — คลิปบอร์ดไม่มีข้อความ", level="WARN")
+            return
+
+        current = entry.get().strip()
+        if current == text:
+            return
+        if current:
+            where = f" {label}" if label else ""
+            if not messagebox.askyesno(
+                "ทับค่าเดิม?",
+                f"ช่อง{where} มีค่าอยู่แล้ว ทับด้วยค่าใหม่เลยไหม\n\n"
+                f"เดิม : {self.shorten_secret(current)}\n"
+                f"ใหม่ : {self.shorten_secret(text)}",
+            ):
+                return
+
         entry.delete(0, "end")
         entry.insert(0, text)
         entry.focus_set()
         self.save_config()
+        self.write_log(f"วางค่าลงช่อง{f' {label}' if label else ''} แล้ว", level="INFO")
 
-    def add_paste_button(self, parent, row, column, entry, padx=(0, 16)):
+    def add_paste_button(self, parent, row, column, entry, label: str = "", padx=(0, 16)):
         """ปุ่มวางค่าข้างช่องกรอก
 
         มีเพราะ Ctrl+V ใช้ไม่ได้ตอนสลับแป้นเป็นภาษาไทย ซึ่งเป็นสภาพปกติของ
@@ -2003,7 +2033,7 @@ class App(ctk.CTk):
         btn = ctk.CTkButton(
             parent, text="📋", width=36,
             font=ctk.CTkFont(size=15), fg_color="#4c566a", hover_color="#5e6779",
-            command=lambda: self.paste_into_entry(entry))
+            command=lambda: self.paste_into_entry(entry, label))
         btn.grid(row=row, column=column, padx=padx, pady=10, sticky="e")
         self.paste_buttons.append(btn)
         return btn
@@ -2013,7 +2043,7 @@ class App(ctk.CTk):
         ent = ctk.CTkEntry(parent, fg_color="#434c5e", border_color="#5e6779")
         ent.grid(row=row, column=1, columnspan=2, padx=(8, 4), pady=10, sticky="ew")
         if paste:
-            self.add_paste_button(parent, row, 3, ent)
+            self.add_paste_button(parent, row, 3, ent, label)
         self.bind_clean_entry(ent, collapse_internal_spaces=("token" in label.lower() or "chat" in label.lower() or "secret" in label.lower() or "app id" in label.lower()), digits_only=("จำนวนรายการ" in label or "download size" in label.lower()))
         self.lockable_inputs.append(ent)
         return ent
@@ -2666,7 +2696,7 @@ class App(ctk.CTk):
         ent = ctk.CTkEntry(parent)
         ent.grid(row=row, column=1, padx=(8, 4), pady=10, sticky="ew")
         if paste:
-            self.add_paste_button(parent, row, 2, ent)
+            self.add_paste_button(parent, row, 2, ent, label)
         self.bind_clean_entry(ent, collapse_internal_spaces=("token" in label.lower() or "chat" in label.lower() or "secret" in label.lower() or "app id" in label.lower()), digits_only=("จำนวนรายการ" in label or "download size" in label.lower()))
         self.lockable_inputs.append(ent)
         return ent
