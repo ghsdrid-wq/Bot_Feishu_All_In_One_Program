@@ -17,8 +17,7 @@ from typing import Callable, Optional
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import requests
-
+import feishu_client
 import Botmessage as feishu_api      # ช่องทางส่งเดียวกับที่บอทใช้ทุกวัน
 
 try:
@@ -63,27 +62,11 @@ def settings() -> dict:
 def chat_name(access_token: str, chat_id: str) -> str:
     """ถามชื่อกลุ่มจาก Feishu — ใช้ยืนยันปลายทางก่อนยิงจริง
     ไม่อยากให้ใครเผลอส่งเข้ากลุ่มผิดเพราะจำ chat_id ไม่ได้"""
-    try:
-        response = requests.get(
-            f"https://open.feishu.cn/open-apis/im/v1/chats/{chat_id}",
-            headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
-        data = response.json()
-        return (data.get("data") or {}).get("name") or "(ไม่มีชื่อ)"
-    except Exception as exc:
-        return f"(ถามชื่อกลุ่มไม่ได้: {exc})"
+    return feishu_client.chat_name(access_token, chat_id)
 
 
 def send_text(access_token: str, chat_id: str, text: str) -> None:
-    response = requests.post(
-        "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
-        headers={"Authorization": f"Bearer {access_token}",
-                 "Content-Type": "application/json"},
-        json={"receive_id": chat_id, "msg_type": "text",
-              "content": __import__("json").dumps({"text": text}, ensure_ascii=False)},
-        timeout=15)
-    result = response.json()
-    if result.get("code") != 0:
-        raise Exception(f"ส่งข้อความไม่สำเร็จ: {result}")
+    feishu_client.send_text(access_token, chat_id, text)
 
 
 def tab_titles() -> dict:

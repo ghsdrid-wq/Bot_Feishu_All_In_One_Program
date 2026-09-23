@@ -5,7 +5,7 @@ import configparser
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import requests
+import feishu_client
 
 try:
     from Createphoto import get_export_items, migrate_old_export_config
@@ -27,35 +27,10 @@ token_logger: Optional[LogFunc] = None
 send_ui: Optional[LogFunc] = None
 
 
-def request_with_retry(
-    func: Callable[[], Dict[str, Any]],
-    retries: int = 3,
-    delay: int = 2,
-    log: Optional[LogFunc] = None,
-    name: str = "",
-) -> Dict[str, Any]:
-    retries = max(1, retries)
-    for i in range(retries):
-        try:
-            return func()
-        except Exception as e:
-            if log:
-                log(f"{name} failed ({i + 1}/{retries}): {e}")
-            else:
-                print(f"{name} failed ({i + 1}/{retries}): {e}")
-            if i < retries - 1:
-                time.sleep(delay * (i + 1))
-            else:
-                raise
-    raise RuntimeError(f"{name or 'request'} failed without returning a response")
-
-
-def response_json(response: requests.Response, name: str) -> Dict[str, Any]:
-    response.raise_for_status()
-    try:
-        return response.json()
-    except ValueError as exc:
-        raise Exception(f"{name} returned invalid JSON") from exc
+# ตัวจริงย้ายไป feishu_client แล้ว เก็บชื่อเดิมไว้เพราะที่อื่นยังเรียกผ่าน
+# Botmessage อยู่ (dashboard/notify.py import ไฟล์นี้เป็น feishu_api)
+request_with_retry = feishu_client.request_with_retry
+response_json = feishu_client.response_json
 
 
 def resource_path(file: str) -> str:
@@ -86,35 +61,11 @@ def get_feishu() -> Dict[str, str]:
 
 
 def get_token(app_id: str, app_secret: str) -> str:
-    url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/"
-
-    def do_request() -> Dict[str, Any]:
-        response = requests.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=10)
-        return response_json(response, "get_token")
-
-    res = request_with_retry(do_request, log=token_logger, name="get_token")
-    if "tenant_access_token" in res and token_logger:
-        token_logger("TOKEN OK")
-    if "tenant_access_token" not in res:
-        raise Exception(f"Get token failed: {res}")
-    return res["tenant_access_token"]
+    return feishu_client.get_token(app_id, app_secret, log=token_logger)
 
 
 def upload_image(token: str, path: str, log: Optional[LogFunc] = None) -> str:
-    url = "https://open.feishu.cn/open-apis/im/v1/images"
-    headers = {"Authorization": f"Bearer {token}"}
-    data = {"image_type": "message"}
-
-    def do_request() -> Dict[str, Any]:
-        with open(path, "rb") as f:
-            files = {"image": f}
-            response = requests.post(url, headers=headers, files=files, data=data, timeout=10)
-            return response_json(response, "upload_image")
-
-    res = request_with_retry(do_request, log=log, name="upload_image")
-    if res.get("code") != 0:
-        raise Exception(res)
-    return res["data"]["image_key"]
+    return feishu_client.upload_image(token, path, log=log)
 
 
 def get_export_group_names() -> List[str]:
@@ -208,30 +159,9 @@ def get_send_file_names() -> List[str]:
     return files
 
 def send_image_chat(token: str, chat_id: str, image_key: str):
-    url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    feishu_client.send_image(token, chat_id, image_key)
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
 
-    payload = {
-        "receive_id": chat_id,
-        "msg_type": "image",
-        "content": f'{{"image_key":"{image_key}"}}'
-    }
-
-    response = requests.post(
-        url,
-        headers=headers,
-        json=payload,
-        timeout=15
-    )
-    res = response_json(response, "send_image")
-
-    if res.get("code") != 0:
-        raise Exception(f"Send image failed: {res}")
-    
 def run_send_group(folder: str, group: str, log: Optional[LogFunc] = None,
                    is_running: Optional[RunFunc] = None,
                    with_summary: bool = False) -> None:

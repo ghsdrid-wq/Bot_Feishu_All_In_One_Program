@@ -40,6 +40,7 @@ from Createphoto import (
     unique_key,
 )
 import Botmessage
+import feishu_client
 import realtime_report
 from Botmessage import run_send
 
@@ -282,42 +283,68 @@ def get_configured_plan_names() -> Dict[str, str]:
     }
 
 
+def _webhook_log(message, level="INFO"):
+    """log ของเส้น webhook — เข้า Live Log ถ้าโปรแกรมเปิดอยู่
+
+    ของเดิมใช้ print() เฉย ๆ ซึ่งไม่โผล่ที่ไหนเลยในบิลด์ที่ไม่มี console
+    เวลาตอบกลับไม่สำเร็จจึงไม่มีอะไรบอกว่าเกิดอะไรขึ้น
+    """
+    app = controller_instance
+    if app is not None:
+        try:
+            app.write_log(str(message), level=level)
+            return
+        except Exception:
+            pass
+    print(message)
+
+
 def get_tenant_access_token():
+    """คืน token หรือ None — ไม่โยน error ออกไป
+
+    ผู้เรียกทั้งหมดเช็ค falsy แล้วเลิกทำเงียบ ๆ จึงต้องรักษาสัญญานี้ไว้
+    ของใหม่คือ retry ให้เท่ากับเส้นส่งรูป และเขียน log เมื่อพัง
+    """
     try:
-        app_id = get_controller_feishu_value("APP_ID").strip()
-        app_secret = get_controller_feishu_value("APP_SECRET").strip()
-        response = requests.post(
-            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
-            json={"app_id": app_id, "app_secret": app_secret},
-            timeout=10,
+        return feishu_client.get_token(
+            get_controller_feishu_value("APP_ID").strip(),
+            get_controller_feishu_value("APP_SECRET").strip(),
+            log=_webhook_log,
+            retries=2,
         )
-        data = response.json()
-        return data.get("tenant_access_token")
     except Exception as e:
-        print(e)
+        _webhook_log(f"ขอ token ไม่สำเร็จ: {e}", level="WARN")
         return None
 
 
 def reply_feishu_message(message_id, text):
+    """ตอบกลับข้อความที่ทักมา — คืน True/False ไม่โยน error
+
+    ใช้โดยคำสั่งรีรหัสและเปลี่ยนแพลน ซึ่งทำงานเสร็จไปแล้วก่อนถึงบรรทัดนี้
+    ถ้าปล่อยให้ error หลุดขึ้นไป Flask จะตอบ 500 แล้ว Feishu จะส่งซ้ำเข้ามา
+    กลายเป็นสั่งงานซ้ำ
+    """
     token = get_tenant_access_token()
     if not token:
         return False
-    url = f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {"content": json.dumps({"text": text}), "msg_type": "text"}
-    response = requests.post(url, headers=headers, json=payload, timeout=10)
-    return response.status_code == 200
+    try:
+        feishu_client.reply_text(token, message_id, text, log=_webhook_log)
+        return True
+    except Exception as e:
+        _webhook_log(f"ตอบกลับไม่สำเร็จ: {e}", level="WARN")
+        return False
 
 
 def send_feishu_chat_message(chat_id, text):
     token = get_tenant_access_token()
     if not token or not chat_id:
         return False
-    url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {"receive_id": chat_id, "content": json.dumps({"text": text}), "msg_type": "text"}
-    response = requests.post(url, headers=headers, json=payload, timeout=10)
-    return response.status_code == 200
+    try:
+        feishu_client.send_text(token, chat_id, text, log=_webhook_log, retries=2)
+        return True
+    except Exception as e:
+        _webhook_log(f"ส่งข้อความไม่สำเร็จ: {e}", level="WARN")
+        return False
 
 
 def send_system_alert(text):
@@ -5167,52 +5194,13 @@ class App(ctk.CTk):
         if not app_id or not app_secret:
             raise Exception("Missing APP_ID / APP_SECRET")
 
-        url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/"
-        response = requests.post(url, json={"app_id": app_id, "app_secret": app_secret}, timeout=15)
-        response.raise_for_status()
-        try:
-            res = response.json()
-        except ValueError as exc:
-            raise Exception("Get tenant token returned invalid JSON") from exc
-        if "tenant_access_token" not in res:
-            raise Exception(f"Get tenant token failed: {res}")
-        return res["tenant_access_token"]
+        return feishu_client.get_token(app_id, app_secret, log=self.write_log)
 
     def upload_excel_file_to_feishu(self, token: str, file_path: str):
-        url = "https://open.feishu.cn/open-apis/im/v1/files"
-        filename = os.path.basename(file_path)
-        mime = mimetypes.guess_type(filename)[0] or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        headers = {"Authorization": f"Bearer {token}"}
-        data = {"file_type": "xls", "file_name": filename}
-        with open(file_path, "rb") as f:
-            files = {"file": (filename, f, mime)}
-            response = requests.post(url, headers=headers, data=data, files=files, timeout=60)
-        response.raise_for_status()
-        try:
-            res = response.json()
-        except ValueError as exc:
-            raise Exception("Upload file returned invalid JSON") from exc
-        if res.get("code") != 0 or not res.get("data", {}).get("file_key"):
-            raise Exception(f"Upload file failed: {res}")
-        return res["data"]["file_key"]
+        return feishu_client.upload_file(token, file_path, log=self.write_log)
 
     def send_feishu_file_message(self, token: str, chat_id: str, file_key: str):
-        url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"}
-        payload = {
-            "receive_id": chat_id,
-            "msg_type": "file",
-            "content": json.dumps({"file_key": file_key}, ensure_ascii=False),
-        }
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        try:
-            res = response.json()
-        except ValueError as exc:
-            raise Exception("Send file message returned invalid JSON") from exc
-        if res.get("code") != 0:
-            raise Exception(f"Send file message failed: {res}")
-        return res
+        return feishu_client.send_file(token, chat_id, file_key, log=self.write_log)
 
     def send_selected_excel_files_to_feishu(self, is_running=None, group: str = "",
                                             include_generated: Optional[bool] = None):

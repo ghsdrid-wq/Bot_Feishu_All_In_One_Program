@@ -20,9 +20,8 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import requests
+import feishu_client
 
-MESSAGE_URL = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
 
 # ลิมิตจริงของแพลตฟอร์ม: การ์ด/rich text ส่งได้ไม่เกิน 30KB ต่อข้อความ
 CARD_LIMIT_BYTES = 30 * 1024
@@ -358,14 +357,4 @@ def send_card(token: str, chat_id: str, card: Dict[str, Any]) -> Dict[str, Any]:
         raise Exception(
             "การ์ดใหญ่ {:,} bytes เกินลิมิต {:,} bytes".format(size, CARD_LIMIT_BYTES))
 
-    response = requests.post(
-        MESSAGE_URL,
-        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
-        json={"receive_id": chat_id, "msg_type": "interactive", "content": content},
-        timeout=30,
-    )
-    response.raise_for_status()
-    res = response.json()
-    if res.get("code") != 0:
-        raise Exception("Send card failed: {}".format(res))
-    return res
+    return feishu_client.send_card(token, chat_id, content)
