@@ -435,6 +435,18 @@ def export_group_of(sec) -> str:
     return ""
 
 
+def workbook_enabled(config, workbook_key: str) -> bool:
+    """ไฟล์ Excel ที่ชีตนี้สังกัดยังเปิดใช้อยู่ไหม
+
+    ปิด Use ที่ไฟล์ = ปิดทุกชีตในไฟล์นั้น ไม่ใช่แค่ไม่สร้างรูปใหม่ แต่ต้อง
+    ไม่ถูกหยิบไปส่งด้วย ไม่งั้นรูปเก่าที่ค้างอยู่ในโฟลเดอร์จะถูกส่งซ้ำทุกรอบ
+    """
+    section = f"WORKBOOK:{workbook_key}"
+    if not workbook_key or section not in config:
+        return False
+    return as_bool(config[section].get("enabled", "true"), True)
+
+
 def workbook_group(config, workbook_key: str) -> str:
     """ชื่อกลุ่มของไฟล์ Excel ที่ชีตหนึ่งสังกัดอยู่
 
@@ -468,6 +480,8 @@ def get_export_items(config: Optional[configparser.ConfigParser] = None, only_en
             group=workbook_group(config, sec.get("workbook", "").strip()),
         )
         if only_enabled and not item.enabled:
+            continue
+        if only_enabled and not workbook_enabled(config, item.workbook):
             continue
         if item.workbook and item.sheet and item.cell_range and item.filename:
             items.append(item)

@@ -248,6 +248,10 @@ PIPELINE_STEPS = [
 # ขั้นตอนที่ต้องมีไฟล์ดิบพร้อมก่อน (ใช้ตัดสินว่าต้องเช็ค config DWS/JMS ไหม)
 RAW_STEP_KEYS = ("dws_mirror", "dws", "jms_auto", "jms_pda", "realtime")
 
+# ขั้นตอนที่ป้อนตัวเลขให้ยอด KPI ไม่รวม realtime เพราะพัสดุเกินเวลาเป็นงานของ
+# QC คนละชุดกับยอดปล่อยพัสดุ รอบที่ดึงแต่ realtime จึงไม่ควรมียอด KPI ติดไป
+KPI_STEP_KEYS = ("dws_mirror", "dws", "jms_auto", "jms_pda")
+
 # สั่ง JMS สร้างไฟล์ล่วงหน้ากี่นาทีก่อนถึงรอบรัน
 # เซิร์ฟเวอร์ใช้เวลา 3-5 นาที ตั้ง 6 นาทีจึงพอให้เสร็จก่อนถึงคิวใช้งาน
 # เมื่อ JMS บอกว่ามีงาน export ค้างอยู่แล้ว ให้รับไฟล์ของงานนั้นได้
@@ -5292,6 +5296,10 @@ class App(ctk.CTk):
                             "ถ้าไม่ติ๊กไว้จะไม่มีรูปใหม่ให้ส่ง",
                             level="WARN")
                     summary_owner = blocks[0] if blocks else None
+                    # ก้อนแรกรับยอดสรุปได้ก็ต่อเมื่อรอบนี้ดึงยอด KPI มาจริง ๆ
+                    # ไม่งั้นรอบที่ดึงแต่ Realtime DB การ์ดของ QC จะมียอดปล่อย
+                    # พัสดุติดไปด้วย ทั้งที่เป็นคนละงานกัน
+                    kpi_ran = any(wanted(key) for key in KPI_STEP_KEYS)
                     dashboard_sent = False
 
                     for block in blocks:
@@ -5301,7 +5309,8 @@ class App(ctk.CTk):
                         if block:
                             Botmessage.run_send_group(
                                 out, block, log=self.write_log,
-                                is_running=still_running, with_summary=owns_summary)
+                                is_running=still_running,
+                                with_summary=owns_summary and kpi_ran)
                         else:
                             run_send(out, log=self.write_log, is_running=still_running)
                         if still_running():
