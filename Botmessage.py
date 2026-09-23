@@ -19,8 +19,7 @@ try:
 except Exception:
     card_report = None
 
-# หัวการ์ดของรายการที่ส่งแยก — คนละงานกับยอด KPI จึงต้องบอกให้ชัดว่าของใคร
-SEPARATE_CARD_TITLE = "พัสดุเกินเวลา 48 ชั่วโมง"
+# หัวการ์ดของกลุ่มมาจากชื่อกลุ่มที่ผู้ใช้ตั้งเอง เพิ่มงานใหม่ได้โดยไม่ต้องแก้โค้ด
 
 
 LogFunc = Callable[[str], None]
@@ -119,14 +118,32 @@ def upload_image(token: str, path: str, log: Optional[LogFunc] = None) -> str:
     return res["data"]["image_key"]
 
 
-def get_separate_file_names() -> List[str]:
-    """ไฟล์ที่ติ๊ก "แยก" ไว้ — ส่งเป็นข้อความของตัวเองทีหลัง ไม่ปนกับยอด KPI"""
+def get_export_group_names() -> List[str]:
+    """ชื่อกลุ่มที่มีรูปให้ส่ง เรียงตามลำดับรายการใน config
+
+    ไม่นับกลุ่มว่าง เพราะกลุ่มว่างคือการ์ดยอด KPI ซึ่งส่งด้วยเส้นทางหลักอยู่แล้ว
+    """
+    if not get_export_items:
+        return []
+    try:
+        config = load_config()
+        names: List[str] = []
+        for item in get_export_items(config, only_enabled=True):
+            if item.send_enabled and item.group and item.group not in names:
+                names.append(item.group)
+        return names
+    except Exception:
+        return []
+
+
+def get_group_file_names(group: str) -> List[str]:
+    """ไฟล์รูปของกลุ่มที่ระบุ"""
     if not get_export_items:
         return []
     try:
         config = load_config()
         return [x.filename for x in get_export_items(config, only_enabled=True)
-                if x.send_enabled and x.separate]
+                if x.send_enabled and x.group == group]
     except Exception:
         return []
 
@@ -176,7 +193,7 @@ def get_send_file_names() -> List[str]:
             save_config(config)
     if get_export_items:
         return [x.filename for x in get_export_items(config, only_enabled=True)
-                if x.send_enabled and not x.separate]
+                if x.send_enabled and not x.group]
 
     files = []
     if "EXPORT" in config:
@@ -211,9 +228,9 @@ def send_image_chat(token: str, chat_id: str, image_key: str):
     if res.get("code") != 0:
         raise Exception(f"Send image failed: {res}")
     
-def run_send_separate(folder: str, log: Optional[LogFunc] = None,
-                      is_running: Optional[RunFunc] = None) -> None:
-    """ส่งรายการที่ติ๊ก "แยก" เป็นการ์ดของตัวเอง
+def run_send_group(folder: str, group: str, log: Optional[LogFunc] = None,
+                   is_running: Optional[RunFunc] = None) -> None:
+    """ส่งรูปของกลุ่มหนึ่งเป็นการ์ดของตัวเอง ใช้ชื่อกลุ่มเป็นหัวการ์ด
 
     ไม่ใส่ยอดสรุปกับกราฟลงไป เพราะเป็นคนละงานกับยอด KPI คนที่ดูข้อมูลชุดนี้
     ไม่ได้ต้องการตัวเลข KPI มาปน
@@ -221,7 +238,7 @@ def run_send_separate(folder: str, log: Optional[LogFunc] = None,
     def write(msg: str) -> None:
         log(msg) if log else print(msg)
 
-    names = get_separate_file_names()
+    names = get_group_file_names(group)
     if not names:
         return
 
@@ -232,7 +249,7 @@ def run_send_separate(folder: str, log: Optional[LogFunc] = None,
         if os.path.exists(path):
             images.append((captions.get(filename, os.path.splitext(filename)[0]), path))
         else:
-            write(f"Missing file (separate): {path}")
+            write(f"Missing file ({group}): {path}")
     if not images:
         return
 
@@ -243,7 +260,7 @@ def run_send_separate(folder: str, log: Optional[LogFunc] = None,
     for caption, path in images:
         if is_running and not is_running():
             return
-        write(f"Uploading (separate): {path}")
+        write(f"Uploading ({group}): {path}")
         uploaded.append((caption, upload_image(token, path, log=write)))
 
     if is_running and not is_running():
@@ -251,13 +268,13 @@ def run_send_separate(folder: str, log: Optional[LogFunc] = None,
 
     if card_report and send_as_card():
         try:
-            card = card_report.build_card(uploaded, None, title=SEPARATE_CARD_TITLE)
-            write(f"Separate card size: {card_report.card_size(card):,} bytes")
+            card = card_report.build_card(uploaded, None, title=group)
+            write(f"Group card size ({group}): {card_report.card_size(card):,} bytes")
             card_report.send_card(token, cfg["CHAT_ID"], card)
-            write("Separate report sent")
+            write(f"Group card sent: {group}")
             return
         except Exception as e:
-            write(f"Separate card failed, falling back to plain images: {e}")
+            write(f"Group card failed, falling back to plain images: {e}")
 
     for _caption, key in uploaded:
         if is_running and not is_running():

@@ -186,8 +186,9 @@ class ExportItem:
     delete_by_start: bool
     enabled: bool = True
     send_enabled: bool = True
-    # ส่งแยกเป็นข้อความของตัวเอง ไม่รวมในการ์ดยอด KPI
-    separate: bool = False
+    # ชื่อกลุ่มที่รายการนี้สังกัด เว้นว่าง = อยู่ในการ์ดยอด KPI
+    # รายการที่ชื่อกลุ่มเดียวกันจะรวมเป็นการ์ดใบเดียว ใช้ชื่อกลุ่มเป็นหัวการ์ด
+    group: str = ""
 
 
 @dataclass(frozen=True)
@@ -406,6 +407,21 @@ def get_workbooks(config: Optional[configparser.ConfigParser] = None, only_enabl
     return result
 
 
+# ชื่อกลุ่มที่ใช้แทนของเดิมซึ่งเคยเป็น checkbox "แยก" ตัวเดียว
+# เครื่องที่ตั้งค่าไว้ก่อนหน้าจะถูกย้ายเข้ากลุ่มนี้ให้เอง ไม่ต้องไปตั้งใหม่
+LEGACY_SEPARATE_GROUP = "พัสดุเกินเวลา 48 ชั่วโมง"
+
+
+def export_group_of(sec) -> str:
+    """ชื่อกลุ่มของรายการหนึ่ง รองรับค่า separate แบบเก่าที่ยังค้างใน config"""
+    group = str(sec.get("group", "") or "").strip()
+    if group:
+        return group
+    if as_bool(sec.get("separate", "false"), False):
+        return LEGACY_SEPARATE_GROUP
+    return ""
+
+
 def get_export_items(config: Optional[configparser.ConfigParser] = None, only_enabled: bool = True) -> List[ExportItem]:
     config = config or load_config()
     migrate_old_export_config(config)
@@ -425,7 +441,7 @@ def get_export_items(config: Optional[configparser.ConfigParser] = None, only_en
             delete_by_start=as_bool(sec.get("delete_by_start", "false")),
             enabled=as_bool(sec.get("enabled", "true"), True),
             send_enabled=as_bool(sec.get("send_enabled", "true"), True),
-            separate=as_bool(sec.get("separate", "false"), False),
+            group=export_group_of(sec),
         )
         if only_enabled and not item.enabled:
             continue

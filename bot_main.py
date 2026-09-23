@@ -31,6 +31,7 @@ from core.logger import write_log
 
 from Createphoto import (
     run_create,
+    export_group_of,
     migrate_old_export_config,
     save_config,
     resource_path,
@@ -735,7 +736,6 @@ class SheetRow(ctk.CTkFrame):
         self.enabled_var = ctk.BooleanVar(value=as_bool(sec.get("enabled", "true"), True))
         self.send_var = ctk.BooleanVar(value=as_bool(sec.get("send_enabled", "true"), True))
         self.delete_var = ctk.BooleanVar(value=as_bool(sec.get("delete_by_start", "false"), False))
-        self.separate_var = ctk.BooleanVar(value=as_bool(sec.get("separate", "false"), False))
 
         self.use_chk = ctk.CTkCheckBox(self, text="Use", variable=self.enabled_var, command=self.on_enabled_changed, width=56)
         self.use_chk.grid(row=0, column=0, padx=(10, 4), pady=8)
@@ -761,11 +761,10 @@ class SheetRow(ctk.CTkFrame):
         self.send_chk = ctk.CTkCheckBox(self, text="Send", variable=self.send_var, command=self.save, width=64)
         self.send_chk.grid(row=0, column=6, padx=4, pady=8)
 
-        # ติ๊กแล้วรายการนี้จะไม่ไปรวมในการ์ดยอด KPI แต่ส่งเป็นข้อความของตัวเอง
-        # หลังส่งยอดเสร็จ ใช้กับรายงานที่เป็นคนละงาน เช่นข้อมูลของฝ่าย QC
-        self.separate_chk = ctk.CTkCheckBox(self, text="แยก", variable=self.separate_var,
-                                            command=self.save, width=60)
-        self.separate_chk.grid(row=0, column=7, padx=4, pady=8)
+        # ตั้งชื่อกลุ่มแล้วรายการนี้จะแยกออกจากการ์ดยอด KPI ไปรวมกับรายการอื่น
+        # ที่ชื่อกลุ่มเดียวกัน เป็นการ์ดของกลุ่มเอง แล้วไฟล์ของกลุ่มตามมาติด ๆ
+        # เว้นว่าง = อยู่ในการ์ดยอด KPI ตามเดิม
+        self._entry("group", export_group_of(sec), 7, "กลุ่ม", width=104)
 
         self.disabled_badge = ctk.CTkLabel(
             self,
@@ -815,7 +814,8 @@ class SheetRow(ctk.CTkFrame):
         sec["range"] = self.entries["range"].get().strip()
         sec["file"] = self.entries["file"].get().strip()
         sec["delete_by_start"] = str(self.delete_var.get()).lower()
-        sec["separate"] = str(self.separate_var.get()).lower()
+        sec["group"] = self.entries["group"].get().strip()
+        sec.pop("separate", None)  # ค่าเดิมถูกย้ายมาเป็นชื่อกลุ่มแล้ว
         self.app.save_config()
         self.apply_visual_state(parent_enabled=self.parent_enabled)
 
@@ -864,7 +864,7 @@ class SheetRow(ctk.CTkFrame):
                 placeholder_text_color="#5e6779" if not active else "#7b8496",
             )
 
-        for widget in [self.delete_chk, self.send_chk, self.separate_chk]:
+        for widget in [self.delete_chk, self.send_chk]:
             widget.configure(state="normal" if active else "disabled", text_color=muted_text)
 
         # Keep delete button available when merely disabled, but lock it while running.
@@ -889,7 +889,6 @@ class WorkbookCard(ctk.CTkFrame):
         sec = self.app.config[f"WORKBOOK:{workbook_key}"]
         self.enabled_var = ctk.BooleanVar(value=as_bool(sec.get("enabled", "true"), True))
         self.send_excel_var = ctk.BooleanVar(value=as_bool(sec.get("send_excel", "false"), False))
-        self.separate_var = ctk.BooleanVar(value=as_bool(sec.get("separate", "false"), False))
         display = sec.get("display_name", workbook_key)
         path = sec.get("path", "")
 
@@ -931,16 +930,13 @@ class WorkbookCard(ctk.CTkFrame):
         )
         self.send_excel_chk.grid(row=0, column=3, rowspan=2, padx=(8, 4), pady=10)
 
-        # ติ๊กแล้วไฟล์ .xlsx ของสมุดงานนี้จะไปส่งท้ายสุดพร้อมการ์ดที่แยกออกมา
-        # ไม่ไปแทรกกลางระหว่างรูปของงานอื่น
-        self.separate_chk = ctk.CTkCheckBox(
-            self.header,
-            text="แยก",
-            variable=self.separate_var,
-            command=self.save_workbook,
-            width=64,
-        )
-        self.separate_chk.grid(row=0, column=4, rowspan=2, padx=(4, 4), pady=10)
+        # ใส่ชื่อกลุ่มแล้วไฟล์ .xlsx ของสมุดงานนี้จะไปส่งต่อท้ายการ์ดของกลุ่มนั้น
+        # เว้นว่าง = ส่งพร้อมยอด KPI ตามเดิม
+        self.group_entry = ctk.CTkEntry(self.header, placeholder_text="กลุ่ม", width=104)
+        self.group_entry.insert(0, export_group_of(sec))
+        self.group_entry.bind("<KeyRelease>", lambda _e: self.app.save_config_debounced())
+        self.group_entry.bind("<FocusOut>", lambda _e: self.save_workbook())
+        self.group_entry.grid(row=0, column=4, rowspan=2, padx=(4, 4), pady=10)
 
         self.workbook_badge = ctk.CTkLabel(
             self.header,
@@ -976,7 +972,7 @@ class WorkbookCard(ctk.CTkFrame):
 
         labels = ctk.CTkFrame(self, fg_color="transparent")
         labels.grid(row=1, column=0, padx=16, pady=(4, 0), sticky="ew")
-        for i, (txt, width) in enumerate([("", 56), ("No.", 64), ("Sheet", 120), ("Range", 110), ("Output File", 120), ("", 74), ("", 64), ("Status", 82)]):
+        for i, (txt, width) in enumerate([("", 56), ("No.", 64), ("Sheet", 120), ("Range", 110), ("Output File", 120), ("", 74), ("", 64), ("กลุ่ม", 104), ("Status", 82)]):
             labels.grid_columnconfigure(i, weight=1 if i in [2, 3, 4] else 0)
             ctk.CTkLabel(labels, text=txt, text_color="#aeb8cc", width=width, anchor="w").grid(row=0, column=i, padx=4, sticky="ew")
 
@@ -990,7 +986,8 @@ class WorkbookCard(ctk.CTkFrame):
         sec = self.app.config[f"WORKBOOK:{self.workbook_key}"]
         sec["enabled"] = str(self.enabled_var.get()).lower()
         sec["send_excel"] = str(self.send_excel_var.get()).lower()
-        sec["separate"] = str(self.separate_var.get()).lower()
+        sec["group"] = self.group_entry.get().strip()
+        sec.pop("separate", None)  # ค่าเดิมถูกย้ายมาเป็นชื่อกลุ่มแล้ว
         self.app.save_config()
         self.apply_visual_state()
 
@@ -1099,7 +1096,7 @@ class WorkbookCard(ctk.CTkFrame):
         active = bool(self.enabled_var.get()) and not runtime_locked
 
         self.use_chk.configure(state="disabled" if runtime_locked else "normal")
-        for widget in (self.send_excel_chk, self.separate_chk):
+        for widget in (self.send_excel_chk, self.group_entry):
             widget.configure(
                 state="disabled" if runtime_locked else "normal",
                 text_color="#d8dee9" if active else "#7b8496",
@@ -4901,15 +4898,36 @@ class App(ctk.CTk):
             session.close()
         
 
-    def get_selected_excel_files_for_feishu(self, separate: bool = False):
-        """ไฟล์ .xlsx ที่จะแนบเข้ากลุ่ม
+    def get_feishu_group_names(self) -> List[str]:
+        """ชื่อกลุ่มทั้งหมดที่ต้องส่งเป็นก้อนของตัวเอง เรียงตามลำดับที่ตั้งไว้
 
-        separate=False คืนไฟล์ที่ส่งพร้อมยอด KPI ตามปกติ
-        separate=True คืนเฉพาะสมุดงานที่ติ๊ก "แยก" ไว้ — ส่งท้ายสุดคู่กับ
-        การ์ดที่แยกออกมา ไฟล์จะได้ไม่ไปแทรกกลางระหว่างรูปของงานอื่น
+        รวมกลุ่มจากรูป (EXPORT) กับกลุ่มจากสมุดงาน (WORKBOOK) เข้าด้วยกัน
+        กลุ่มที่มีแต่ไฟล์ Excel ไม่มีรูป ก็ยังต้องได้ส่ง
+        """
+        names: List[str] = list(Botmessage.get_export_group_names())
+        keys = [x.strip() for x in self.config["WORKBOOKS"].get("items", "").split(",") if x.strip()]
+        for key in keys:
+            section = f"WORKBOOK:{key}"
+            if section not in self.config:
+                continue
+            sec = self.config[section]
+            if not as_bool(sec.get("enabled", "true"), True):
+                continue
+            if not as_bool(sec.get("send_excel", "false"), False):
+                continue
+            group = export_group_of(sec)
+            if group and group not in names:
+                names.append(group)
+        return names
+
+    def get_selected_excel_files_for_feishu(self, group: str = ""):
+        """ไฟล์ .xlsx ของกลุ่มหนึ่ง
+
+        group="" คือชุดยอด KPI ปกติ ชื่อกลุ่มอื่นคือก้อนที่แยกออกไป ซึ่งจะถูก
+        ส่งต่อท้ายการ์ดของกลุ่มนั้นทันที ไฟล์จะได้ไม่ไปแทรกกลางงานอื่น
 
         ไฟล์ดิบที่โปรแกรมดึงมาเอง (DWS/JMS) ไม่มีแนวคิดสมุดงาน จึงอยู่ใน
-        ชุดปกติเสมอ
+        ชุดยอด KPI เสมอ
         """
         paths = []
         seen = set()
@@ -4934,7 +4952,7 @@ class App(ctk.CTk):
             ("send_realtime_file_var", "send_realtime_file", "name_realtime_db", "RealtimeDB.xlsx"),
         ]
         for var_attr, flag_key, name_key, default_name in (
-                [] if separate else generated):
+                generated if not group else []):
             if flag_key in active_send:
                 selected = bool(active_send.get(flag_key))
             elif self.is_ui_thread() and hasattr(self, var_attr):
@@ -4963,7 +4981,7 @@ class App(ctk.CTk):
                 continue
             if not as_bool(sec.get("send_excel", "false"), False):
                 continue
-            if as_bool(sec.get("separate", "false"), False) != separate:
+            if export_group_of(sec) != group:
                 continue
             path = clean_input_value(sec.get("path", ""))
             norm = os.path.normcase(os.path.abspath(path)) if path else ""
@@ -5039,10 +5057,10 @@ class App(ctk.CTk):
             raise Exception(f"Send file message failed: {res}")
         return res
 
-    def send_selected_excel_files_to_feishu(self, is_running=None, separate: bool = False):
+    def send_selected_excel_files_to_feishu(self, is_running=None, group: str = ""):
         if is_running is None:
             is_running = lambda: self.running
-        files = self.get_selected_excel_files_for_feishu(separate=separate)
+        files = self.get_selected_excel_files_for_feishu(group=group)
         if not files:
             return
 
@@ -5201,14 +5219,19 @@ class App(ctk.CTk):
                             )
                     if wanted("dashboard") and self.running and self.is_run_generation_active(run_generation):
                         self.send_dashboard_to_feishu()
-                    # ส่งรายการที่ติ๊ก "แยก" ท้ายสุด หลังยอด KPI ไปถึงกลุ่มแล้ว
-                    # การ์ดก่อน แล้วไฟล์ของมันตามมาติด ๆ จะได้อยู่เป็นชุดเดียวกัน
+                    # กลุ่มที่แยกออกมา ส่งทีละก้อนหลังยอด KPI ไปถึงห้องแล้ว
+                    # ก้อนหนึ่ง = การ์ดของกลุ่ม แล้วไฟล์ของกลุ่มเดียวกันตามมาติด ๆ
+                    # ไม่สลับไปมาระหว่างงานคนละชนิด
                     if wanted("excel") and self.running and self.is_run_generation_active(run_generation):
                         still_running = lambda: self.running and self.is_run_generation_active(run_generation)
-                        Botmessage.run_send_separate(out, log=self.write_log, is_running=still_running)
-                        if still_running():
-                            self.send_selected_excel_files_to_feishu(
-                                is_running=still_running, separate=True)
+                        for group_name in self.get_feishu_group_names():
+                            if not still_running():
+                                break
+                            Botmessage.run_send_group(
+                                out, group_name, log=self.write_log, is_running=still_running)
+                            if still_running():
+                                self.send_selected_excel_files_to_feishu(
+                                    is_running=still_running, group=group_name)
                     self.set_pipeline_state("feishu", "ok")
                     pipeline_error_key = None
                 finally:
