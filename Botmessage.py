@@ -118,22 +118,37 @@ def upload_image(token: str, path: str, log: Optional[LogFunc] = None) -> str:
     return res["data"]["image_key"]
 
 
-def get_export_group_names() -> List[str]:
+def get_export_group_names(include_disabled: bool = False) -> List[str]:
     """ชื่อกลุ่มที่มีรูปให้ส่ง เรียงตามลำดับรายการใน config
 
     ไม่นับกลุ่มว่าง เพราะกลุ่มว่างคือการ์ดยอด KPI ซึ่งส่งด้วยเส้นทางหลักอยู่แล้ว
+
+    include_disabled=True นับรายการที่ปิด Use ไว้ด้วย ใช้ตอนหาว่ากลุ่มไหนถูก
+    ตั้งไว้เป็นลำดับแรก ซึ่งต้องเป็นคำตอบเดิมไม่ว่ารอบนั้นจะเปิดอะไรไว้บ้าง
     """
     if not get_export_items:
         return []
     try:
         config = load_config()
         names: List[str] = []
-        for item in get_export_items(config, only_enabled=True):
+        for item in get_export_items(config, only_enabled=not include_disabled):
             if item.send_enabled and item.group and item.group not in names:
                 names.append(item.group)
         return names
     except Exception:
         return []
+
+
+def has_ungrouped_images(include_disabled: bool = False) -> bool:
+    """มีรูปที่ยังไม่ได้ตั้งกลุ่มอยู่ไหม คือมีการ์ดยอด KPI ใบปกติหรือเปล่า"""
+    if not get_export_items:
+        return False
+    try:
+        config = load_config()
+        return any(x.send_enabled and not x.group
+                   for x in get_export_items(config, only_enabled=not include_disabled))
+    except Exception:
+        return False
 
 
 def get_group_file_names(group: str) -> List[str]:

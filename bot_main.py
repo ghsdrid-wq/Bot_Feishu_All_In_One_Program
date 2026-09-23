@@ -248,9 +248,6 @@ PIPELINE_STEPS = [
 # ขั้นตอนที่ต้องมีไฟล์ดิบพร้อมก่อน (ใช้ตัดสินว่าต้องเช็ค config DWS/JMS ไหม)
 RAW_STEP_KEYS = ("dws_mirror", "dws", "jms_auto", "jms_pda", "realtime")
 
-# ขั้นตอนที่ป้อนตัวเลขให้ยอด KPI ไม่รวม realtime เพราะพัสดุเกินเวลาเป็นงานของ
-# QC คนละชุดกับยอดปล่อยพัสดุ รอบที่ดึงแต่ realtime จึงไม่ควรมียอด KPI ติดไป
-KPI_STEP_KEYS = ("dws_mirror", "dws", "jms_auto", "jms_pda")
 
 # สั่ง JMS สร้างไฟล์ล่วงหน้ากี่นาทีก่อนถึงรอบรัน
 # เซิร์ฟเวอร์ใช้เวลา 3-5 นาที ตั้ง 6 นาทีจึงพอให้เสร็จก่อนถึงคิวใช้งาน
@@ -4937,20 +4934,22 @@ class App(ctk.CTk):
             session.close()
         
 
-    def get_feishu_group_names(self) -> List[str]:
+    def get_feishu_group_names(self, include_disabled: bool = False) -> List[str]:
         """ชื่อกลุ่มทั้งหมดที่ต้องส่งเป็นก้อนของตัวเอง เรียงตามลำดับที่ตั้งไว้
 
         รวมกลุ่มจากรูป (EXPORT) กับกลุ่มจากสมุดงาน (WORKBOOK) เข้าด้วยกัน
         กลุ่มที่มีแต่ไฟล์ Excel ไม่มีรูป ก็ยังต้องได้ส่ง
+
+        include_disabled=True นับของที่ปิด Use ไว้ด้วย ใช้ตอนหาลำดับที่ตั้งไว้
         """
-        names: List[str] = list(Botmessage.get_export_group_names())
+        names: List[str] = list(Botmessage.get_export_group_names(include_disabled))
         keys = [x.strip() for x in self.config["WORKBOOKS"].get("items", "").split(",") if x.strip()]
         for key in keys:
             section = f"WORKBOOK:{key}"
             if section not in self.config:
                 continue
             sec = self.config[section]
-            if not as_bool(sec.get("enabled", "true"), True):
+            if not include_disabled and not as_bool(sec.get("enabled", "true"), True):
                 continue
             if not as_bool(sec.get("send_excel", "false"), False):
                 continue
@@ -4958,6 +4957,19 @@ class App(ctk.CTk):
             if group and group not in names:
                 names.append(group)
         return names
+
+    def get_summary_owner_block(self) -> Optional[str]:
+        """ก้อนที่เป็นเจ้าของยอดสรุปกับกราฟ ตามลำดับที่ตั้งไว้ใน config
+
+        ยึดลำดับจาก config ทั้งหมด ไม่ใช่จากก้อนที่เหลือในรอบนั้น ไม่งั้นพอปิด
+        ไฟล์ยอด KPI ไว้ ก้อนของงานอื่นที่เลื่อนขึ้นมาเป็นก้อนแรกจะรับยอด KPI
+        ไปด้วย ทั้งที่เป็นคนละงานกัน ถ้าก้อนนั้นไม่ได้อยู่ในรอบนี้ ก็ไม่มีใคร
+        ได้ยอดสรุป ซึ่งถูกแล้วเพราะรอบนั้นไม่ได้ทำยอด KPI
+        """
+        if Botmessage.has_ungrouped_images(include_disabled=True):
+            return ""
+        ordered = self.get_feishu_group_names(include_disabled=True)
+        return ordered[0] if ordered else None
 
     def get_selected_excel_files_for_feishu(self, group: str = "",
                                             include_generated: Optional[bool] = None):
@@ -5295,22 +5307,24 @@ class App(ctk.CTk):
                             "ไม่มีอะไรให้ส่ง — รูปตารางมาจากขั้นตอน Excel Image "
                             "ถ้าไม่ติ๊กไว้จะไม่มีรูปใหม่ให้ส่ง",
                             level="WARN")
-                    summary_owner = blocks[0] if blocks else None
-                    # ก้อนแรกรับยอดสรุปได้ก็ต่อเมื่อรอบนี้ดึงยอด KPI มาจริง ๆ
-                    # ไม่งั้นรอบที่ดึงแต่ Realtime DB การ์ดของ QC จะมียอดปล่อย
-                    # พัสดุติดไปด้วย ทั้งที่เป็นคนละงานกัน
-                    kpi_ran = any(wanted(key) for key in KPI_STEP_KEYS)
+                    # ก้อนแรกที่ได้ส่งจริงเป็นตัวรับไฟล์ดิบกับการ์ด Dashboard
+                    # ส่วนยอดสรุปกับกราฟไปตามลำดับที่ตั้งไว้ใน config ซึ่งอาจไม่
+                    # ได้อยู่ในรอบนี้ก็ได้ ถ้าไม่อยู่ก็ไม่ต้องมีใครรับไป
+                    primary_block = blocks[0] if blocks else None
+                    summary_owner = self.get_summary_owner_block()
+                    if summary_owner not in blocks:
+                        summary_owner = None
                     dashboard_sent = False
 
                     for block in blocks:
                         if not still_running():
                             break
-                        owns_summary = block == summary_owner
+                        is_primary = block == primary_block
                         if block:
                             Botmessage.run_send_group(
                                 out, block, log=self.write_log,
                                 is_running=still_running,
-                                with_summary=owns_summary and kpi_ran)
+                                with_summary=block == summary_owner)
                         else:
                             run_send(out, log=self.write_log, is_running=still_running)
                         if still_running():
@@ -5318,8 +5332,8 @@ class App(ctk.CTk):
                             # ที่ถือยอดสรุป ไม่ใช่ตกค้างอยู่ก้อนชื่อว่างที่อาจไม่มี
                             self.send_selected_excel_files_to_feishu(
                                 is_running=still_running, group=block,
-                                include_generated=owns_summary)
-                        if owns_summary and wanted("dashboard") and still_running():
+                                include_generated=is_primary)
+                        if is_primary and wanted("dashboard") and still_running():
                             self.send_dashboard_to_feishu()
                             dashboard_sent = True
 
