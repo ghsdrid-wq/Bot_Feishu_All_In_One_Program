@@ -412,6 +412,19 @@ def get_workbooks(config: Optional[configparser.ConfigParser] = None, only_enabl
 LEGACY_SEPARATE_GROUP = "พัสดุเกินเวลา 48 ชั่วโมง"
 
 
+def export_filename(value: str) -> str:
+    """ชื่อไฟล์รูปที่ผู้ใช้กรอก เติมนามสกุลให้ถ้าลืมใส่
+
+    ตอนบันทึกรูป โค้ดเติม .png ให้อยู่แล้ว แต่ตอนหาไฟล์เพื่อส่งเข้า Feishu
+    ใช้ชื่อดิบจาก config ทำให้หาไม่เจอแล้วรูปหายไปเงียบ ๆ ทำให้ตรงกันที่นี่
+    ที่เดียว ทุกฝั่งจะได้เห็นชื่อเดียวกัน
+    """
+    name = (value or "").strip()
+    if not name:
+        return name
+    return name if os.path.splitext(name)[1] else f"{name}.png"
+
+
 def export_group_of(sec) -> str:
     """ชื่อกลุ่มของไฟล์ Excel หนึ่งไฟล์ รองรับค่า separate แบบเก่าที่ยังค้างอยู่"""
     group = str(sec.get("group", "") or "").strip()
@@ -448,7 +461,7 @@ def get_export_items(config: Optional[configparser.ConfigParser] = None, only_en
             workbook=sec.get("workbook", "").strip(),
             sheet=sec.get("sheet", "").strip(),
             cell_range=sec.get("range", "").strip(),
-            filename=sec.get("file", "").strip(),
+            filename=export_filename(sec.get("file", "")),
             delete_by_start=as_bool(sec.get("delete_by_start", "false")),
             enabled=as_bool(sec.get("enabled", "true"), True),
             send_enabled=as_bool(sec.get("send_enabled", "true"), True),

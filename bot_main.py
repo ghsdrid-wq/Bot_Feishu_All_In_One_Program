@@ -5283,6 +5283,14 @@ class App(ctk.CTk):
                     blocks = ([""] + self.get_feishu_group_names()) if wanted("excel") else []
                     blocks = [b for b in blocks
                               if b or Botmessage.get_send_file_names()]
+
+                    # เงียบหายไปเฉย ๆ ตอนไม่มีอะไรให้ส่งทำให้หาสาเหตุยาก
+                    # ต้องบอกว่าทำไม ไม่ใช่ขึ้นแค่ว่าเริ่มส่งแล้วจบ
+                    if not blocks and not wanted("dashboard"):
+                        self.write_log(
+                            "ไม่มีอะไรให้ส่ง — รูปตารางมาจากขั้นตอน Excel Image "
+                            "ถ้าไม่ติ๊กไว้จะไม่มีรูปใหม่ให้ส่ง",
+                            level="WARN")
                     summary_owner = blocks[0] if blocks else None
                     dashboard_sent = False
 
