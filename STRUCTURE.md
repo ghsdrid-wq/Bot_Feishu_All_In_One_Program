@@ -19,20 +19,17 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - ตอนเปิด: โหลด/สร้าง `config.ini` (`ensure_config`), start `controller_api` (Flask) พอร์ต **6100** เป็น daemon thread
 - กด **START BOT** ในหน้า JMS User / DWS → start Feishu webhook server (waitress) บนพอร์ตจาก `BOT_PORT` (default 7000) ผ่าน `run_feishu_server` → `serve(bot_app, ...)`
 - ต้องมี reverse proxy/ngrok ชี้เข้ามาที่ webhook `/feishu_event`
-- `main.py` เป็น entry point **รุ่นเก่า** (Tkinter ธรรมดา, 3 แท็บ) — ยังอยู่ในrepo แต่ตัวหลักคือ `bot_main.py`
 
 ## โครงสร้างไฟล์
 | ไฟล์ | หน้าที่ |
 |------|---------|
-| `bot_main.py` | **หัวใจหลัก (~4600 บรรทัด)** — Flask `bot_app` (webhook) + คลาส `App(ctk.CTk)` รวมทุกหน้า/ทุกระบบ + Data Export (DWS DB + JMS API) + scheduler |
+| `bot_main.py` | **หัวใจหลัก (~6000 บรรทัด)** — Flask `bot_app` (webhook) + คลาส `App(ctk.CTk)` รวมทุกหน้า/ทุกระบบ + Data Export (DWS DB + JMS API) + scheduler |
 | `Createphoto.py` | เปิด Excel ผ่าน win32com, จัดวันที่/คอลัมน์ตามเวลา, แคปภาพชีต → `run_create(...)` (เรียกจาก `App.run_process`) |
 | `Botmessage.py` | อัปโหลดรูปเข้า Feishu แล้วส่งเข้า chat → `run_send(folder, ...)` (เรียกจาก `App.run_process`) |
 | `controller/controller_api.py` | Flask API พอร์ต **6100** (`/status`, `/switch_plan`, `/refresh`) ให้ระบบอื่นสั่ง controller |
 | `core/jms_api.py` | เรียก JMS J&T: `search_user`, `reset_app_password`, `reset_jms_password`, `enable_user` (BASE_URL `jmsgw.jtexpress.co.th`) |
-| `core/feishu_api.py` | Feishu token + `send_message` (ทางเลือก; bot_main.py มี `reply_feishu_message`/`get_tenant_access_token` ของตัวเอง) |
 | `core/config.py` | โหลด/เซฟ config (`get_config`, `save_config`) รองรับ frozen exe |
 | `core/logger.py` | `write_log(...)` เขียน log รายวันที่โฟลเดอร์ `logs/` |
-| `main.py` | **entry point รุ่นเก่า** — `ControllerGUI` (Tkinter) DWS Plan + JMS User เท่านั้น ไม่มี Data Export/Workbook |
 
 ## ฟังก์ชัน/ส่วนสำคัญใน bot_main.py
 ### Feishu webhook (module-level, บน `bot_app`)

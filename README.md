@@ -68,8 +68,7 @@ python bot_main.py
 | `Botmessage.py` | อัปโหลด + ส่งรูปเข้า Feishu (`run_send`) |
 | `controller/controller_api.py` | Flask API พอร์ต 6100 (`/status`, `/switch_plan`, `/refresh`) |
 | `core/jms_api.py` | เรียก JMS J&T (search / reset / enable user) |
-| `core/feishu_api.py`, `core/config.py`, `core/logger.py` | Feishu token, config, log |
-| `main.py` | entry point รุ่นเก่า (Tkinter, DWS Plan + JMS User เท่านั้น) |
+| `core/config.py`, `core/logger.py` | config, log |
 
 ## Dependencies / บริการภายนอก
 - Python: `customtkinter`, `tkcalendar`, `requests`, `flask`, `waitress`, `pywin32`, `Pillow`, `pymysql`, `openpyxl`, `pyinstaller`

@@ -75,6 +75,13 @@ $Args = @(
     # playwright มี node driver ติดมาด้วย ต้อง collect-all ไม่ใช่แค่ submodules
     "--collect-all", "playwright",
 
+    # ---- ตัดของที่ไม่มีโค้ดเราเรียก ----
+    # scipy ~69MB ติดมาเพราะ pandas มี optional import (sparse.scipy_sparse)
+    # ไม่มีบรรทัดไหนในโปรเจกต์เรียกใช้ ตัดออกได้
+    "--exclude-module", "scipy",
+    "--exclude-module", "tkinter.test",
+    "--exclude-module", "test",
+
     "bot_main.py"
 )
 
@@ -100,10 +107,24 @@ foreach ($Name in @("config.ini", "metrics_config.yaml")) {
 # ---- browser ของ Playwright ----
 # เครื่องปลายทางไม่ได้ลง playwright ไว้ ถ้าไม่ก๊อปไปด้วยจะแคปรูป dashboard ไม่ได้
 # render.py จะเห็นโฟลเดอร์นี้แล้วชี้ PLAYWRIGHT_BROWSERS_PATH มาที่นี่เอง
+# render.py เรียก pw.chromium.launch() แบบ headless ซึ่ง playwright จะไปเปิด
+# chrome-headless-shell ไม่ใช่ chromium ตัวเต็ม จึงก๊อปเฉพาะตัวนั้นกับ winldd
+# (ตัวตรวจ DLL ที่ต้องใช้บน Windows) ส่วน chromium ตัวเต็ม (~394MB) กับ ffmpeg
+# (อัดวิดีโอ) ไม่มีใครเรียก
+#
+# ถ้าวันไหนเปลี่ยนไปเรียก launch(headless=False) ต้องกลับมาก๊อป chromium-* ด้วย
 $BrowserSrc = Join-Path $env:LOCALAPPDATA "ms-playwright"
 if (Test-Path $BrowserSrc) {
-    Write-Host "Copying Playwright browsers (ใช้เวลาสักครู่)..."
-    Copy-Item -LiteralPath $BrowserSrc -Destination (Join-Path $DistDir "ms-playwright") -Recurse -Force
+    Write-Host "Copying Playwright chromium (ใช้เวลาสักครู่)..."
+    $BrowserDst = Join-Path $DistDir "ms-playwright"
+    New-Item -ItemType Directory -Force -Path $BrowserDst | Out-Null
+    $Wanted = Get-ChildItem -LiteralPath $BrowserSrc -Directory |
+        Where-Object { $_.Name -like "chromium_headless_shell-*" -or $_.Name -like "winldd-*" }
+    if (-not $Wanted) { throw "ไม่พบโฟลเดอร์ chromium_headless_shell-* ใน $BrowserSrc" }
+    foreach ($Dir in $Wanted) {
+        Copy-Item -LiteralPath $Dir.FullName -Destination $BrowserDst -Recurse -Force
+    }
+    Write-Host "  copied: $($Wanted.Name -join ', ')"
 } else {
     Write-Warning "ไม่พบ $BrowserSrc - เครื่องปลายทางจะแคปรูป dashboard ไม่ได้"
     Write-Warning "แก้โดยรัน: python -m playwright install chromium แล้ว build ใหม่"

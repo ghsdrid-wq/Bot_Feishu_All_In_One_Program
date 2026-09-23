@@ -8,11 +8,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import requests
 
 try:
-    from Createphoto import get_export_items, migrate_old_export_config, save_config
+    from Createphoto import get_export_items, migrate_old_export_config
 except Exception:
     get_export_items = None
     migrate_old_export_config = None
-    save_config = None
 
 try:
     import card_report
@@ -186,11 +185,16 @@ def image_captions() -> Dict[str, str]:
     return captions
 
 def get_send_file_names() -> List[str]:
+    """ไฟล์รูปของชุดที่ยังไม่ได้ตั้งกลุ่ม
+
+    อ่านอย่างเดียว ไม่เขียน config กลับ การย้ายคีย์รุ่นเก่าทำในหน่วยความจำพอ
+    เพราะตัวที่เขียนลงไฟล์จริงคือตอนเปิดโปรแกรม (bot_main เรียก migrate แล้ว
+    save_config ต่อ) ถ้าเขียนตรงนี้ด้วย ค่าที่ยังไม่ได้ตั้งใจบันทึกจะถูกยัดลง
+    config.ini ระหว่างรอบส่ง ซึ่งเคยทำให้ค่าที่ตั้งไว้เปลี่ยนเองโดยไม่มีใครสั่ง
+    """
     config = load_config()
     if migrate_old_export_config:
         migrate_old_export_config(config)
-        if save_config:
-            save_config(config)
     if get_export_items:
         return [x.filename for x in get_export_items(config, only_enabled=True)
                 if x.send_enabled and not x.group]
