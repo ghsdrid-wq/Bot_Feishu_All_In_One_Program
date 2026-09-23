@@ -4957,6 +4957,24 @@ class App(ctk.CTk):
             ("send_dwspda_file_var", "send_dwspda_file", "name_dwspda", "DWSPDA.xlsx"),
             ("send_realtime_file_var", "send_realtime_file", "name_realtime_db", "RealtimeDB.xlsx"),
         ]
+        # ไฟล์เดียวกันอาจถูกตั้งไว้ทั้งสองทาง คือเป็นไฟล์ดิบที่โปรแกรมสร้าง
+        # และเป็นสมุดงานที่ติ๊ก Send Excel ไว้ด้วย ก่อนแยกก้อนมันอยู่ชุดเดียวกัน
+        # จึงถูกกรองซ้ำทิ้งไปเอง แต่พอคนละก้อนแล้วจะหลุดไปเป็นสองข้อความ
+        # ให้ฝั่งสมุดงานเป็นเจ้าของ เพราะเป็นฝั่งที่ผู้ใช้ระบุกลุ่มไว้
+        claimed = set()
+        for key in [x.strip() for x in self.config["WORKBOOKS"].get("items", "").split(",") if x.strip()]:
+            section = f"WORKBOOK:{key}"
+            if section not in self.config:
+                continue
+            wb = self.config[section]
+            if not as_bool(wb.get("enabled", "true"), True):
+                continue
+            if not as_bool(wb.get("send_excel", "false"), False):
+                continue
+            wb_path = clean_input_value(wb.get("path", ""))
+            if wb_path:
+                claimed.add(os.path.normcase(os.path.abspath(wb_path)))
+
         for var_attr, flag_key, name_key, default_name in (
                 generated if include_generated else []):
             if flag_key in active_send:
@@ -4972,6 +4990,8 @@ class App(ctk.CTk):
                 continue
             path = os.path.join(raw_dir, filename)
             norm = os.path.normcase(os.path.abspath(path))
+            if norm in claimed:
+                continue
             if os.path.exists(path):
                 paths.append(path)
                 seen.add(norm)
