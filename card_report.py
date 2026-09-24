@@ -96,27 +96,52 @@ def refresh_autopacking(log: Optional[Any] = None) -> None:
         write("Re-read AutoPacking skipped: {}".format(exc))
 
 
-def _only_autopacking(business_date: str) -> bool:
-    """รอบนี้มีแต่ข้อมูล AutoPacking ยังไม่มีแหล่งอื่นเลยใช่ไหม
+# รอบงาน+ชั่วโมงที่เพิ่งสั่งเก็บข้อมูลไป กันสั่งซ้ำหลายรอบในชั่วโมงเดียวกัน
+# ตอนที่แหล่งข้อมูลยังไม่มียอดของชั่วโมงนั้นจริง ๆ (เช่นสายพานยังไม่เดิน)
+_last_ingest_slot: Optional[Tuple[str, int]] = None
 
-    AutoPacking ถูกอ่านซ้ำทุกครั้งก่อนสร้างการ์ด (refresh_autopacking) ถ้าดู
-    แค่ว่า "มีข้อมูลไหม" จะเจอของ AutoPacking เสมอ แล้วเข้าใจผิดว่าเก็บข้อมูล
-    ครบแล้ว ทั้งที่ DWS/PDA/JMS ยังไม่ได้ถูกดึงเลย
+
+def _business_hour_position(hour: int, start_hour: int) -> int:
+    """ลำดับของชั่วโมงในรอบงาน — รอบเริ่ม 14:00 ดังนั้น 14 คือ 0 และ 2 คือ 12
+
+    เทียบชั่วโมงดิบตรง ๆ ไม่ได้ เพราะรอบงานข้ามเที่ยงคืน ตี 2 มาทีหลังสองทุ่ม
+    แต่เลข 2 น้อยกว่า 20
+    """
+    return (hour - start_hour) % 24
+
+
+def _stale_sources(business_date: str) -> bool:
+    """ข้อมูลที่ไม่ใช่ AutoPacking ตามหลังชั่วโมงปัจจุบันแล้วหรือยัง
+
+    AutoPacking ถูกอ่านซ้ำทุกครั้งก่อนสร้างการ์ด (refresh_autopacking) แหล่ง
+    อื่นไม่ใช่ ถ้าเช็กแค่ว่า "มีแถวของแหล่งอื่นไหม" พอชั่วโมงแรกเก็บข้อมูลไป
+    แล้ว เงื่อนไขจะเป็นจริงตลอดทั้งวัน แล้วไม่เก็บข้อมูลอีกเลย การ์ดจึงค้าง
+    ยอด DWS/PDA/กระสอบ ไว้ที่ชั่วโมงแรก ส่วน AutoPacking เดินต่อไปเรื่อย ๆ
+
+    จึงต้องดูว่าข้อมูลไปถึงชั่วโมงที่กำลังรายงานหรือยัง ไม่ใช่แค่มีอยู่ไหม
     """
     try:
         import sqlite3
         from metrics import core
 
+        start_hour = int(core.load_config()["business_day"]["start_hour"])
         conn = sqlite3.connect(core.DEFAULT_DB_PATH)
         try:
-            row = conn.execute(
-                "SELECT 1 FROM fact_hourly "
-                "WHERE business_date = ? AND source <> 'AUTOPACK' LIMIT 1",
-                (business_date,)).fetchone()
+            hours = [row[0] for row in conn.execute(
+                "SELECT DISTINCT hour_start FROM fact_hourly "
+                "WHERE business_date = ? AND source <> 'AUTOPACK'",
+                (business_date,)) if row[0] is not None]
         finally:
             conn.close()
-        return row is None
+
+        if not hours:
+            return True
+
+        newest = max(_business_hour_position(int(h), start_hour) for h in hours)
+        current = _business_hour_position(datetime.now().hour, start_hour)
+        return newest < current
     except Exception:
+        # เช็กไม่ได้ก็ถือว่าไม่ต้องเก็บใหม่ ดีกว่าไปไล่ ingest ทุกรอบ
         return False
 
 
@@ -144,11 +169,19 @@ def ensure_summary(business_date: Optional[str] = None,
     # อ่านไฟล์ AutoPacking ซ้ำก่อนเสมอ ถูกมากและปิดช่องว่างชั่วโมงล่าสุด
     refresh_autopacking(write)
     summary = load_summary(business_date)
-    # มีข้อมูลแล้วก็ยังต้องเช็กว่าครบทุกแหล่งไหม — ไม่ใช่แค่ AutoPacking
-    # ที่เพิ่งอ่านซ้ำเข้าไปเอง ไม่งั้นรอบที่ไม่ได้ติ๊กขั้นตอน Dashboard
-    # จะได้การ์ดที่ DWS/PDA/กระสอบ เป็นศูนย์หมด
-    if summary is not None and not (business_date and _only_autopacking(business_date)):
+    # มีข้อมูลแล้วก็ยังต้องเช็กว่าตามทันชั่วโมงปัจจุบันไหม — ไม่ใช่แค่ว่ามี
+    # ข้อมูลอยู่ ไม่งั้นรอบที่ไม่ได้ติ๊กขั้นตอน Dashboard จะค้างยอด DWS/PDA/
+    # กระสอบ ไว้ที่ชั่วโมงแรกของวัน แล้วเดินต่อเฉพาะ AutoPacking
+    global _last_ingest_slot
+    if summary is not None and not (business_date and _stale_sources(business_date)):
         return summary
+
+    # สั่งเก็บข้อมูลได้ไม่เกินชั่วโมงละครั้ง ถ้าแหล่งข้อมูลยังไม่มียอดของ
+    # ชั่วโมงนี้จริง ๆ จะได้ไม่ไล่ ingest ซ้ำทุกรอบที่การ์ดถูกสร้าง
+    slot = (business_date or "", datetime.now().hour)
+    if summary is not None and _last_ingest_slot == slot:
+        return summary
+    _last_ingest_slot = slot
 
     try:
         from dashboard import pipeline as dash_pipeline
