@@ -17,3 +17,9 @@
 - Keep green, yellow, and red status cells because they carry operational meaning.
 - Use dark-theme adaptations of the palette instead of copying light backgrounds directly.
 - Use layered charcoal grays instead of near-black dark surfaces to keep dense tables readable.
+
+## 2026-09-26 - Feishu chart labels
+
+- Place values inside stacked-bar segments instead of above every segment.
+- Use 10 px bold labels with a dark-gray base, a thin white outline, and VChart smart inversion for dark fills.
+- Hide static labels below 6% of the peak hourly stack because those segments are too short; retain exact values in the chart tooltip.

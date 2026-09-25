@@ -236,12 +236,71 @@ CHART_HEIGHT = "280px"
 # สีดำเทา #2F2F2F สงวนไว้สำหรับข้อความ จึงไม่ใช้เป็นสีข้อมูลในกราฟ
 CHART_COLORS = ["#C62828", "#F4B6C2", "#D9D9D9", "#F57573"]
 
+# Feishu renders the chart in a narrow card. Labels need enough vertical room
+# to stay inside each stack segment; smaller segments remain available through
+# the chart tooltip instead of producing overlapping text.
+CHART_LABEL_MIN_SHARE = 0.06
+CHART_LABEL_COLOR = "#4A4A4A"
+CHART_LABEL_FONT_SIZE = 10
+
 
 def _chart(spec: Dict[str, Any]) -> Dict[str, Any]:
     spec = dict(spec)
     spec.setdefault("color", CHART_COLORS)
     return {"tag": "chart", "height": CHART_HEIGHT,
             "chart_spec": spec, "preview": True, "margin": "4px 0"}
+
+
+def _chart_rows_with_labels(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Add compact labels only where a stacked segment has room to show them."""
+    totals: Dict[str, int] = {}
+    for row in rows:
+        hour = str(row.get("hour", ""))
+        totals[hour] = totals.get(hour, 0) + max(int(row.get("value") or 0), 0)
+
+    peak_total = max(totals.values(), default=0)
+    minimum = peak_total * CHART_LABEL_MIN_SHARE
+    labeled: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        value = max(int(item.get("value") or 0), 0)
+        item["label_value"] = _money(value) if value and value >= minimum else ""
+        labeled.append(item)
+    return labeled
+
+
+def _hourly_chart_spec(rows: Sequence[Dict[str, Any]], unit: str) -> Dict[str, Any]:
+    """Build the Feishu VChart spec with readable labels for a narrow card."""
+    axis_label = {"style": {"fontSize": 10, "fill": "#60656F"}}
+    return {
+        "type": "bar",
+        "title": {"text": "ยอดรายชั่วโมง ({})".format(unit)},
+        "data": {"values": _chart_rows_with_labels(rows)},
+        "xField": "hour",
+        "yField": "value",
+        "seriesField": "type",
+        "stack": True,
+        "label": {
+            "visible": True,
+            "position": "inside",
+            "offset": 0,
+            "smartInvert": True,
+            "formatter": "{label_value}",
+            "style": {
+                "fill": CHART_LABEL_COLOR,
+                "stroke": "#FFFFFF",
+                "lineWidth": 2,
+                "fontSize": CHART_LABEL_FONT_SIZE,
+                "fontWeight": "bold",
+            },
+            "overlap": {"hideOnHit": True},
+        },
+        "legends": {"visible": True, "orient": "bottom"},
+        "axes": [
+            {"orient": "bottom", "label": {"autoRotate": True, **axis_label}},
+            {"orient": "left", "label": axis_label},
+        ],
+    }
 
 
 def _summary_elements(summary: Dict[str, Any], link: str = "") -> List[Dict[str, Any]]:
@@ -273,23 +332,15 @@ def _summary_elements(summary: Dict[str, Any], link: str = "") -> List[Dict[str,
 
     rows = _chart_rows(hero, main)
     if rows:
-        axes = [{"orient": "bottom", "label": {"autoRotate": True}}, {"orient": "left"}]
-        legend = {"visible": True, "orient": "bottom"}
         unit = main.get("unit", "")
         out.append({"tag": "hr"})
         # กราฟเดียวพอ — แท่งซ้อนบอกทั้งยอดรวมของชั่วโมง (ความสูงแท่ง) และ
         # สัดส่วนของแต่ละชนิด (สี) ส่วนกราฟเส้นที่เคยมีคู่กันบอกซ้ำของเดิม
         # แต่กินพื้นที่แชทอีกเท่าตัว
         #
-        # ไม่โชว์ตัวเลขบนแท่ง เพราะแท่งซ้อนจะมีเลขเต็มไปหมดรวมทั้งเลข 0
-        # ของชนิดที่ไม่ได้เดิน — กราฟใน Feishu กดดูค่าได้อยู่แล้ว
-        out.append(_chart({
-            "type": "bar", "title": {"text": "ยอดรายชั่วโมง ({})".format(unit)},
-            "data": {"values": rows}, "xField": "hour", "yField": "value",
-            "seriesField": "type", "stack": True,
-            # โชว์ตัวเลขบนแท่ง อ่านยอดได้โดยไม่ต้องกด
-            "label": {"visible": True},
-            "legends": legend, "axes": axes}))
+        # Labels stay inside segments when there is room. Tiny segments keep
+        # their exact value in the tooltip so the static card remains legible.
+        out.append(_chart(_hourly_chart_spec(rows, unit)))
     return out
 
 
