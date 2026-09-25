@@ -21,5 +21,5 @@
 ## 2026-09-26 - Feishu chart labels
 
 - Place values inside stacked-bar segments instead of above every segment.
-- Use 10 px bold labels with a dark-gray base, a thin white outline, and VChart smart inversion for dark fills.
+- Use 10 px bold labels in darker red, pink, gray, and coral counterparts of each series, plus a thin white outline.
 - Hide static labels below 6% of the peak hourly stack because those segments are too short; retain exact values in the chart tooltip.

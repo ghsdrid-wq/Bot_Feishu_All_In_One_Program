@@ -38,9 +38,16 @@ class CardChartLabelTests(unittest.TestCase):
         label = spec["label"]
         self.assertEqual(label["position"], "inside")
         self.assertEqual(label["formatter"], "{label_value}")
-        self.assertTrue(label["smartInvert"])
+        self.assertFalse(label["smartInvert"])
         self.assertTrue(label["overlap"]["hideOnHit"])
-        self.assertEqual(label["style"]["fill"], "#4A4A4A")
+        self.assertEqual(
+            label["style"]["fill"],
+            {"scale": "labelColor", "field": "type"},
+        )
+        self.assertEqual(
+            spec["scales"][0]["range"],
+            ["#9E1B1B", "#B8325A", "#5F6368", "#C73E3A"],
+        )
         self.assertEqual(label["style"]["stroke"], "#FFFFFF")
         self.assertEqual(label["style"]["lineWidth"], 2)
         self.assertEqual(label["style"]["fontSize"], 10)

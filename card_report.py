@@ -240,7 +240,10 @@ CHART_COLORS = ["#C62828", "#F4B6C2", "#D9D9D9", "#F57573"]
 # to stay inside each stack segment; smaller segments remain available through
 # the chart tooltip instead of producing overlapping text.
 CHART_LABEL_MIN_SHARE = 0.06
-CHART_LABEL_COLOR = "#4A4A4A"
+# Darker counterparts of CHART_COLORS, in the same series order. These retain
+# the original color identity while remaining readable after Feishu scales the
+# card down.
+CHART_LABEL_COLORS = ["#9E1B1B", "#B8325A", "#5F6368", "#C73E3A"]
 CHART_LABEL_FONT_SIZE = 10
 
 
@@ -272,10 +275,17 @@ def _chart_rows_with_labels(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, An
 def _hourly_chart_spec(rows: Sequence[Dict[str, Any]], unit: str) -> Dict[str, Any]:
     """Build the Feishu VChart spec with readable labels for a narrow card."""
     axis_label = {"style": {"fontSize": 10, "fill": "#60656F"}}
+    series_names = list(dict.fromkeys(str(row.get("type", "")) for row in rows))
     return {
         "type": "bar",
         "title": {"text": "ยอดรายชั่วโมง ({})".format(unit)},
         "data": {"values": _chart_rows_with_labels(rows)},
+        "scales": [{
+            "id": "labelColor",
+            "type": "ordinal",
+            "domain": series_names,
+            "range": CHART_LABEL_COLORS,
+        }],
         "xField": "hour",
         "yField": "value",
         "seriesField": "type",
@@ -284,10 +294,10 @@ def _hourly_chart_spec(rows: Sequence[Dict[str, Any]], unit: str) -> Dict[str, A
             "visible": True,
             "position": "inside",
             "offset": 0,
-            "smartInvert": True,
+            "smartInvert": False,
             "formatter": "{label_value}",
             "style": {
-                "fill": CHART_LABEL_COLOR,
+                "fill": {"scale": "labelColor", "field": "type"},
                 "stroke": "#FFFFFF",
                 "lineWidth": 2,
                 "fontSize": CHART_LABEL_FONT_SIZE,
