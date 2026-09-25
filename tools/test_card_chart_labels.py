@@ -53,6 +53,15 @@ class CardChartLabelTests(unittest.TestCase):
         self.assertEqual(label["style"]["fontSize"], 10)
         self.assertEqual(label["style"]["fontWeight"], "bold")
 
+        hour_axis = spec["axes"][0]
+        self.assertEqual(hour_axis["orient"], "bottom")
+        self.assertTrue(hour_axis["sampling"])
+        self.assertTrue(hour_axis["label"]["autoRotate"])
+        self.assertEqual(hour_axis["label"]["autoRotateAngle"], [45, 60])
+        self.assertTrue(hour_axis["label"]["autoHide"])
+        self.assertEqual(hour_axis["label"]["autoHideMethod"], "parity")
+        self.assertEqual(hour_axis["label"]["minGap"], 6)
+
 
 if __name__ == "__main__":
     unittest.main()

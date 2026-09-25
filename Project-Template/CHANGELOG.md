@@ -11,3 +11,4 @@
 - Lightened the dark theme from near-black to layered charcoal gray and rechecked desktop and mobile tables.
 - Moved Feishu chart values inside readable stack segments, reduced them to 10 px, strengthened contrast, and suppressed labels that cannot fit without overlap.
 - Restored per-series label colors with darker matching shades instead of one shared gray label color.
+- Prevented Feishu mobile hour labels from collapsing into a continuous line while preserving the desktop stacked-chart layout.

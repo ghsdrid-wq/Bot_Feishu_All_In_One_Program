@@ -275,6 +275,14 @@ def _chart_rows_with_labels(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, An
 def _hourly_chart_spec(rows: Sequence[Dict[str, Any]], unit: str) -> Dict[str, Any]:
     """Build the Feishu VChart spec with readable labels for a narrow card."""
     axis_label = {"style": {"fontSize": 10, "fill": "#60656F"}}
+    hour_axis_label = {
+        "autoRotate": True,
+        "autoRotateAngle": [45, 60],
+        "autoHide": True,
+        "autoHideMethod": "parity",
+        "minGap": 6,
+        **axis_label,
+    }
     series_names = list(dict.fromkeys(str(row.get("type", "")) for row in rows))
     return {
         "type": "bar",
@@ -307,7 +315,7 @@ def _hourly_chart_spec(rows: Sequence[Dict[str, Any]], unit: str) -> Dict[str, A
         },
         "legends": {"visible": True, "orient": "bottom"},
         "axes": [
-            {"orient": "bottom", "label": {"autoRotate": True, **axis_label}},
+            {"orient": "bottom", "sampling": True, "label": hour_axis_label},
             {"orient": "left", "label": axis_label},
         ],
     }
