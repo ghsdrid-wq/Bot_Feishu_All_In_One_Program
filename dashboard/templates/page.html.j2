@@ -9,7 +9,7 @@
     color-scheme: light;
     --page:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink-2:#52514e;
     --muted:#898781; --grid:#e1e0d9; --rule:#c3c2b7; --border:rgba(11,11,11,0.10);
-    --series-1:#2a78d6; --series-2:#eb6834; --series-3:#16a34a; --series-4:#9333ea;
+    --series-1:#C62828; --series-2:#F4B6C2; --series-3:#D9D9D9; --series-4:#F57573;
     --good:#0ca30c; --warning:#fab219; --critical:#d03b3b;
     --q1:#cde2fb; --q2:#9ec5f4; --q3:#6da7ec; --q4:#3987e5; --q5:#256abf;
     --q1-ink:#0b0b0b; --q2-ink:#0b0b0b; --q3-ink:#0b0b0b; --q4-ink:#fff; --q5-ink:#fff;
@@ -17,43 +17,43 @@
     --ok-bg:#a9d08e;    --ok-ink:#1d3d10;
     --near-bg:#d9e8a8;  --near-ink:#3b4413;
     --under-bg:#ffe699; --under-ink:#5c4306;
-    --stripe:#ddebf7; --head-bg:#2f75b5; --sum-bg:#bdd7ee;
-    --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.78);
+    --stripe:#fbeff1; --head-bg:#C62828; --sum-bg:#F4B6C2; --sum-ink:#2F2F2F;
+    --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.82);
     --cell-mute:rgba(11,11,11,0.07);
-    --shift-head:#fec60a; --shift-head-ink:#3a2c00;
-    --shift-col:#ffffff;  --shift-col-ink:#13395e; --name-col:#ffffff;
+    --shift-head:#F57573; --shift-head-ink:#2F2F2F;
+    --shift-col:#f7f7f7;  --shift-col-ink:#2F2F2F; --name-col:#ffffff;
   }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --page:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink-2:#c3c2b7;
-    --muted:#898781; --grid:#2c2c2a; --rule:#383835; --border:rgba(255,255,255,0.10);
-    --series-1:#3987e5; --series-2:#d95926; --series-3:#22c55e; --series-4:#a855f7;
+    --page:#252525; --surface:#343433; --ink:#f5f5f5; --ink-2:#d9d9d9;
+    --muted:#b0aeaa; --grid:#4a4a48; --rule:#5a5955; --border:rgba(255,255,255,0.16);
+    --series-1:#C62828; --series-2:#F4B6C2; --series-3:#D9D9D9; --series-4:#F57573;
     --q1:#104281; --q2:#184f95; --q3:#1c5cab; --q4:#256abf; --q5:#3987e5;
-    --q1-ink:#fff; --q2-ink:#fff; --q3-ink:#fff; --down-bg:#4a1f1f; --accent:#3987e5;
-    --ok-bg:#274d17;    --ok-ink:#b9e59a;
-    --near-bg:#3b4413;  --near-ink:#d9e8a8;
-    --under-bg:#4a3d0d; --under-ink:#ffe699;
-    --stripe:#17293c; --head-bg:#1c5cab; --sum-bg:#1f3b56;
+    --q1-ink:#fff; --q2-ink:#fff; --q3-ink:#fff; --down-bg:#60373a; --accent:#3987e5;
+    --ok-bg:#3f5b36;    --ok-ink:#d3e9c6;
+    --near-bg:#545b34;  --near-ink:#eef2c7;
+    --under-bg:#63562f; --under-ink:#ffe7a0;
+    --stripe:#403638; --head-bg:#a52a2a; --sum-bg:#70454e; --sum-ink:#fff;
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
-    --cell-mute:rgba(255,255,255,0.09);
-    --shift-head:#c79a06; --shift-head-ink:#241b00;
-    --shift-col:#0e0e0e;  --shift-col-ink:#dfe9f5; --name-col:#0e0e0e;
+    --cell-mute:rgba(255,255,255,0.12);
+    --shift-head:#d66e6c; --shift-head-ink:#fff;
+    --shift-col:#4a4143;  --shift-col-ink:#f5e3e6; --name-col:#303030;
   } }
   :root[data-theme="dark"] {
     color-scheme: dark;
-    --page:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink-2:#c3c2b7;
-    --muted:#898781; --grid:#2c2c2a; --rule:#383835; --border:rgba(255,255,255,0.10);
-    --series-1:#3987e5; --series-2:#d95926; --series-3:#22c55e; --series-4:#a855f7;
+    --page:#252525; --surface:#343433; --ink:#f5f5f5; --ink-2:#d9d9d9;
+    --muted:#b0aeaa; --grid:#4a4a48; --rule:#5a5955; --border:rgba(255,255,255,0.16);
+    --series-1:#C62828; --series-2:#F4B6C2; --series-3:#D9D9D9; --series-4:#F57573;
     --q1:#104281; --q2:#184f95; --q3:#1c5cab; --q4:#256abf; --q5:#3987e5;
-    --q1-ink:#fff; --q2-ink:#fff; --q3-ink:#fff; --down-bg:#4a1f1f; --accent:#3987e5;
-    --ok-bg:#274d17;    --ok-ink:#b9e59a;
-    --near-bg:#3b4413;  --near-ink:#d9e8a8;
-    --under-bg:#4a3d0d; --under-ink:#ffe699;
-    --stripe:#17293c; --head-bg:#1c5cab; --sum-bg:#1f3b56;
+    --q1-ink:#fff; --q2-ink:#fff; --q3-ink:#fff; --down-bg:#60373a; --accent:#3987e5;
+    --ok-bg:#3f5b36;    --ok-ink:#d3e9c6;
+    --near-bg:#545b34;  --near-ink:#eef2c7;
+    --under-bg:#63562f; --under-ink:#ffe7a0;
+    --stripe:#403638; --head-bg:#a52a2a; --sum-bg:#70454e; --sum-ink:#fff;
     --head-ink:#fff; --head-ink-2:rgba(255,255,255,0.72);
-    --cell-mute:rgba(255,255,255,0.09);
-    --shift-head:#c79a06; --shift-head-ink:#241b00;
-    --shift-col:#0e0e0e;  --shift-col-ink:#dfe9f5; --name-col:#0e0e0e;
+    --cell-mute:rgba(255,255,255,0.12);
+    --shift-head:#d66e6c; --shift-head-ink:#fff;
+    --shift-col:#4a4143;  --shift-col-ink:#f5e3e6; --name-col:#303030;
   }
 
   * { box-sizing:border-box; }
@@ -257,7 +257,7 @@
   td.num.sub.soft { color:var(--shift-col-ink); opacity:.8; font-weight:500; }
   /* ช่องที่ไม่มีตัวเลข (แถวเฉลี่ยของกลุ่ม) ไม่ต้องลงสี ไม่งั้นเป็นบล็อกเทาเปล่า */
   td.num.sub:empty { background:transparent; }
-  tbody tr.sum th, tbody tr.sum td { border-top:1px solid var(--rule); font-weight:600; color:var(--ink); padding-top:5px; }
+  tbody tr.sum th, tbody tr.sum td { border-top:1px solid var(--rule); font-weight:600; color:var(--sum-ink); padding-top:5px; }
   tbody tr.sum.rate th, tbody tr.sum.rate td { border-top:0; font-weight:500; color:var(--muted); padding-top:0; }
   /* แถบสลับสีรายแถว — กวาดสายตาตามแนวนอนข้าม 24 คอลัมน์แล้วไม่หลุดแถว
      วางที่ <tr> ไม่ใช่ที่เซลล์ เพราะพื้นแถวถูกวาดใต้เซลล์ สีสถานะของเซลล์
@@ -268,9 +268,9 @@
   /* คอลัมน์ชื่อจุดไม่ย้อมตามแถบสลับสี ปล่อยขาวตลอดแนวเหมือนคอลัมน์สรุปกะ
      เป็นขอบซ้ายที่สายตาใช้เล็งก่อนกวาดเข้าไปในตาราง */
 
-  /* หัวตารางกับแถวรวมต้องแยกออกจากแถวข้อมูลให้ชัด ไม่ใช่แค่จางกว่า/เข้มกว่า
-     แถบสลับสีนิดหน่อย เพราะสองแถวนี้คือหมุดที่คนใช้เล็งก่อนหาแถวของตัวเอง
-     ใช้โทนอุ่นตัดกับแถบสลับสีที่เป็นโทนฟ้า ต่างกันทั้งความสว่างและสี */
+  /* โครงสร้างตารางใช้พาเลตเดียวกับกราฟ: แดงเป็นหัวหลัก คอรัลเป็นหัวกะ
+     ชมพูเป็นแถวรวม และชมพูอ่อนเป็นแถบช่วยกวาดสายตา ส่วนสีสถานะในเซลล์
+     ยังคงเขียว/เหลือง/แดงตามความหมายของผลงาน ไม่ใช้เป็นสีตกแต่ง */
   thead th { background:var(--head-bg); color:var(--head-ink); font-weight:600; }
   thead th.name-col {
     background:var(--head-bg); color:var(--head-ink);
@@ -295,7 +295,7 @@
      เพราะเป็นยอดรวมของทั้งกลุ่ม ไม่ใช่ยอดของจุดใดจุดหนึ่ง ตัวเลขเป็นสีแดง
      ให้เห็นทันทีว่าบรรทัดนี้คือยอดรวมที่ต้องอ่าน */
   tbody tr.sum td.num.sub,
-  tbody tr.sum td.num.sub.soft { background:var(--sum-bg); color:var(--critical); }
+  tbody tr.sum td.num.sub.soft { background:var(--sum-bg); color:var(--sum-ink); }
 
   tr.offline th, tr.offline td { opacity:.45; }
   .tag { font-weight:400; color:var(--muted); font-size:10.5px; }
