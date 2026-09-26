@@ -10,8 +10,10 @@
 - Light, dark, desktop, and mobile rendering checks passed with synthetic dashboard data.
 - Feishu value labels now use compact, bold, series-matched dark text inside segments with enough room.
 - Hour labels now rotate and thin out responsively instead of merging into one unreadable line on mobile.
-- Data labels now use small alternating vertical offsets by hour and series to separate adjacent red, pink, gray, and coral values.
+- The accepted stacked-bar baseline now uses 25% band spacing and alternates AutoPacking labels between two pronounced lanes.
+- The evaluated line-chart alternative is retained in `modules/feishu_line_chart_variant.py` but is not active in production.
+- Live synthetic round 17 was accepted by Feishu with all four series present at every hour and the approved color order in the payload; client visual review is still pending.
 
 ## Next Action
 
-- Send one live Feishu card and confirm label placement in the production client before the next release build.
+- Review live synthetic round 17 on desktop/mobile, then confirm the same baseline with production data before the next release build.

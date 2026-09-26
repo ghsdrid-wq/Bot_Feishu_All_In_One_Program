@@ -24,4 +24,6 @@
 - Use 10 px bold labels in darker red, pink, gray, and coral counterparts of each series, plus a thin white outline.
 - Hide static labels below 6% of the peak hourly stack because those segments are too short; retain exact values in the chart tooltip.
 - Preserve the existing stacked chart and tables; make only the time axis responsive with 45/60-degree rotation, parity hiding, and minimum spacing.
-- Stagger value labels vertically without changing the bars: alternate adjacent hours by 2 px, then offset stacked series by 4 px lanes.
+- Separate adjacent bars with 25% band padding and 8% outer padding.
+- Alternate AutoPacking values between 34 px and 0 px vertical lanes; retain the smaller series-specific offsets for upper stack segments.
+- Keep the tested line-chart implementation dormant in `modules/feishu_line_chart_variant.py` for possible later reuse.

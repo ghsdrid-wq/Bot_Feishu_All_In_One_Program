@@ -247,6 +247,10 @@ CHART_LABEL_COLORS = ["#9E1B1B", "#B8325A", "#5F6368", "#C73E3A"]
 CHART_LABEL_FONT_SIZE = 10
 CHART_LABEL_SERIES_DY = [4, 0, -4, -8]
 CHART_LABEL_HOUR_DY = [-2, 2]
+# AutoPacking occupies the tall base segment. Alternating its labels between
+# two pronounced lanes prevents neighboring full values from merging while
+# keeping every label inside its own bar.
+CHART_PRIMARY_LABEL_DY = [34, 0]
 
 
 def _chart(spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -277,9 +281,12 @@ def _chart_rows_with_labels(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, An
         item["label_value"] = _money(value) if value and value >= minimum else ""
         hour_idx = hour_order.get(str(item.get("hour", "")), 0)
         series_idx = series_order.get(str(item.get("type", "")), 0)
-        series_dy = CHART_LABEL_SERIES_DY[
-            min(series_idx, len(CHART_LABEL_SERIES_DY) - 1)]
-        item["label_dy"] = series_dy + CHART_LABEL_HOUR_DY[hour_idx % 2]
+        if series_idx == 0:
+            item["label_dy"] = CHART_PRIMARY_LABEL_DY[hour_idx % 2]
+        else:
+            series_dy = CHART_LABEL_SERIES_DY[
+                min(series_idx, len(CHART_LABEL_SERIES_DY) - 1)]
+            item["label_dy"] = series_dy + CHART_LABEL_HOUR_DY[hour_idx % 2]
         labeled.append(item)
     return labeled
 
@@ -308,8 +315,8 @@ def _hourly_chart_spec(rows: Sequence[Dict[str, Any]], unit: str) -> Dict[str, A
         }, {
             "id": "labelDy",
             "type": "linear",
-            "domain": [-12, 12],
-            "range": [-12, 12],
+            "domain": [-40, 40],
+            "range": [-40, 40],
         }],
         "xField": "hour",
         "yField": "value",
@@ -333,7 +340,13 @@ def _hourly_chart_spec(rows: Sequence[Dict[str, Any]], unit: str) -> Dict[str, A
         },
         "legends": {"visible": True, "orient": "bottom"},
         "axes": [
-            {"orient": "bottom", "sampling": True, "label": hour_axis_label},
+            {
+                "orient": "bottom",
+                "sampling": True,
+                "paddingInner": 0.25,
+                "paddingOuter": 0.08,
+                "label": hour_axis_label,
+            },
             {"orient": "left", "label": axis_label},
         ],
     }

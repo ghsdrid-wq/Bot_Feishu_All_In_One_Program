@@ -34,14 +34,19 @@ class CardChartLabelTests(unittest.TestCase):
         self.assertEqual(labels[("15:00", 4_623)], "4,623")
 
         offsets = {(row["hour"], row["type"]): row["label_dy"] for row in labeled}
-        self.assertEqual(offsets[("14:00", "AutoPacking")], 2)
-        self.assertEqual(offsets[("15:00", "AutoPacking")], 6)
+        self.assertEqual(offsets[("14:00", "AutoPacking")], 34)
+        self.assertEqual(offsets[("15:00", "AutoPacking")], 0)
         self.assertEqual(offsets[("14:00", "DWS 1-11")], -2)
         self.assertEqual(offsets[("15:00", "DWS 1-11")], 2)
         self.assertEqual(offsets[("14:00", "PDA")], -6)
 
     def test_spec_places_small_bold_labels_inside_segments(self) -> None:
         spec = card_report._hourly_chart_spec(self.rows, "ชิ้น")
+        chart = card_report._chart(spec)
+        self.assertEqual(
+            chart["chart_spec"]["color"],
+            ["#C62828", "#F4B6C2", "#D9D9D9", "#F57573"],
+        )
         label = spec["label"]
         self.assertEqual(label["position"], "inside")
         self.assertEqual(label["formatter"], "{label_value}")
@@ -59,8 +64,8 @@ class CardChartLabelTests(unittest.TestCase):
             spec["scales"][0]["range"],
             ["#9E1B1B", "#B8325A", "#5F6368", "#C73E3A"],
         )
-        self.assertEqual(spec["scales"][1]["domain"], [-12, 12])
-        self.assertEqual(spec["scales"][1]["range"], [-12, 12])
+        self.assertEqual(spec["scales"][1]["domain"], [-40, 40])
+        self.assertEqual(spec["scales"][1]["range"], [-40, 40])
         self.assertEqual(label["style"]["stroke"], "#FFFFFF")
         self.assertEqual(label["style"]["lineWidth"], 2)
         self.assertEqual(label["style"]["fontSize"], 10)
@@ -69,6 +74,8 @@ class CardChartLabelTests(unittest.TestCase):
         hour_axis = spec["axes"][0]
         self.assertEqual(hour_axis["orient"], "bottom")
         self.assertTrue(hour_axis["sampling"])
+        self.assertEqual(hour_axis["paddingInner"], 0.25)
+        self.assertEqual(hour_axis["paddingOuter"], 0.08)
         self.assertTrue(hour_axis["label"]["autoRotate"])
         self.assertEqual(hour_axis["label"]["autoRotateAngle"], [45, 60])
         self.assertTrue(hour_axis["label"]["autoHide"])
