@@ -8,12 +8,12 @@
 
 - Updated Feishu VChart plus web dashboard chart and table colors.
 - Light, dark, desktop, and mobile rendering checks passed with synthetic dashboard data.
-- Feishu value labels now use compact, bold, series-matched dark text inside segments with enough room.
+- Feishu value labels now use compact, bold, series-matched dark text above each non-zero stacked segment.
 - Hour labels now rotate and thin out responsively instead of merging into one unreadable line on mobile.
-- The accepted stacked-bar baseline keeps the original tightly adjacent bars and alternates AutoPacking labels between two pronounced lanes.
+- The accepted stacked-bar baseline keeps the original tightly adjacent bars and moves only the values above their own segment boundaries.
 - The evaluated line-chart alternative is retained in `modules/feishu_line_chart_variant.py` but is not active in production.
-- Live synthetic round 17 was accepted by Feishu with all four series present at every hour and the approved color order in the payload; round 18 restores the original tightly adjacent bars for client review.
+- Synthetic round 26 and refreshed live data were accepted by Feishu with the original stack and spacing preserved; only label placement changed.
 
 ## Next Action
 
-- Review live synthetic round 18 on desktop/mobile, then confirm the same baseline with production data before the next release build.
+- Build and deliver the onedir Windows release from the approved stacked-label baseline.

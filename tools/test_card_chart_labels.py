@@ -1,4 +1,4 @@
-"""Regression checks for compact labels in the Feishu stacked bar chart."""
+"""Regression checks for labels above the original Feishu stacked bars."""
 
 from __future__ import annotations
 
@@ -25,22 +25,16 @@ class CardChartLabelTests(unittest.TestCase):
             {"hour": "15:00", "type": "PDA", "value": 300},
         ]
 
-    def test_tiny_and_zero_segments_have_no_static_label(self) -> None:
+    def test_every_nonzero_segment_has_a_static_label(self) -> None:
         labeled = card_report._chart_rows_with_labels(self.rows)
         labels = {(row["hour"], row["value"]): row["label_value"] for row in labeled}
         self.assertEqual(labels[("14:00", 0)], "")
-        self.assertEqual(labels[("15:00", 300)], "")
+        self.assertEqual(labels[("15:00", 300)], "300")
         self.assertEqual(labels[("14:00", 28_840)], "28,840")
         self.assertEqual(labels[("15:00", 4_623)], "4,623")
+        self.assertTrue(all("label_dy" not in row for row in labeled))
 
-        offsets = {(row["hour"], row["type"]): row["label_dy"] for row in labeled}
-        self.assertEqual(offsets[("14:00", "AutoPacking")], 34)
-        self.assertEqual(offsets[("15:00", "AutoPacking")], 0)
-        self.assertEqual(offsets[("14:00", "DWS 1-11")], -2)
-        self.assertEqual(offsets[("15:00", "DWS 1-11")], 2)
-        self.assertEqual(offsets[("14:00", "PDA")], -6)
-
-    def test_spec_places_small_bold_labels_inside_segments(self) -> None:
+    def test_spec_places_small_bold_labels_above_stacked_segments(self) -> None:
         spec = card_report._hourly_chart_spec(self.rows, "ชิ้น")
         chart = card_report._chart(spec)
         self.assertEqual(
@@ -48,27 +42,25 @@ class CardChartLabelTests(unittest.TestCase):
             ["#C62828", "#F4B6C2", "#D9D9D9", "#F57573"],
         )
         label = spec["label"]
-        self.assertEqual(label["position"], "inside")
+        self.assertTrue(spec["stack"])
+        self.assertEqual(label["position"], "top")
+        self.assertEqual(label["offset"], 2)
         self.assertEqual(label["formatter"], "{label_value}")
         self.assertFalse(label["smartInvert"])
-        self.assertTrue(label["overlap"]["hideOnHit"])
+        self.assertFalse(label["overlap"]["hideOnHit"])
         self.assertEqual(
             label["style"]["fill"],
             {"scale": "labelColor", "field": "type"},
         )
-        self.assertEqual(
-            label["style"]["dy"],
-            {"scale": "labelDy", "field": "label_dy"},
-        )
+        self.assertNotIn("dy", label["style"])
         self.assertEqual(
             spec["scales"][0]["range"],
             ["#9E1B1B", "#B8325A", "#5F6368", "#C73E3A"],
         )
-        self.assertEqual(spec["scales"][1]["domain"], [-40, 40])
-        self.assertEqual(spec["scales"][1]["range"], [-40, 40])
+        self.assertEqual(len(spec["scales"]), 1)
         self.assertEqual(label["style"]["stroke"], "#FFFFFF")
         self.assertEqual(label["style"]["lineWidth"], 2)
-        self.assertEqual(label["style"]["fontSize"], 10)
+        self.assertEqual(label["style"]["fontSize"], 8)
         self.assertEqual(label["style"]["fontWeight"], "bold")
 
         hour_axis = spec["axes"][0]

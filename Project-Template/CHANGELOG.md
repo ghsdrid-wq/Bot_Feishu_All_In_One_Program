@@ -16,3 +16,5 @@
 - Preserved the evaluated full-label line-chart design as a dormant project module for future reuse.
 - Added a regression assertion for the approved four-series color order and sent a balanced all-series synthetic card for client review.
 - Removed the experimental band padding after confirming that the accepted reference keeps adjacent bars tightly packed.
+- Moved every non-zero Feishu chart value above its own stacked segment without changing the stack, series order, or original bar spacing.
+- Verified the approved placement with synthetic round 26 and refreshed production-source data for business date 2026-09-25.
