@@ -340,13 +340,7 @@ def _hourly_chart_spec(rows: Sequence[Dict[str, Any]], unit: str) -> Dict[str, A
         },
         "legends": {"visible": True, "orient": "bottom"},
         "axes": [
-            {
-                "orient": "bottom",
-                "sampling": True,
-                "paddingInner": 0.25,
-                "paddingOuter": 0.08,
-                "label": hour_axis_label,
-            },
+            {"orient": "bottom", "sampling": True, "label": hour_axis_label},
             {"orient": "left", "label": axis_label},
         ],
     }

@@ -74,8 +74,8 @@ class CardChartLabelTests(unittest.TestCase):
         hour_axis = spec["axes"][0]
         self.assertEqual(hour_axis["orient"], "bottom")
         self.assertTrue(hour_axis["sampling"])
-        self.assertEqual(hour_axis["paddingInner"], 0.25)
-        self.assertEqual(hour_axis["paddingOuter"], 0.08)
+        self.assertNotIn("paddingInner", hour_axis)
+        self.assertNotIn("paddingOuter", hour_axis)
         self.assertTrue(hour_axis["label"]["autoRotate"])
         self.assertEqual(hour_axis["label"]["autoRotateAngle"], [45, 60])
         self.assertTrue(hour_axis["label"]["autoHide"])
