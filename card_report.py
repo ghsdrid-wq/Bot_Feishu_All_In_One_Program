@@ -245,6 +245,8 @@ CHART_LABEL_MIN_SHARE = 0.06
 # card down.
 CHART_LABEL_COLORS = ["#9E1B1B", "#B8325A", "#5F6368", "#C73E3A"]
 CHART_LABEL_FONT_SIZE = 10
+CHART_LABEL_SERIES_DY = [4, 0, -4, -8]
+CHART_LABEL_HOUR_DY = [-2, 2]
 
 
 def _chart(spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -257,8 +259,13 @@ def _chart(spec: Dict[str, Any]) -> Dict[str, Any]:
 def _chart_rows_with_labels(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Add compact labels only where a stacked segment has room to show them."""
     totals: Dict[str, int] = {}
+    hour_order: Dict[str, int] = {}
+    series_order: Dict[str, int] = {}
     for row in rows:
         hour = str(row.get("hour", ""))
+        series = str(row.get("type", ""))
+        hour_order.setdefault(hour, len(hour_order))
+        series_order.setdefault(series, len(series_order))
         totals[hour] = totals.get(hour, 0) + max(int(row.get("value") or 0), 0)
 
     peak_total = max(totals.values(), default=0)
@@ -268,6 +275,11 @@ def _chart_rows_with_labels(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, An
         item = dict(row)
         value = max(int(item.get("value") or 0), 0)
         item["label_value"] = _money(value) if value and value >= minimum else ""
+        hour_idx = hour_order.get(str(item.get("hour", "")), 0)
+        series_idx = series_order.get(str(item.get("type", "")), 0)
+        series_dy = CHART_LABEL_SERIES_DY[
+            min(series_idx, len(CHART_LABEL_SERIES_DY) - 1)]
+        item["label_dy"] = series_dy + CHART_LABEL_HOUR_DY[hour_idx % 2]
         labeled.append(item)
     return labeled
 
@@ -293,6 +305,11 @@ def _hourly_chart_spec(rows: Sequence[Dict[str, Any]], unit: str) -> Dict[str, A
             "type": "ordinal",
             "domain": series_names,
             "range": CHART_LABEL_COLORS,
+        }, {
+            "id": "labelDy",
+            "type": "linear",
+            "domain": [-12, 12],
+            "range": [-12, 12],
         }],
         "xField": "hour",
         "yField": "value",
@@ -306,6 +323,7 @@ def _hourly_chart_spec(rows: Sequence[Dict[str, Any]], unit: str) -> Dict[str, A
             "formatter": "{label_value}",
             "style": {
                 "fill": {"scale": "labelColor", "field": "type"},
+                "dy": {"scale": "labelDy", "field": "label_dy"},
                 "stroke": "#FFFFFF",
                 "lineWidth": 2,
                 "fontSize": CHART_LABEL_FONT_SIZE,

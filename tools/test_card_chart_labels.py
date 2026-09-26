@@ -33,6 +33,13 @@ class CardChartLabelTests(unittest.TestCase):
         self.assertEqual(labels[("14:00", 28_840)], "28,840")
         self.assertEqual(labels[("15:00", 4_623)], "4,623")
 
+        offsets = {(row["hour"], row["type"]): row["label_dy"] for row in labeled}
+        self.assertEqual(offsets[("14:00", "AutoPacking")], 2)
+        self.assertEqual(offsets[("15:00", "AutoPacking")], 6)
+        self.assertEqual(offsets[("14:00", "DWS 1-11")], -2)
+        self.assertEqual(offsets[("15:00", "DWS 1-11")], 2)
+        self.assertEqual(offsets[("14:00", "PDA")], -6)
+
     def test_spec_places_small_bold_labels_inside_segments(self) -> None:
         spec = card_report._hourly_chart_spec(self.rows, "ชิ้น")
         label = spec["label"]
@@ -45,9 +52,15 @@ class CardChartLabelTests(unittest.TestCase):
             {"scale": "labelColor", "field": "type"},
         )
         self.assertEqual(
+            label["style"]["dy"],
+            {"scale": "labelDy", "field": "label_dy"},
+        )
+        self.assertEqual(
             spec["scales"][0]["range"],
             ["#9E1B1B", "#B8325A", "#5F6368", "#C73E3A"],
         )
+        self.assertEqual(spec["scales"][1]["domain"], [-12, 12])
+        self.assertEqual(spec["scales"][1]["range"], [-12, 12])
         self.assertEqual(label["style"]["stroke"], "#FFFFFF")
         self.assertEqual(label["style"]["lineWidth"], 2)
         self.assertEqual(label["style"]["fontSize"], 10)

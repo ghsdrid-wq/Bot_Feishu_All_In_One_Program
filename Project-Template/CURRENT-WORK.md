@@ -10,6 +10,7 @@
 - Light, dark, desktop, and mobile rendering checks passed with synthetic dashboard data.
 - Feishu value labels now use compact, bold, series-matched dark text inside segments with enough room.
 - Hour labels now rotate and thin out responsively instead of merging into one unreadable line on mobile.
+- Data labels now use small alternating vertical offsets by hour and series to separate adjacent red, pink, gray, and coral values.
 
 ## Next Action
 
