@@ -139,13 +139,14 @@ def ingest(conn, business_date: Optional[str] = None) -> dict:
     if unknown:
         warnings.append("DwsNo ที่ยังไม่ได้ map: " + ", ".join(sorted(unknown)))
 
-    # ล้าง error เดิมของเครื่องกลุ่มนี้ก่อนเขียนใหม่ — upsert อย่างเดียวไม่พอ
-    # เพราะถ้าเกณฑ์ error เปลี่ยน (เช่นเลิกนับรหัส 111) แถวเก่าจะค้างอยู่ตลอด
+    # A successful query is a complete snapshot for these stations/date.
+    # Replace both facts so corrected or removed upstream rows cannot linger.
     if business_date:
-        conn.executemany(
-            "DELETE FROM fact_error WHERE business_date = ? AND source = 'DWS' AND station = ?",
-            [(business_date, station) for station in name_map.values()],
-        )
+        for station in name_map.values():
+            core.replace_fact_partition(
+                conn, "fact_hourly", business_date, "DWS", station=station)
+            core.replace_fact_partition(
+                conn, "fact_error", business_date, "DWS", station=station)
 
     core.upsert_hourly(conn, rows)
     core.upsert_errors(conn, err_rows)

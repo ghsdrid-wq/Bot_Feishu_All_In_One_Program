@@ -87,7 +87,10 @@ def build_caption(business_date: str, db_path: str, cfg: dict) -> str:
     finally:
         conn.close()
 
-    lines = [f"สรุปยอดคลัง KKN — {business_date} (รอบ 12:00–12:00)"]
+    bd_cfg = core.load_config()["business_day"]
+    start = int(bd_cfg["start_hour"]) % 24
+    lines = [f"สรุปยอดคลัง KKN — {business_date} "
+             f"(รอบ {start:02d}:00–{start:02d}:00)"]
     for src in overview["sources"]:
         lines.append(f"  {src['title']}: {src['total']:,} {src['unit']}"
                      f"  (กะ A {src['shift_a']:,} · กะ B {src['shift_b']:,})")
@@ -100,7 +103,9 @@ def build_caption(business_date: str, db_path: str, cfg: dict) -> str:
 def send_dashboard(business_date: str, png_dir: str,
                    db_path: str = core.DEFAULT_DB_PATH,
                    log: Optional[LogFunc] = None,
-                   dry_run: bool = False) -> dict:
+                   dry_run: bool = False,
+                   expected_files: Optional[list[str]] = None,
+                   min_mtime: Optional[float] = None) -> dict:
     write = log or _log
     cfg = settings()
 
@@ -109,16 +114,26 @@ def send_dashboard(business_date: str, png_dir: str,
     if not cfg["chat_id"]:
         return {"error": "ไม่มี chat_id"}
 
-    app = feishu_api.get_feishu()
-    access_token = feishu_api.get_token(app["APP_ID"], app["APP_SECRET"])
-
+    produced = ({os.path.abspath(path) for path in expected_files}
+                if expected_files is not None else None)
     files = []
+    missing = []
     for tab in cfg["send_tabs"]:
-        path = os.path.join(png_dir, f"{business_date}_{tab}.png")
-        if os.path.isfile(path):
+        path = os.path.abspath(os.path.join(png_dir, f"{business_date}_{tab}.png"))
+        fresh = (min_mtime is None or
+                 (os.path.isfile(path) and os.path.getmtime(path) >= min_mtime))
+        if (os.path.isfile(path) and fresh and
+                (produced is None or path in produced)):
             files.append((tab, path))
         else:
-            write(f"ไม่พบรูปของแท็บ {tab}: {path}", level="WARN")
+            missing.append(path)
+            write(f"ไม่พบรูปใหม่ของแท็บ {tab}: {path}", level="WARN")
+    if missing:
+        return {"error": "รูป Dashboard รอบนี้ไม่ครบ จึงยกเลิกการส่ง",
+                "missing": missing}
+
+    app = feishu_api.get_feishu()
+    access_token = feishu_api.get_token(app["APP_ID"], app["APP_SECRET"])
 
     caption = build_caption(business_date, db_path, cfg)
     target = chat_name(access_token, cfg["chat_id"])

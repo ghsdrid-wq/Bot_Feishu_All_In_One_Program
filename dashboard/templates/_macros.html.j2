@@ -34,12 +34,12 @@
 
   <div class="kpi-side">
     <div class="kpi">
-      <div class="label">กะ A <span class="dim">12:00–01:00</span></div>
+      <div class="label">กะ A <span class="dim">{{ shift_a_span }}</span></div>
       <div class="value">{{ "{:,}".format(p.kpi.shift_a) }}</div>
       <div class="note">เฉลี่ย {{ "{:,.0f}".format(p.kpi.shift_a_avg) }} / จุด / ชม.</div>
     </div>
     <div class="kpi">
-      <div class="label">กะ B <span class="dim">01:00–12:00</span></div>
+      <div class="label">กะ B <span class="dim">{{ shift_b_span }}</span></div>
       <div class="value">{{ "{:,}".format(p.kpi.shift_b) }}</div>
       <div class="note">เฉลี่ย {{ "{:,.0f}".format(p.kpi.shift_b_avg) }} / จุด / ชม.</div>
     </div>
@@ -75,12 +75,12 @@
   <div class="kpi">
     <div class="label">กะ A</div>
     <div class="value">{{ "{:,}".format(p.kpi.shift_a) }}</div>
-    <div class="note">12:00 – 01:00</div>
+    <div class="note">{{ shift_a_span }}</div>
   </div>
   <div class="kpi">
     <div class="label">กะ B</div>
     <div class="value">{{ "{:,}".format(p.kpi.shift_b) }}</div>
-    <div class="note">01:00 – 12:00</div>
+    <div class="note">{{ shift_b_span }}</div>
   </div>
   {% if p.kpi.error_qty or p.key in ('AUTOPACK', 'DWS') %}
   <div class="kpi">
@@ -422,9 +422,9 @@
   <h2>สรุปรายกะ</h2>
   <div class="shifts-grid">
     {% for s in [
-      {'name':'กะ A','span':'12:00 – 01:00','qty':p.kpi.shift_a,'hours':p.kpi.shift_a_hours,
+      {'name':'กะ A','span':shift_a_span,'qty':p.kpi.shift_a,'hours':p.kpi.shift_a_hours,
        'avg':p.kpi.shift_a_avg,'best':p.kpi.best_a,'tone':'a'},
-      {'name':'กะ B','span':'01:00 – 12:00','qty':p.kpi.shift_b,'hours':p.kpi.shift_b_hours,
+      {'name':'กะ B','span':shift_b_span,'qty':p.kpi.shift_b,'hours':p.kpi.shift_b_hours,
        'avg':p.kpi.shift_b_avg,'best':p.kpi.best_b,'tone':'b'}] %}
       <div class="shift-box {{ s.tone }}">
         <div class="sb-head"><span class="sb-name">{{ s.name }}</span><span class="sb-span">{{ s.span }}</span></div>

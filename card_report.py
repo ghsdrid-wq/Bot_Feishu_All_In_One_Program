@@ -181,8 +181,6 @@ def ensure_summary(business_date: Optional[str] = None,
     slot = (business_date or "", datetime.now().hour)
     if summary is not None and _last_ingest_slot == slot:
         return summary
-    _last_ingest_slot = slot
-
     try:
         from dashboard import pipeline as dash_pipeline
         write("Cycle data incomplete - ingesting before building card")
@@ -194,6 +192,11 @@ def ensure_summary(business_date: Optional[str] = None,
         if result.get("skipped"):
             write("Ingest skipped: {}".format(result["skipped"]))
             return None
+        if result.get("status") in ("error", "stopped"):
+            write("Ingest incomplete: {}".format(
+                "; ".join(result.get("errors", [])) or result.get("status")))
+            return summary
+        _last_ingest_slot = slot
         write("Ingested {} rows".format(result.get("rows", 0)))
     except Exception as exc:
         # เก็บข้อมูลไม่ได้ก็ใช้เท่าที่มี ห้ามล้มงานหลัก

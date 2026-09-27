@@ -531,6 +531,19 @@ def build_page(conn, business_date: str, only_tab: Optional[str] = None,
     """
     from metrics import aggregate
 
+    cfg = core.load_config()
+    bd_cfg = cfg["business_day"]
+
+    def hour_text(value: int) -> str:
+        return f"{int(value) % 24:02d}:00"
+
+    round_span = (f"{hour_text(bd_cfg['start_hour'])}–"
+                  f"{hour_text(bd_cfg['start_hour'])}")
+    shift_a_span = (f"{hour_text(bd_cfg['shift_a_start'])}–"
+                    f"{hour_text(bd_cfg['shift_b_start'])}")
+    shift_b_span = (f"{hour_text(bd_cfg['shift_b_start'])}–"
+                    f"{hour_text(bd_cfg['start_hour'])}")
+
     overview = aggregate.build_overview(conn, business_date)
     health = aggregate.machine_health(conn)
 
@@ -562,6 +575,9 @@ def build_page(conn, business_date: str, only_tab: Optional[str] = None,
         "title_date": thai_date(business_date),
         "generated_at": datetime.fromisoformat(
             overview["generated_at"]).strftime("%d/%m/%Y %H:%M"),
+        "round_span": round_span,
+        "shift_a_span": shift_a_span,
+        "shift_b_span": shift_b_span,
         "tabs": tabs,
         "active_tab": wanted or "overview",
         "single_tab": wanted is not None,

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import configparser
 import os
+import tempfile
 import sys
 from datetime import datetime
 from typing import Callable, Optional
@@ -77,7 +78,22 @@ def run_cycle(log: Optional[LogFunc] = None,
 
     business_date = business_date or current_business_date()
     started = datetime.now()
-    summary: dict = {"business_date": business_date, "warnings": [], "rows": 0}
+    summary: dict = {
+        "business_date": business_date, "warnings": [], "errors": [],
+        "rows": 0, "status": "running", "started_at": started.timestamp(),
+    }
+
+    def stopped() -> bool:
+        return bool(should_stop and should_stop())
+
+    def finish(status: str) -> dict:
+        summary["status"] = status
+        summary["seconds"] = round((datetime.now() - started).total_seconds(), 1)
+        return summary
+
+    if stopped():
+        summary["stopped"] = True
+        return finish("stopped")
 
     conn = core.connect(db_path)
     try:
@@ -90,14 +106,27 @@ def run_cycle(log: Optional[LogFunc] = None,
             ("JMS", lambda: ingest_jms.ingest_all(conn, business_date)),
         ]
         for name, func in steps:
+            if stopped():
+                summary["stopped"] = True
+                return finish("stopped")
             try:
                 result = func()
             except Exception as exc:          # แหล่งเดียวพังไม่ควรล้มทั้งรอบ
-                summary["warnings"].append(f"{name}: {exc}")
+                summary["errors"].append(f"{name}: {exc}")
                 write(f"Dashboard ingest {name} failed — {exc}", level="WARN")
                 continue
             summary["rows"] += result.get("rows", 0)
             summary["warnings"].extend(result.get("warnings", []))
+            problems = result.get("problems") or []
+            if problems:
+                summary["errors"].append(
+                    f"{name}: อ่านข้อมูลไม่ได้ {', '.join(problems)}")
+            for warning in result.get("warnings", []):
+                text = str(warning)
+                if any(marker in text for marker in (
+                        "ไม่พบไฟล์", "อ่านไม่สำเร็จ", "อ่านไม่ได้",
+                        "ต่อ MySQL ไม่ได้", "ชื่อ table ไม่ถูกต้อง")):
+                    summary["errors"].append(f"{name}: {text}")
             write(f"Dashboard ingest {name}: {result.get('rows', 0)} rows")
 
         # ลบข้อมูลเก่าเกินเพดาน — ทำหลัง ingest เพื่อให้วันปัจจุบันถูกเขียนก่อนเสมอ
@@ -113,11 +142,23 @@ def run_cycle(log: Optional[LogFunc] = None,
             summary["warnings"].append(f"ลบข้อมูลเก่าไม่สำเร็จ: {exc}")
 
         if not os.path.isdir(ap_dir):
-            summary["warnings"].append(
-                f"ไม่พบโฟลเดอร์ raw ของ AutoPacking: {ap_dir} "
-                f"(แก้ที่ metrics_config.yaml -> autopacking.raw_dir)")
+            message = (f"ไม่พบโฟลเดอร์ raw ของ AutoPacking: {ap_dir} "
+                       f"(แก้ที่ metrics_config.yaml -> autopacking.raw_dir)")
+            summary["warnings"].append(message)
+            summary["errors"].append(message)
     finally:
         conn.close()
+
+    if stopped():
+        summary["stopped"] = True
+        return finish("stopped")
+
+    # Do not create a fresh-looking report from stale partitions when any
+    # required source failed.  The legacy Excel flow remains unaffected.
+    if summary["errors"]:
+        for error in summary["errors"]:
+            write(f"Dashboard: {error}", level="ERROR")
+        return finish("error")
 
     # แคปหน้าเว็บเป็น PNG
     # ไม่ต้องตัดสินใจเรื่อง "ทำโหมดไหนบ้าง" ตรงนี้ — bot_main.run_process เป็นคนคุม
@@ -125,21 +166,35 @@ def run_cycle(log: Optional[LogFunc] = None,
     if cfg["render_png"] and render:
         try:
             from dashboard import render
-            paths = render.render_all_tabs(
-                business_date, cfg["png_dir"], db_path,
-                hide_empty=cfg["hide_empty_png"],
-                tables_only=cfg["tables_only_png"])
+            os.makedirs(cfg["png_dir"], exist_ok=True)
+            with tempfile.TemporaryDirectory(
+                    prefix="dashboard-render-", dir=cfg["png_dir"]) as temp_dir:
+                temp_paths = render.render_all_tabs(
+                    business_date, temp_dir, db_path,
+                    hide_empty=cfg["hide_empty_png"],
+                    tables_only=cfg["tables_only_png"])
+                if stopped():
+                    summary["stopped"] = True
+                    return finish("stopped")
+                paths = []
+                for temp_path in temp_paths:
+                    final_path = os.path.join(
+                        cfg["png_dir"], os.path.basename(temp_path))
+                    os.replace(temp_path, final_path)
+                    paths.append(final_path)
             summary["png"] = paths
             write(f"Dashboard PNG: {len(paths)} ใบ -> {cfg['png_dir']}")
         except Exception as exc:
-            summary["warnings"].append(f"สร้างรูปไม่สำเร็จ: {exc}")
+            summary["errors"].append(f"สร้างรูปไม่สำเร็จ: {exc}")
             write(f"Dashboard render failed — {exc}", level="WARN")
 
-    summary["seconds"] = round((datetime.now() - started).total_seconds(), 1)
     for warn in summary["warnings"]:
         write(f"Dashboard: {warn}", level="WARN")
-    write(f"Dashboard cycle done — {summary['rows']} rows, {summary['seconds']}s",
-          level="SUCCESS")
+    status = "error" if summary["errors"] else (
+        "warning" if summary["warnings"] else "ok")
+    finish(status)
+    write(f"Dashboard cycle {status} — {summary['rows']} rows, "
+          f"{summary['seconds']}s", level="SUCCESS" if status == "ok" else "WARN")
     return summary
 
 

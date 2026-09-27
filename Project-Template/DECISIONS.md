@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-09-28 - Dashboard correctness gates
+
+- Treat the selected Start/End range as the authority for Scheduler and Dashboard business dates.
+- Replace a metrics partition only after its upstream source was read successfully; retain last-known data on read failure.
+- Do not render or send a fresh-looking Dashboard when a required source or PNG render fails.
+- Require Dashboard files to be produced by the current run before Feishu delivery.
+- Preserve user-owned config and database files during onedir rebuilds.
+
+## 2026-09-28 - Single-source semantic versioning
+
+- Keep the semantic version only in `app_version.py`.
+- Derive the window title, visible sidebar version, and release folder `AutoReportFeishuVx-y-z` from that value.
+- Increment patch/minor/major with `tools/bump_version.py`; never duplicate a release number in build logic.
+
 ## 2026-09-26 - Preserve a clean upstream checkout
 
 - Use `origin/main` as the synchronization baseline.

@@ -163,6 +163,12 @@ def ingest_file(conn, path: str, business_date_hint: Optional[str] = None) -> di
         for (line, chute, err_type), count in error_counts.items()
     ]
 
+    # This file is the complete snapshot for one business hour.  Replace that
+    # partition so rows removed upstream do not survive forever in SQLite.
+    core.replace_fact_partition(
+        conn, "fact_hourly", business_date, "AUTOPACK", hour_start=file_hour)
+    core.replace_fact_partition(
+        conn, "fact_error", business_date, "AUTOPACK", hour_start=file_hour)
     core.upsert_hourly(conn, hourly_rows)
     core.upsert_errors(conn, error_rows)
     conn.commit()

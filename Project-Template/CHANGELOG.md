@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-28
+
+- Added `app_version.py` as the single version source for the window title, visible sidebar version, tests, and release folder name.
+- Added `tools/bump_version.py` so the next patch release is one command instead of editing duplicated version strings.
+- Built and smoke-tested `dist/AutoReportFeishuV2-0-0/AutoReportFeishu.exe`; the process remained running and exposed the expected `v2.0.0` window title.
+- Fixed the scheduler to honor the complete Start/End datetime range across midnight and finish cleanly after the selected end time.
+- Bound Dashboard ingestion, rendering, refresh, and Feishu delivery to the selected run business date.
+- Prevented stale or incomplete Dashboard images from being marked done or sent after source/render failures.
+- Added cooperative Dashboard cancellation and removed the Run Now double-click race.
+- Replaced successfully-read metrics partitions before upsert so corrected or removed upstream rows do not remain in SQLite.
+- Reloaded metrics configuration automatically when either YAML or the main INI changes.
+- Preserved historical date selections across restarts and kept automatic date rollover for auto-managed ranges.
+- Restored Excel attachment delivery when a selected workbook has no image card or Excel image generation is disabled.
+- Made Dashboard round and shift labels follow configured hours instead of fixed 12:00 boundaries.
+- Preserved operator configuration and `store.db` across onedir rebuilds.
+- Added regression coverage for scheduler boundaries, stale partitions, Dashboard failure gating, fresh-image delivery, config reload, date preservation, attachment-only delivery, and retry behavior.
+- Verified 12 regression tests, query refresh resilience, Python compilation, PowerShell syntax, and responsive Dashboard rendering at 1280x800 and 390x844.
+
 ## 2026-09-26
 
 - Cloned the GitHub repository and verified access to `origin/main`.

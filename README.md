@@ -58,6 +58,33 @@ python bot_main.py
 - ต้องมี reverse proxy / ngrok ชี้เข้ามาที่ webhook `/feishu_event`
 - เปิดได้ครั้งละ 1 instance (single-instance lock)
 
+## การออกเวอร์ชันและ Build
+
+เลขเวอร์ชันมีแหล่งเดียวที่ `app_version.py` ทั้งชื่อในโปรแกรมและชื่อโฟลเดอร์
+Build จะอ่านจากไฟล์นี้อัตโนมัติ ห้ามเขียนเลขเวอร์ชันซ้ำในไฟล์อื่น
+
+```powershell
+# ดูเวอร์ชันปัจจุบัน
+python tools/bump_version.py --show
+
+# งานแก้ไขรอบถัดไป: 2.0.0 -> 2.0.1
+python tools/bump_version.py patch
+
+# จากนั้น build
+.\build_onedir.ps1
+```
+
+ตัวอย่างผลลัพธ์:
+
+- เวอร์ชัน `2.0.0` → `dist\AutoReportFeishuV2-0-0`
+- เวอร์ชัน `2.0.1` → `dist\AutoReportFeishuV2-0-1`
+
+ตอน build เวอร์ชันใหม่ ระบบจะนำ `config.ini`, `metrics_config.yaml` และ `store.db`
+จาก release ล่าสุดติดมาด้วยอัตโนมัติ จึงไม่ต้องตั้งค่าระบบใหม่ทุกครั้ง
+
+ใช้ `minor` เมื่อเพิ่มความสามารถชุดใหญ่ และ `major` เมื่อมีการเปลี่ยนที่เข้ากันกับ
+เวอร์ชันเดิมไม่ได้ เช่น `python tools/bump_version.py minor`
+
 ## โครงสร้างโค้ด
 ดูรายละเอียดโครงสร้างไฟล์ ฟังก์ชันสำคัญ และ config key ทั้งหมดได้ที่ [STRUCTURE.md](STRUCTURE.md)
 

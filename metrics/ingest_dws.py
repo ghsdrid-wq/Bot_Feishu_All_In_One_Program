@@ -192,6 +192,10 @@ def _ingest_via_api(conn, station: str, spec: dict, cfg_all: dict,
         health["detail"] = "API ปกติ แต่ยังไม่มีพัสดุในรอบนี้"
     _save_health(conn, health)
 
+    core.replace_fact_partition(conn, "fact_hourly", day.isoformat(),
+                                "DWS", station=station)
+    core.replace_fact_partition(conn, "fact_error", day.isoformat(),
+                                "DWS", station=station)
     core.upsert_hourly(conn, hourly_rows)
     core.upsert_errors(conn, error_rows)
     conn.commit()
@@ -288,6 +292,13 @@ def ingest_machine(conn, station: str, spec: dict,
         for (bd, hour, state), count in errors.items()
     ]
 
+    replaced_dates = ({business_date} if business_date else
+                      {row[0] for row in hourly_rows} | {row[0] for row in error_rows})
+    for bd in replaced_dates:
+        if not bd:
+            continue
+        core.replace_fact_partition(conn, "fact_hourly", bd, "DWS", station=station)
+        core.replace_fact_partition(conn, "fact_error", bd, "DWS", station=station)
     core.upsert_hourly(conn, hourly_rows)
     core.upsert_errors(conn, error_rows)
     conn.commit()

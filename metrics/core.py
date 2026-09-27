@@ -32,14 +32,33 @@ SCHEMA_PATH = os.path.join(HERE, "schema.sql")   # ของอ่านอย�
 DEFAULT_DB_PATH = os.path.join(DATA_ROOT, "store.db")
 
 _config_cache: Optional[Dict[str, Any]] = None
+_config_cache_signature: Optional[tuple[str, int, int]] = None
+
+
+def _mtime_ns(path: str) -> int:
+    try:
+        return os.stat(path).st_mtime_ns
+    except OSError:
+        return -1
+
+
+def clear_config_cache() -> None:
+    """Force the next load_config call to read both config files again."""
+    global _config_cache, _config_cache_signature
+    _config_cache = None
+    _config_cache_signature = None
 
 
 def load_config(path: str = CONFIG_PATH) -> Dict[str, Any]:
-    global _config_cache
-    if _config_cache is None:
+    global _config_cache, _config_cache_signature
+    resolved = os.path.abspath(path)
+    program_config = os.path.join(PROJECT_ROOT, "config.ini")
+    signature = (resolved, _mtime_ns(resolved), _mtime_ns(program_config))
+    if _config_cache is None or _config_cache_signature != signature:
         with open(path, "r", encoding="utf-8") as fh:
-            _config_cache = yaml.safe_load(fh)
+            _config_cache = yaml.safe_load(fh) or {}
         _merge_program_config(_config_cache)
+        _config_cache_signature = signature
     return _config_cache
 
 
@@ -110,13 +129,12 @@ def use_utf8_console() -> None:
 # =====================================================================
 
 def business_date_of(dt: datetime, start_hour: int) -> date:
-    """วันรอบงานของเวลา dt — รอบเริ่ม start_hour (12:00) ดังนั้น 02:00 ของวันที่ 17
-    ยังนับเป็นรอบของวันที่ 16"""
+    """Map a timestamp to the configured business day start hour."""
     return dt.date() if dt.hour >= start_hour else dt.date() - timedelta(days=1)
 
 
 def shift_of(hour: int, shift_a_start: int, shift_b_start: int) -> str:
-    """กะ A = 12:00-01:00 (ชั่วโมง 12..23 และ 0) / กะ B = 01:00-12:00 (ชั่วโมง 1..11)"""
+    """Map an hour to the configured A/B shift boundaries."""
     if shift_a_start <= hour <= 23 or hour < shift_b_start:
         return "A"
     return "B"
@@ -313,6 +331,32 @@ def upsert_hourly(conn: sqlite3.Connection, rows: list[tuple]) -> int:
         [row + (now,) for row in rows],
     )
     return len(rows)
+
+
+def replace_fact_partition(conn: sqlite3.Connection, table: str,
+                           business_date: str, source: str,
+                           station: Optional[str] = None,
+                           hour_start: Optional[int] = None) -> int:
+    """Delete one successfully-read source partition before it is reinserted.
+
+    The table name is deliberately restricted because SQLite cannot bind table
+    identifiers.  Callers must invoke this only after their upstream read and
+    parsing completed, so a transient source failure never erases last-known
+    data.
+    """
+    if table not in {"fact_hourly", "fact_error"}:
+        raise ValueError(f"Unsupported fact table: {table}")
+    clauses = ["business_date = ?", "source = ?"]
+    values: list[Any] = [business_date, source]
+    if station is not None:
+        clauses.append("station = ?")
+        values.append(station)
+    if hour_start is not None:
+        clauses.append("hour_start = ?")
+        values.append(int(hour_start))
+    cursor = conn.execute(
+        f"DELETE FROM {table} WHERE " + " AND ".join(clauses), values)
+    return max(cursor.rowcount, 0)
 
 
 def prune_old_data(conn: sqlite3.Connection,

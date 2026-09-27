@@ -10,6 +10,37 @@ $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectDir
+$AppVersion = (& python -c "from app_version import APP_VERSION; print(APP_VERSION)").Trim()
+if ($LASTEXITCODE -ne 0 -or $AppVersion -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Invalid APP_VERSION in app_version.py: '$AppVersion'"
+}
+$ReleaseFolderName = "AutoReportFeishuV" + $AppVersion.Replace(".", "-")
+
+# PyInstaller --noconfirm replaces the existing onedir folder. Preserve the
+# operator-owned configuration before that happens so rebuilding an installed
+# folder never resets production paths, credentials, dates, or switches.
+$ExistingDistDir = Join-Path $ProjectDir ("dist\" + $ReleaseFolderName)
+$DistRoot = Join-Path $ProjectDir "dist"
+if (-not (Test-Path $ExistingDistDir) -and (Test-Path $DistRoot)) {
+    # First build of a new version: carry operator-owned config forward from
+    # the newest previous version instead of falling back to repository defaults.
+    $PreviousRelease = Get-ChildItem -LiteralPath $DistRoot -Directory |
+        Where-Object { $_.Name -like "AutoReportFeishuV*" } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($PreviousRelease) {
+        $ExistingDistDir = $PreviousRelease.FullName
+    }
+}
+$ConfigBackupDir = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "AutoReportFeishu-config-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $ConfigBackupDir | Out-Null
+foreach ($Name in @("config.ini", "metrics_config.yaml", "store.db")) {
+    $Existing = Join-Path $ExistingDistDir $Name
+    if (Test-Path $Existing) {
+        Copy-Item -LiteralPath $Existing -Destination (Join-Path $ConfigBackupDir $Name) -Force
+    }
+}
 
 $PythonExe = (Get-Command python).Source
 $PythonBase = Split-Path -Parent $PythonExe
@@ -93,16 +124,27 @@ python -m PyInstaller @Args
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 $ErrorActionPreference = "Stop"
 
-$DistDir = Join-Path $ProjectDir "dist\AutoReportFeishu"
+$PyInstallerDistDir = Join-Path $ProjectDir "dist\AutoReportFeishu"
+$DistDir = Join-Path $ProjectDir ("dist\" + $ReleaseFolderName)
+if (Test-Path $DistDir) {
+    Remove-Item -LiteralPath $DistDir -Recurse -Force
+}
+Move-Item -LiteralPath $PyInstallerDistDir -Destination $DistDir
 
 # ---- ไฟล์ที่ผู้ใช้แก้เอง วางข้าง exe ----
 # ไม่ใส่เข้า _internal เพราะจะถูกเขียนทับทุกครั้งที่ลงใหม่ และผู้ใช้หาไม่เจอ
 foreach ($Name in @("config.ini", "metrics_config.yaml")) {
-    $Src = Join-Path $ProjectDir $Name
+    $Saved = Join-Path $ConfigBackupDir $Name
+    $Src = if (Test-Path $Saved) { $Saved } else { Join-Path $ProjectDir $Name }
     if (Test-Path $Src) {
         Copy-Item -LiteralPath $Src -Destination (Join-Path $DistDir $Name) -Force
     }
 }
+$SavedDb = Join-Path $ConfigBackupDir "store.db"
+if (Test-Path $SavedDb) {
+    Copy-Item -LiteralPath $SavedDb -Destination (Join-Path $DistDir "store.db") -Force
+}
+Remove-Item -LiteralPath $ConfigBackupDir -Recurse -Force
 
 # ---- browser ของ Playwright ----
 # เครื่องปลายทางไม่ได้ลง playwright ไว้ ถ้าไม่ก๊อปไปด้วยจะแคปรูป dashboard ไม่ได้

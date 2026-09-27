@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS dim_station (
 --   'no_data'  ยังไม่ถึงชั่วโมงนั้น หรืออ่านไฟล์ไม่ได้ -> แสดงเป็น '-'
 -- ---------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS fact_hourly (
-    business_date   TEXT    NOT NULL,  -- 'YYYY-MM-DD' วันรอบงาน (ตัดที่ 12:00)
+    business_date   TEXT    NOT NULL,  -- 'YYYY-MM-DD' วันรอบงาน (ใช้เวลาตัดจาก config)
     shift           TEXT    NOT NULL,  -- 'A' | 'B'
     hour_start      INTEGER NOT NULL,  -- 0-23 ชั่วโมงจริงของข้อมูล
     source          TEXT    NOT NULL,

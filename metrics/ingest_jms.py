@@ -80,6 +80,12 @@ def ingest_source(conn, key: str, business_date: Optional[str] = None,
     if business_date:
         df = df[df["bd"] == business_date]
     if df.empty:
+        # The workbook was read successfully and contains no rows for this
+        # requested date.  That is a valid empty snapshot, so clear stale data.
+        if business_date:
+            core.replace_fact_partition(
+                conn, "fact_hourly", business_date, key)
+            conn.commit()
         return {"source": key, "rows": 0, "qty": 0,
                 "warnings": [f"ไม่มีข้อมูลของวันรอบงาน {business_date}"]}
 
@@ -116,6 +122,10 @@ def ingest_source(conn, key: str, business_date: Optional[str] = None,
             int(rec.qty), int(rec.qty), round(float(rec.weight), 2), None, "ok",
         ))
 
+    replaced_dates = {business_date} if business_date else seen_bd
+    for bd in replaced_dates:
+        if bd:
+            core.replace_fact_partition(conn, "fact_hourly", bd, key)
     core.upsert_hourly(conn, rows)
     _ensure_stations(conn, key, spec, sorted(grouped["employee"].unique()))
     conn.commit()

@@ -28,6 +28,7 @@ from waitress import create_server
 from controller.controller_api import register_controller, start_api
 from core.jms_api import search_user, reset_app_password, reset_jms_password, enable_user
 from core.logger import write_log
+from app_version import APP_VERSION
 
 from Createphoto import (
     run_create,
@@ -151,7 +152,7 @@ def apply_nord_theme():
                 pass
 
 
-APP_TITLE = "Auto Report Feishu Enterprise Console v13.0"
+APP_TITLE = f"Auto Report Feishu Enterprise Console v{APP_VERSION}"
 CONFIG_FILE = resource_path("config.ini")
 SINGLE_INSTANCE_MUTEX_NAME = "Local\\AutoReportFeishuEnterpriseConsole"
 SINGLE_INSTANCE_MUTEX_HANDLE = None
@@ -1439,6 +1440,13 @@ class App(ctk.CTk):
                 self.config["EXPORTS"] = {}
             self.config["EXPORTS"]["send_as_card"] = str(self.send_as_card_var.get()).lower()
         save_config(self.config)
+        try:
+            from metrics import core as metrics_core
+            metrics_core.clear_config_cache()
+        except Exception:
+            # Metrics is optional for installations that only use the legacy
+            # Excel flow; saving the main program must remain available there.
+            pass
         self.refresh_scheduler_snapshot()
         if hasattr(self, "controller_client_rows"):
             self.load_controller_clients()
@@ -1499,21 +1507,28 @@ class App(ctk.CTk):
         return self.scheduler_run_minute, self.scheduler_start_hour, self.scheduler_end_hour
 
     def send_window(self):
-        """ชั่วโมงแรกและชั่วโมงสุดท้ายที่ยอมให้ส่งอัตโนมัติ
+        """Compatibility display for the configured start/end hours."""
+        return self.scheduler_start_hour, self.scheduler_end_hour
 
-        เริ่มหลังเวลาเริ่มรอบ 1 ชั่วโมง เพราะถ้าส่งตอนเริ่มรอบพอดี
-        ยังไม่มีใครปล่อยพัสดุ ยอดจะเป็นศูนย์ทั้งใบ
-        จบที่เวลาจบรอบ (เที่ยง) — หลังจากนั้นงานจบแล้ว ส่งไปก็ได้เลขเดิม
+    def in_send_window(self, moment) -> bool:
+        """Return whether an exact datetime is inside the configured run range.
+
+        Older code accepted an hour only, which lost the date at midnight and
+        incorrectly skipped most of the second day.  Integer input is retained
+        only for compatibility with external callers and uses the legacy daily
+        hour comparison.
         """
-        return (self.scheduler_start_hour + 1) % 24, self.scheduler_end_hour
-
-    def in_send_window(self, hour: int) -> bool:
+        if isinstance(moment, datetime):
+            start_dt, end_dt = self.get_scheduler_time_range()
+            return start_dt <= moment <= end_dt
+        hour = int(moment)
         first, last = self.send_window()
         if first <= last:
             return first <= hour <= last
-        return hour >= first or hour <= last     # คร่อมเที่ยงคืน
+        return hour >= first or hour <= last
 
-    def get_next_scheduler_run_time(self, now: Optional[datetime] = None) -> datetime:
+    def get_next_scheduler_run_time(
+            self, now: Optional[datetime] = None) -> Optional[datetime]:
         self.refresh_scheduler_snapshot()
         now = now or datetime.now()
         minute = self.scheduler_run_minute
@@ -1525,17 +1540,16 @@ class App(ctk.CTk):
         else:
             candidate = (now + timedelta(hours=1)).replace(
                 minute=minute, second=0, microsecond=0)
-        # เลื่อนไปชั่วโมงแรกที่อยู่ในหน้าต่างส่ง ไม่งั้น "Next auto run" จะโชว์
-        # เวลาที่ไม่มีการส่งจริง เช่น 13:05 ทั้งที่ต้องรอถึง 15:05
-        for _ in range(25):
-            if self.in_send_window(candidate.hour):
-                break
-            candidate += timedelta(hours=1)
-        return candidate
+        start_dt, end_dt = self.get_scheduler_time_range()
+        if candidate < start_dt:
+            candidate = start_dt.replace(minute=minute, second=0, microsecond=0)
+            if candidate < start_dt:
+                candidate += timedelta(hours=1)
+        return candidate if candidate <= end_dt else None
 
     def format_next_scheduler_run(self, next_run: Optional[datetime] = None) -> str:
-        next_run = next_run or self.get_next_scheduler_run_time()
-        return next_run.strftime("%Y-%m-%d %H:%M")
+        candidate = next_run if next_run is not None else self.get_next_scheduler_run_time()
+        return candidate.strftime("%Y-%m-%d %H:%M") if candidate else "-"
 
     def set_next_run_display(self, next_run: Optional[datetime] = None, clear: bool = False):
         if not self.is_ui_thread():
@@ -1545,8 +1559,10 @@ class App(ctk.CTk):
             self.next_run = None
             text = "Next auto run: -"
         else:
-            self.next_run = next_run or self.get_next_scheduler_run_time()
-            text = f"Next auto run: {self.format_next_scheduler_run(self.next_run)}"
+            self.next_run = (next_run if next_run is not None
+                             else self.get_next_scheduler_run_time())
+            text = (f"Next auto run: {self.format_next_scheduler_run(self.next_run)}"
+                    if self.next_run else "Next auto run: สิ้นสุดช่วงเวลา")
         label = getattr(self, "next_run_label", None)
         if label is not None:
             label.configure(text=text)
@@ -1620,6 +1636,7 @@ class App(ctk.CTk):
             "chat_id": chat_id,
             "app_id": app_id,
             "app_secret": app_secret,
+            "time_range": self.get_scheduler_time_range(),
         }
 
     def on_prefire_toggled(self):
@@ -1694,7 +1711,10 @@ class App(ctk.CTk):
         brand = ctk.CTkFrame(sidebar, fg_color="transparent")
         brand.grid(row=0, column=0, padx=20, pady=(26, 22), sticky="ew")
         ctk.CTkLabel(brand, text="Auto Report", font=ctk.CTkFont(size=26, weight="bold"), text_color="#eceff4").grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(brand, text="Enterprise Console", text_color="#aeb8cc", font=ctk.CTkFont(size=13)).grid(row=1, column=0, pady=(4, 0), sticky="w")
+        ctk.CTkLabel(
+            brand, text=f"Enterprise Console · v{APP_VERSION}",
+            text_color="#aeb8cc", font=ctk.CTkFont(size=13)
+        ).grid(row=1, column=0, pady=(4, 0), sticky="w")
 
         self.nav_parent = ctk.CTkFrame(sidebar, fg_color="transparent")
         self.nav_parent.grid(row=2, column=0, padx=18, pady=0, sticky="ew")
@@ -1784,6 +1804,7 @@ class App(ctk.CTk):
             "ready": ("#323847", "#434c5e", "READY", "#aeb8cc"),
             "run": ("#3b4252", "#88c0d0", "RUNNING", "#88c0d0"),
             "ok": ("#3b4a3e", "#a3be8c", "DONE", "#a3be8c"),
+            "warning": ("#4a4433", "#ebcb8b", "WARNING", "#ebcb8b"),
             "error": ("#4a3438", "#bf616a", "ERROR", "#d3868e"),
             "skip": ("#434c5e", "#5e6779", "SKIP", "#d8dee9"),
         }
@@ -1861,8 +1882,8 @@ class App(ctk.CTk):
         self.end_date.grid(row=1, column=7, padx=4, pady=10, sticky="ew")
         self.end_menu = ctk.CTkOptionMenu(command, values=hours, variable=self.end_hour_var, width=92, command=lambda _: self.save_config())
         self.end_menu.grid(row=1, column=8, padx=(4, 16), pady=10, sticky="w")
-        self.start_date.bind("<<DateEntrySelected>>", lambda _e: self.save_config(), "+")
-        self.end_date.bind("<<DateEntrySelected>>", lambda _e: self.save_config(), "+")
+        self.start_date.bind("<<DateEntrySelected>>", self.on_date_selected, "+")
+        self.end_date.bind("<<DateEntrySelected>>", self.on_date_selected, "+")
 
         # ดึงล่วงหน้า — สั่ง JMS สร้างไฟล์ก่อนถึงรอบ ให้เซิร์ฟเวอร์ทำตอนเราว่าง
         # ปิดได้ถ้าต้องการยอดเต็มเวลาถึงนาทีที่รันจริง
@@ -2214,8 +2235,10 @@ class App(ctk.CTk):
                                 "ตอนนี้ pipeline กำลังทำงานอยู่ รอให้เสร็จก่อน")
             return
 
+        self.running = True
+        self.stop_requested = False
+
         def work():
-            self.running = True
             try:
                 self.run_dashboard_stage()
                 self.run_on_ui_thread(self.dashboard_refresh)
@@ -2232,7 +2255,9 @@ class App(ctk.CTk):
                 from metrics import aggregate
                 from metrics import core as mcore
 
-                business_date = dash_pipeline.current_business_date()
+                last = getattr(self, "_dashboard_run_summary", None) or {}
+                business_date = (last.get("business_date") or
+                                 self.dashboard_business_date())
                 conn = mcore.read_connect()
                 try:
                     overview = aggregate.build_overview(conn, business_date)
@@ -2942,12 +2967,32 @@ class App(ctk.CTk):
                 clean_input_value(time_cfg.get("prefire_lead", "")) or str(JMS_PREFIRE_LEAD_MINUTES))
             self.sync_prefire_state()
 
+        saved_dates = False
+        try:
+            raw_start = dws.get("start_date", "").strip()
+            raw_end = dws.get("end_date", "").strip()
+            if raw_start and raw_end:
+                self.start_date.set_date(datetime.strptime(raw_start, "%Y-%m-%d").date())
+                self.end_date.set_date(datetime.strptime(raw_end, "%Y-%m-%d").date())
+                saved_dates = True
+        except (TypeError, ValueError):
+            saved_dates = False
+        want_start, want_end = self.shift_date_range()
+        self._dates_user_selected = bool(
+            saved_dates and (self.start_date.get_date(), self.end_date.get_date())
+            != (want_start, want_end))
+
         # ตั้งวันตามรอบงานจริง ไม่ใช่ "วันนี้" เฉยๆ
         # (เปิดโปรแกรมตอนตี 3 รอบงานคือของเมื่อวาน ไม่ใช่ของวันนี้)
         self.apply_shift_dates(reason="เปิดโปรแกรม")
         self.start_hour.set(dws.get("start_hour", "13:00"))
         self.end_hour.set(dws.get("end_hour", "23:00"))
         self.reload_workbook_cards()
+
+    def on_date_selected(self, _event=None):
+        """Remember that the operator deliberately selected a historical range."""
+        self._dates_user_selected = True
+        self.save_config()
 
     def shift_date_range(self):
         """วันเริ่ม/วันจบของรอบงานที่กำลังเดินอยู่ตอนนี้
@@ -2987,10 +3032,13 @@ class App(ctk.CTk):
 
         if cur_start == want_start and cur_end == want_end:
             self._auto_dates = (want_start, want_end)
+            self._dates_user_selected = False
             return
 
-        touched_by_user = (getattr(self, "_auto_dates", None) is not None
-                           and (cur_start, cur_end) != self._auto_dates)
+        touched_by_user = bool(getattr(self, "_dates_user_selected", False))
+        if not touched_by_user:
+            touched_by_user = (getattr(self, "_auto_dates", None) is not None
+                               and (cur_start, cur_end) != self._auto_dates)
         if touched_by_user:
             return
 
@@ -3000,6 +3048,7 @@ class App(ctk.CTk):
         except Exception:
             return
         self._auto_dates = (want_start, want_end)
+        self._dates_user_selected = False
         if reason:
             self.write_log(
                 f"ตั้งช่วงวันที่ตามรอบงาน: {want_start} -> {want_end} ({reason})")
@@ -4079,6 +4128,17 @@ class App(ctk.CTk):
 
         dws_mirror.pull_all(log=self.write_log)
 
+    def dashboard_business_date(self) -> str:
+        """Business date tied to the exact Start/End range of this run."""
+        active = getattr(self, "active_run_settings", None) or {}
+        time_range = active.get("time_range")
+        if time_range:
+            start = time_range[0]
+            if isinstance(start, str):
+                start = datetime.fromisoformat(start)
+            return start.date().isoformat()
+        return self.get_scheduler_time_range()[0].date().isoformat()
+
     def send_dashboard_to_feishu(self):
         """ส่งรูปของโหมด Dashboard เข้ากลุ่ม พร้อมข้อความสรุปที่ copy ตัวเลขได้
 
@@ -4090,10 +4150,18 @@ class App(ctk.CTk):
         try:
             from dashboard import notify, pipeline as dash_pipeline
 
-            business_date = dash_pipeline.current_business_date()
+            summary = getattr(self, "_dashboard_run_summary", None) or {}
+            if summary.get("status") not in ("ok", "warning"):
+                self.write_log(
+                    "Dashboard ไม่ได้ส่ง: รอบนี้สร้างข้อมูล/รูปไม่สำเร็จ",
+                    level="ERROR")
+                return False
+            business_date = summary.get("business_date") or self.dashboard_business_date()
             png_dir = dash_pipeline._settings()["png_dir"]
             result = notify.send_dashboard(
                 business_date, png_dir,
+                expected_files=summary.get("png"),
+                min_mtime=summary.get("started_at"),
                 log=lambda msg, level="INFO": self.write_log(msg, level=level))
 
             if result.get("skipped"):
@@ -4104,8 +4172,11 @@ class App(ctk.CTk):
                 self.write_log(
                     f"Dashboard ส่งเข้ากลุ่ม {result.get('chat_name')} แล้ว "
                     f"({result['sent']} ข้อความ)", level="SUCCESS")
+                return True
+            return False
         except Exception as e:
             self.write_log(f"Dashboard ส่งไม่สำเร็จ: {e}", level="ERROR")
+            return False
 
     def run_dashboard_stage(self, run_generation=None):
         """เก็บยอดลง SQLite แล้วทำรูปรายงานจาก HTML (โหมด Dashboard)
@@ -4120,31 +4191,48 @@ class App(ctk.CTk):
         """
         self.set_pipeline_state("dashboard", "run")
         self.write_log("Dashboard started", level="START")
+        self._dashboard_run_summary = None
         try:
             from dashboard import pipeline as dash_pipeline
 
             summary = dash_pipeline.run_cycle(
                 log=lambda msg, level="INFO": self.write_log(msg, level=level),
+                business_date=self.dashboard_business_date(),
                 should_stop=lambda: self.stop_requested or not self.running,
             )
+            self._dashboard_run_summary = summary
             if summary.get("skipped"):
                 self.set_pipeline_state("dashboard", "skip")
                 self.write_log(f"Dashboard skipped: {summary['skipped']}", level="WARN")
-                return
+                return summary
+            if summary.get("stopped"):
+                self.set_pipeline_state("dashboard", "skip")
+                self.write_log("Dashboard stopped by user", level="WARN")
+                return summary
 
             for warning in summary.get("warnings", []):
                 self.write_log(f"Dashboard: {warning}", level="WARN")
 
-            self.set_pipeline_state("dashboard", "ok")
+            if summary.get("status") == "error":
+                self.set_pipeline_state("dashboard", "error")
+                for error in summary.get("errors", []):
+                    self.write_log(f"Dashboard: {error}", level="ERROR")
+                return summary
+
+            state = "warning" if summary.get("status") == "warning" else "ok"
+            self.set_pipeline_state("dashboard", state)
             self.write_log(
                 f"Dashboard done — {summary.get('rows', 0):,} rows, "
                 f"{len(summary.get('png', []))} images, {summary.get('seconds', 0)}s",
-                level="SUCCESS",
+                level="SUCCESS" if state == "ok" else "WARN",
             )
+            return summary
         except Exception as e:
             # โหมดใหม่พังต้องไม่ล้มงานเดิมที่ส่งยอดทุกวัน
             self.set_pipeline_state("dashboard", "error")
             self.write_log(f"Dashboard ERROR: {e}", level="ERROR")
+            self._dashboard_run_summary = {"status": "error", "errors": [str(e)]}
+            return self._dashboard_run_summary
 
     # ลำดับหัวคอลัมน์ให้ตรงกับไฟล์ export เดิม (DWS9-11.xlsx) เป๊ะทั้ง 18 คอลัมน์
     DWS_EXPORT_HEADERS = [
@@ -5068,6 +5156,29 @@ class App(ctk.CTk):
                 names.append(group)
         return names
 
+    def get_feishu_delivery_blocks(self, wanted_excel: bool) -> tuple[List[str], List[str]]:
+        """Return ordered delivery blocks and the subset that owns fresh images."""
+        groups = self.get_feishu_group_names()
+        image_blocks: List[str] = []
+        if wanted_excel:
+            if Botmessage.get_send_file_names():
+                image_blocks.append("")
+            image_blocks.extend(
+                group for group in groups
+                if Botmessage.get_group_file_names(group))
+
+        attachment_blocks: List[str] = []
+        for group in [""] + groups:
+            if self.get_selected_excel_files_for_feishu(
+                    group=group, include_generated=(group == "")):
+                attachment_blocks.append(group)
+
+        blocks: List[str] = []
+        for block in image_blocks + attachment_blocks:
+            if block not in blocks:
+                blocks.append(block)
+        return blocks, image_blocks
+
     def summary_header_enabled(self) -> bool:
         """ติ๊ก "เพิ่มหัว Dashboard" ไว้ไหม
 
@@ -5273,6 +5384,7 @@ class App(ctk.CTk):
 
             steps = run_settings.get("steps") or {
                 key: default_on for key, _, _, default_on in PIPELINE_STEPS}
+            pipeline_had_warning = False
 
             def wanted(key):
                 return bool(steps.get(key))
@@ -5340,7 +5452,9 @@ class App(ctk.CTk):
             # ทำหลัง Excel เสมอ เพราะ Excel COM หวงเครื่อง
             # ถ้าเปิด Chromium แย่ง CPU/RAM ตอนเดียวกันจะพัง
             if wanted("dashboard"):
-                self.run_dashboard_stage(run_generation)
+                dashboard_summary = self.run_dashboard_stage(run_generation) or {}
+                if dashboard_summary.get("status") not in (None, "ok"):
+                    pipeline_had_warning = True
             else:
                 self.set_pipeline_state("dashboard", "skip")
 
@@ -5365,9 +5479,8 @@ class App(ctk.CTk):
                     # (ก้อนชื่อว่างคือรูปของไฟล์ Excel ที่ยังไม่ได้ตั้งกลุ่ม)
                     #
                     # ส่งรูป Excel เฉพาะตอนที่ทำ Excel ในรอบนี้ ไม่งั้นจะส่งรูปเก่าซ้ำ
-                    blocks = ([""] + self.get_feishu_group_names()) if wanted("excel") else []
-                    blocks = [b for b in blocks
-                              if b or Botmessage.get_send_file_names()]
+                    blocks, image_blocks = self.get_feishu_delivery_blocks(
+                        wanted("excel"))
 
                     # เงียบหายไปเฉย ๆ ตอนไม่มีอะไรให้ส่งทำให้หาสาเหตุยาก
                     # ต้องบอกว่าทำไม ไม่ใช่ขึ้นแค่ว่าเริ่มส่งแล้วจบ
@@ -5379,22 +5492,26 @@ class App(ctk.CTk):
                     # ทุกการ์ดส่งเพียว ๆ คือมีแต่รูปของกลุ่มตัวเอง ยอดสรุปกับ
                     # กราฟจะพ่วงให้เฉพาะตอนติ๊ก "เพิ่มหัว Dashboard" ไว้ และพ่วง
                     # ที่การ์ดใบแรกของรอบใบเดียว
-                    primary_block = blocks[0] if blocks else None
+                    primary_block = (image_blocks[0] if image_blocks else
+                                     (blocks[0] if blocks else None))
                     add_header = self.summary_header_enabled()
                     dashboard_sent = False
+                    dashboard_attempted = False
 
                     for block in blocks:
                         if not still_running():
                             break
                         is_primary = block == primary_block
-                        if block:
-                            Botmessage.run_send_group(
-                                out, block, log=self.write_log,
-                                is_running=still_running,
-                                with_summary=is_primary and add_header)
-                        else:
-                            run_send(out, log=self.write_log, is_running=still_running,
-                                     with_summary=is_primary and add_header)
+                        if block in image_blocks:
+                            if block:
+                                Botmessage.run_send_group(
+                                    out, block, log=self.write_log,
+                                    is_running=still_running,
+                                    with_summary=is_primary and add_header)
+                            else:
+                                run_send(out, log=self.write_log,
+                                         is_running=still_running,
+                                         with_summary=is_primary and add_header)
                         if still_running():
                             # ไฟล์ดิบจาก DWS/JMS เป็นของชุดยอด KPI จึงไปกับก้อน
                             # ที่ถือยอดสรุป ไม่ใช่ตกค้างอยู่ก้อนชื่อว่างที่อาจไม่มี
@@ -5402,12 +5519,19 @@ class App(ctk.CTk):
                                 is_running=still_running, group=block,
                                 include_generated=is_primary)
                         if is_primary and wanted("dashboard") and still_running():
-                            self.send_dashboard_to_feishu()
-                            dashboard_sent = True
+                            dashboard_attempted = True
+                            dashboard_sent = self.send_dashboard_to_feishu()
+                            if not dashboard_sent:
+                                pipeline_had_warning = True
 
-                    if wanted("dashboard") and not dashboard_sent and still_running():
-                        self.send_dashboard_to_feishu()
-                    self.set_pipeline_state("feishu", "ok")
+                    if (wanted("dashboard") and not dashboard_attempted
+                            and still_running()):
+                        dashboard_attempted = True
+                        dashboard_sent = self.send_dashboard_to_feishu()
+                        if not dashboard_sent:
+                            pipeline_had_warning = True
+                    self.set_pipeline_state(
+                        "feishu", "warning" if pipeline_had_warning else "ok")
                     pipeline_error_key = None
                 finally:
                     Botmessage.send_ui = None
@@ -5415,7 +5539,12 @@ class App(ctk.CTk):
                 self.set_pipeline_state("feishu", "skip")
 
             self.set_progress(100)
-            self.write_log("Pipeline completed successfully", level="SUCCESS")
+            if pipeline_had_warning:
+                self.write_log(
+                    "Pipeline completed with warnings — check failed/skipped outputs",
+                    level="WARN")
+            else:
+                self.write_log("Pipeline completed successfully", level="SUCCESS")
             if self.scheduler_running:
                 next_run = self.get_next_scheduler_run_time()
                 self.set_next_run_display(next_run)
@@ -5482,8 +5611,8 @@ class App(ctk.CTk):
         self.set_next_run_display(next_run)
         self.write_log(
             f"Auto scheduler started | minute={self.scheduler_run_minute:02} | "
-            f"data_window={self.scheduler_start_hour:02}:00-{self.scheduler_end_hour:02}:00 | "
-            f"send_window={self.send_window()[0]:02}:00-{self.send_window()[1]:02}:00",
+            f"run_range={self.get_scheduler_time_range()[0]:%Y-%m-%d %H:%M} -> "
+            f"{self.get_scheduler_time_range()[1]:%Y-%m-%d %H:%M}",
             level="START",
         )
         if self.scheduler_prefire:
@@ -5512,13 +5641,24 @@ class App(ctk.CTk):
                 now = datetime.now()
                 minute = self.scheduler_run_minute
                 now_key = now.strftime("%Y-%m-%d %H:%M")
+                _range_start, range_end = self.get_scheduler_time_range()
+                if now > range_end:
+                    self.scheduler_running = False
+                    self.set_next_run_display(clear=True)
+                    self.set_ui_running(False)
+                    self.set_status("Auto Finished", "#a3be8c", "#3b4a3e")
+                    self.write_log(
+                        f"Auto scheduler finished at {range_end:%Y-%m-%d %H:%M}",
+                        level="SUCCESS")
+                    break
                 if now.minute == minute and self.last_run_minute != now_key:
-                    if not self.in_send_window(now.hour):
+                    if not self.in_send_window(now):
                         self.last_run_minute = now_key
-                        first, last = self.send_window()
+                        start_dt, end_dt = self.get_scheduler_time_range()
                         self.write_log(
-                            f"Skip auto run {now.strftime('%H:%M')} "
-                            f"(นอกช่วงส่ง {first:02}:00-{last:02}:00)"
+                            f"Skip auto run {now.strftime('%Y-%m-%d %H:%M')} "
+                            f"(นอกช่วงส่ง {start_dt:%Y-%m-%d %H:%M} -> "
+                            f"{end_dt:%Y-%m-%d %H:%M})"
                         )
                         self.set_next_run_display(
                             self.get_next_scheduler_run_time(now + timedelta(minutes=1)))
@@ -5548,7 +5688,7 @@ class App(ctk.CTk):
                         and getattr(self, "last_prefire_minute", None) != now_key):
                     self.last_prefire_minute = now_key
                     target = now + timedelta(minutes=lead)
-                    if self.in_send_window(target.hour) and not self.running:
+                    if self.in_send_window(target) and not self.running:
                         threading.Thread(target=self.prefire_jms_exports,
                                          daemon=True).start()
 
