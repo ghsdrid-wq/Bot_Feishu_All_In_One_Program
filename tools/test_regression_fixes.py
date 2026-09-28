@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 import bot_main  # noqa: E402
 import card_report  # noqa: E402
 import app_version  # noqa: E402
+import Createphoto  # noqa: E402
 from dashboard import notify, pipeline, render  # noqa: E402
 from metrics import core  # noqa: E402
 
@@ -105,6 +106,17 @@ class SchedulerRegressionTests(unittest.TestCase):
             ("2026-09-27 16:00:00", "2026-09-28 23:00:00"),
         )
 
+    def test_report_range_is_separate_from_scheduler_lifetime(self) -> None:
+        app = self.make_app()
+        self.assertEqual(
+            app.get_report_time_range(datetime(2026, 9, 28, 2, 1, 9)),
+            ("2026-09-27 16:00:00", "2026-09-28 02:01:09"),
+        )
+        self.assertEqual(
+            app.get_report_time_range(datetime(2026, 9, 28, 23, 0, 4)),
+            ("2026-09-28 16:00:00", "2026-09-28 23:00:04"),
+        )
+
     def test_jms_payload_never_contains_datetime_objects(self) -> None:
         app = self.make_app()
         app.stop_requested = False
@@ -175,6 +187,59 @@ class MetricsRegressionTests(unittest.TestCase):
             card_report.ensure_summary("2026-09-27")
             card_report.ensure_summary("2026-09-27")
         self.assertEqual(run_cycle.call_count, 2)
+
+
+class ReportHourAlignmentTests(unittest.TestCase):
+    def test_hour_header_parser_supports_report_formats(self) -> None:
+        self.assertEqual(Createphoto.extract_hour_header("16点-17点"), 16)
+        self.assertEqual(Createphoto.extract_hour_header("16:00-17:00"), 16)
+        self.assertIsNone(Createphoto.extract_hour_header("合计"))
+
+    def test_formula_hour_parser_reads_literal_count_criteria(self) -> None:
+        formula = '=COUNTIFS(raw!$A:$A,AI11&" 16*",raw!$B:$B,"ok")'
+        self.assertEqual(Createphoto.extract_formula_hours(formula), [16])
+        self.assertEqual(Createphoto.extract_formula_hours("=SUM(A1:A2)"), [])
+
+    def test_shifted_formula_is_blocked_before_report_export(self) -> None:
+        class Dimension:
+            def __init__(self, count):
+                self.Count = count
+
+        class AuditRange:
+            Value2 = (("16点-17点", "17点-18点"), (None, None))
+            Formula = (("16点-17点", "17点-18点"),
+                       ('=COUNTIF(raw!A:A," 17*")',
+                        '=COUNTIF(raw!A:A," 17*")'))
+
+        class UsedRange:
+            Row = 1
+            Column = 1
+            Rows = Dimension(2)
+            Columns = Dimension(2)
+
+        class Worksheet:
+            def __init__(self, used_range, audit_range):
+                self.UsedRange = used_range
+                self.audit_range = audit_range
+
+            @staticmethod
+            def Cells(row, column):
+                return row, column
+
+            def Range(self, _first, _last):
+                return self.audit_range
+
+        class Workbook:
+            def __init__(self, worksheet):
+                self.worksheet = worksheet
+
+            def Worksheets(self, _name):
+                return self.worksheet
+
+        with self.assertRaisesRegex(RuntimeError, "header 16:00 uses formula"):
+            Createphoto.validate_hour_formula_alignment(
+                Workbook(Worksheet(UsedRange(), AuditRange())),
+                ["DWSREALTIME"], 16)
 
 
 class DashboardRegressionTests(unittest.TestCase):

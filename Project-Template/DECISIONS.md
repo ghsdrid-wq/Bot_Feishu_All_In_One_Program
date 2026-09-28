@@ -1,8 +1,15 @@
 # Decisions
 
+## 2026-09-29 - Separate scheduler lifetime from report data
+
+- Scheduler Start/End datetimes control only when automatic execution is allowed.
+- Each automatic report uses a fresh current-business-day export window.
+- Manual DATA EXPORT continues to use the exact range selected by the operator.
+- Treat a header/formula hour mismatch as a hard report-integrity failure; never send a plausible-looking image with shifted hourly totals.
+
 ## 2026-09-28 - Dashboard correctness gates
 
-- Treat the selected Start/End range as the authority for Scheduler and Dashboard business dates.
+- Treat the selected Start/End range as the scheduler lifetime; report and Dashboard business dates come from each run's current business-day window.
 - Replace a metrics partition only after its upstream source was read successfully; retain last-known data on read failure.
 - Do not render or send a fresh-looking Dashboard when a required source or PNG render fails.
 - Require Dashboard files to be produced by the current run before Feishu delivery.

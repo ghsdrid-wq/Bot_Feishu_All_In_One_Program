@@ -1,5 +1,9 @@
 # Current Work
 
+- Automatic and Run Now reports now calculate a fresh current-business-day data window at execution time; manual DATA EXPORT continues to honor its explicitly selected range.
+- Hourly Excel reports are validated after start-hour column trimming; a shifted header/formula pair now fails the pipeline before any incorrect image can be sent.
+- The operational DWS/PDA workbook was checked across the exported ranges; 40 DWS/PDA hourly formula columns align after correcting `AUTO PDA!T15`. Backup: `C:\0DWS\1DWS_&_PDA_v1.8.3 Bot.before-hour-fix-20260929.xlsx`.
+
 - Version 2.0.1 fixes JMS automatic and prewarm export ranges by normalizing them to JSON-safe strings at both the shared range helper and the JMS request boundary.
 
 ## Objective

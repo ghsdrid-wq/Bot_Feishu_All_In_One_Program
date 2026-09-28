@@ -282,6 +282,132 @@ def delete_columns_by_start(wb, start_hour: int, target_sheets: List[str], log: 
         return 0
 
 
+def extract_hour_header(value: Any) -> Optional[int]:
+    """Read the starting hour from a report column header."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    match = re.match(r"^(\d{1,2})\s*(?::?00\s*)?(?:点|時|โมง|-|–|—)", text)
+    if not match:
+        return None
+    hour = int(match.group(1))
+    return hour if 0 <= hour <= 23 else None
+
+
+def extract_formula_hours(value: Any) -> List[int]:
+    """Read literal hour criteria such as AI11&\" 16*\" from a formula."""
+    if not isinstance(value, str) or not value.startswith("="):
+        return []
+    hours = []
+    for raw_hour in re.findall(r'["\']\s*(\d{1,2})(?::?00)?\s*\*["\']', value):
+        hour = int(raw_hour)
+        if 0 <= hour <= 23 and hour not in hours:
+            hours.append(hour)
+    return hours
+
+
+def _matrix_cell(matrix: Any, row_index: int, column_index: int) -> Any:
+    """Return a zero-based cell from a scalar/row/2-D Excel COM value."""
+    if not isinstance(matrix, tuple):
+        return matrix if row_index == 0 and column_index == 0 else None
+    if not matrix:
+        return None
+    first = matrix[0]
+    if isinstance(first, tuple):
+        if row_index >= len(matrix) or column_index >= len(matrix[row_index]):
+            return None
+        return matrix[row_index][column_index]
+    if row_index == 0 and column_index < len(matrix):
+        return matrix[column_index]
+    if column_index == 0 and row_index < len(matrix):
+        return matrix[row_index]
+    return None
+
+
+def validate_hour_formula_alignment(
+    wb: Any,
+    target_sheets: List[str],
+    start_hour: int,
+    log: Optional[LogFunc] = None,
+    target_ranges: Optional[Dict[str, str]] = None,
+) -> None:
+    """Fail closed when a visible hour header is paired with another hour's formula."""
+    checked_columns = 0
+    errors: List[str] = []
+
+    for sheet_name in target_sheets:
+        ws = excel_call(
+            lambda s=sheet_name: wb.Worksheets(s), log,
+            f"open worksheet {sheet_name} for hour validation", timeout=120)
+        range_address = (target_ranges or {}).get(sheet_name)
+        if range_address:
+            used = excel_call(
+                lambda target=ws, address=range_address: target.Range(address), log,
+                f"open export range {sheet_name}:{range_address} for hour validation",
+                timeout=120)
+        else:
+            used = excel_call(
+                lambda target=ws: target.UsedRange, log,
+                f"read used range {sheet_name} for hour validation", timeout=120)
+        row_count = min(int(used.Rows.Count), 80)
+        column_count = min(int(used.Columns.Count), 40)
+        first_row = int(used.Row)
+        first_column = int(used.Column)
+        audit_range = excel_call(
+            lambda target=ws, r1=first_row, c1=first_column,
+            r2=first_row + row_count - 1, c2=first_column + column_count - 1:
+                target.Range(target.Cells(r1, c1), target.Cells(r2, c2)),
+            log, f"open audit range {sheet_name}", timeout=120)
+        values = excel_call(
+            lambda target=audit_range: target.Value2, log,
+            f"read report headers {sheet_name}", timeout=120)
+        formulas = excel_call(
+            lambda target=audit_range: target.Formula, log,
+            f"read report formulas {sheet_name}", timeout=120)
+
+        header_candidates = []
+        for row_index in range(min(row_count, 12)):
+            headers = {
+                column_index: extract_hour_header(
+                    _matrix_cell(values, row_index, column_index))
+                for column_index in range(column_count)
+            }
+            headers = {column: hour for column, hour in headers.items()
+                       if hour is not None}
+            if headers:
+                header_candidates.append((len(headers), row_index, headers))
+
+        if not header_candidates:
+            if log:
+                log(f"[HOUR CHECK] {sheet_name}: no hourly header row found")
+            continue
+
+        _count, header_row, headers = max(header_candidates, key=lambda item: item[0])
+        first_header_column = min(headers)
+        if headers[first_header_column] != start_hour:
+            errors.append(
+                f"{sheet_name} first visible hour is {headers[first_header_column]:02d}:00, "
+                f"expected {start_hour:02d}:00")
+
+        for column_index, header_hour in headers.items():
+            formula_hours = set()
+            for row_index in range(header_row + 1, row_count):
+                formula_hours.update(extract_formula_hours(
+                    _matrix_cell(formulas, row_index, column_index)))
+            if not formula_hours:
+                continue
+            checked_columns += 1
+            if formula_hours != {header_hour}:
+                found = ", ".join(f"{hour:02d}:00" for hour in sorted(formula_hours))
+                errors.append(
+                    f"{sheet_name} header {header_hour:02d}:00 uses formula hour(s) {found}")
+
+    if errors:
+        raise RuntimeError("Report hour alignment failed: " + "; ".join(errors))
+    if log:
+        log(f"[HOUR CHECK] Validated {checked_columns} hourly formula columns")
+
+
 def shift_range_left(rng: str, shift_cols: int) -> str:
     if shift_cols <= 0:
         return rng
@@ -1079,6 +1205,14 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
 
             delete_sheets = [x.sheet for x in active_group if x.delete_by_start]
             deleted_cols = delete_columns_by_start(wb, start_hour, delete_sheets, log=write) if delete_sheets else 0
+            if delete_sheets:
+                validation_ranges = {
+                    item.sheet: shift_range_left(item.cell_range, deleted_cols)
+                    for item in active_group if item.delete_by_start
+                }
+                validate_hour_formula_alignment(
+                    wb, delete_sheets, start_hour, log=write,
+                    target_ranges=validation_ranges)
 
             write(f"[CALCULATE] Calculating {wb_item.display_name}")
             excel_call(lambda: excel_app.CalculateFull(), write, f"calculate workbook {wb_item.display_name}", timeout=300)

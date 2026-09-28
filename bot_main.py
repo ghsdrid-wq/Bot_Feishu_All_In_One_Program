@@ -1636,7 +1636,9 @@ class App(ctk.CTk):
             "chat_id": chat_id,
             "app_id": app_id,
             "app_secret": app_secret,
-            "time_range": self.get_scheduler_time_range(),
+            # Filled immediately before each Run Now / automatic execution.
+            # Scheduler lifetime and report data range are separate concerns.
+            "time_range": None,
         }
 
     def on_prefire_toggled(self):
@@ -1850,6 +1852,24 @@ class App(ctk.CTk):
         end_date = business_date + timedelta(days=1) if start_hour >= end_hour else business_date
         end_dt = datetime.combine(end_date, datetime.min.time()).replace(hour=end_hour)
         return start_dt, end_dt
+
+    def get_report_time_range(self, moment: Optional[datetime] = None):
+        """Return the current business-day window for one report execution.
+
+        Scheduler Start/End dates decide when automatic runs are allowed. They
+        must not also become the export query range, otherwise a multi-day
+        scheduler re-exports and mixes multiple business days on every run.
+        """
+        self.refresh_scheduler_snapshot()
+        now = (moment or datetime.now()).replace(microsecond=0)
+        start_hour = self.scheduler_start_hour
+        business_date = (now - timedelta(days=1)).date() if now.hour < start_hour else now.date()
+        start_dt = datetime.combine(
+            business_date, datetime.min.time()).replace(hour=start_hour)
+        return (
+            start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            now.strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
     def build_home_page(self, master):
         page = ctk.CTkFrame(master, fg_color="#2e3440")
@@ -4533,8 +4553,9 @@ class App(ctk.CTk):
             level="START")
         self.prefire_active = True
         try:
+            target = datetime.now() + timedelta(minutes=lead)
             self.prewarm_jms_exports(scan_types,
-                                     time_range=settings.get("time_range"),
+                                     time_range=self.get_report_time_range(target),
                                      generation=None)
         finally:
             self.prefire_active = False
@@ -5378,6 +5399,12 @@ class App(ctk.CTk):
             return
         pipeline_error_key = None
         try:
+            # Main Run Now and automatic runs calculate a fresh data window at
+            # execution time. Manual DATA EXPORT keeps its explicitly selected
+            # range from prepare_dws_jms_settings().
+            run_settings = dict(run_settings)
+            if self.current_run_source in ("auto", "manual"):
+                run_settings["time_range"] = self.get_report_time_range()
             self.active_run_settings = run_settings
             if run_generation is None:
                 run_generation = self.begin_run_request()
@@ -5389,6 +5416,10 @@ class App(ctk.CTk):
             self.set_progress(8)
             self.set_pipeline_state(None, "ready")
             self.write_log("Pipeline started", level="START")
+            report_start, report_end = self.get_time_range()
+            self.write_log(
+                f"Report data range: {report_start} -> {report_end}",
+                level="INFO")
 
             steps = run_settings.get("steps") or {
                 key: default_on for key, _, _, default_on in PIPELINE_STEPS}

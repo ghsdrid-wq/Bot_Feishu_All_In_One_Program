@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.2
+
+- Separated the automatic scheduler lifetime from each report's business-day export range, preventing multi-day queries from mixing report dates, slowing JMS, and producing incomplete hourly tables.
+- Added a fail-closed Excel report check that blocks image delivery when a visible hour header no longer matches the hour used by its formulas.
+- Corrected the operational `AUTO PDA!T15` template formula for `Autopacking_pda11` from hour 12 to hour 04; preserved a dated backup beside the workbook.
+
 ## 2.0.1
 
 - Fixed JMS scheduler and prewarm exports passing `datetime` objects into JSON; export ranges are now serialized before requests are sent.
