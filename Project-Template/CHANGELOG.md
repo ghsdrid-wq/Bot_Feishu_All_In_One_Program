@@ -2,6 +2,8 @@
 
 ## 2.1.0
 
+- Removed the redundant standalone Dashboard navigation page while preserving the BOT REPORT Dashboard step and its generation, web-server, and Feishu delivery paths.
+- Removed the unused DATA EXPORT navigation page while preserving its DWS/JMS export routines for the main report pipeline.
 - Added a dedicated compact `จัดการสิทธิ์รหัส` page for blocked prefixes and exact-code exemptions.
 - Added multi-line Excel paste, TXT/CSV import/export, search, duplicate/invalid reporting, multi-delete, and 20-row pagination for 50–100+ entries.
 - Moved blocked-prefix editing out of the JMS Bot page and added a direct policy-management link there.

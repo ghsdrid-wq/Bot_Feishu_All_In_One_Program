@@ -33,23 +33,30 @@ class SchedulerRegressionTests(unittest.TestCase):
                          "AutoReportFeishuV" +
                          app_version.APP_VERSION.replace(".", "-"))
 
-    def test_new_policy_page_is_inserted_before_settings_for_old_nav_order(self) -> None:
+    def test_policy_page_is_inserted_and_retired_pages_are_removed(self) -> None:
         app = bot_main.App.__new__(bot_main.App)
         app.config = configparser.RawConfigParser()
         app.config["UI"] = {
-            "nav_order": "home,workbooks,data_export,dws_plan,jms_user,settings"
+            "nav_order": "home,workbooks,data_export,dws_plan,jms_user,dashboard,settings"
         }
         app.nav_items = {
             "home": ("", ""), "workbooks": ("", ""),
-            "data_export": ("", ""), "dws_plan": ("", ""),
+            "dws_plan": ("", ""),
             "jms_user": ("", ""), "code_policy": ("", ""),
-            "dashboard": ("", ""), "settings": ("", ""),
+            "settings": ("", ""),
         }
         self.assertEqual(
             app.get_nav_order(),
-            ["home", "workbooks", "data_export", "dws_plan", "jms_user",
-             "code_policy", "dashboard", "settings"],
+            ["home", "workbooks", "dws_plan", "jms_user",
+             "code_policy", "settings"],
         )
+
+    def test_dashboard_pipeline_step_remains_available_on_bot_report(self) -> None:
+        self.assertIn("dashboard", [step[0] for step in bot_main.PIPELINE_STEPS])
+
+    def test_data_export_backend_remains_available(self) -> None:
+        self.assertTrue(callable(bot_main.App.run_dws_jms_task))
+        self.assertTrue(callable(bot_main.App.run_dws_jms_process))
 
     def make_app(self) -> bot_main.App:
         app = bot_main.App.__new__(bot_main.App)

@@ -1,8 +1,9 @@
 # Current Work
 
 - Version 2.1.0 adds a dedicated JMS access-policy page with blocked prefixes, exact-code exemptions, bulk paste/import/export, search, multi-delete, and pagination.
+- The standalone Dashboard and DATA EXPORT navigation pages are removed from the desktop UI. Dashboard remains available as a BOT REPORT step, and the underlying DWS/JMS export routines remain intact for the main pipeline.
 - JMS commands now snapshot one atomic JSON policy per message; exact exemptions override matching prefixes, while unreadable policy data blocks modifying commands.
-- Automatic and Run Now reports now calculate a fresh current-business-day data window at execution time; manual DATA EXPORT continues to honor its explicitly selected range.
+- Automatic and Run Now reports calculate a fresh current-business-day data window at execution time; the retained internal manual-export helper still honors an explicitly supplied range.
 - Hourly Excel reports are validated after start-hour column trimming; a shifted header/formula pair now fails the pipeline before any incorrect image can be sent.
 - The operational DWS/PDA workbook was checked across the exported ranges; 40 DWS/PDA hourly formula columns align after correcting `AUTO PDA!T15`. Backup: `C:\0DWS\1DWS_&_PDA_v1.8.3 Bot.before-hour-fix-20260929.xlsx`.
 - Scheduled early JMS snapshots are no longer created or reused because they cannot contain scans from the remaining minutes; AUTO/PDA generation still starts in parallel inside the actual run.
@@ -23,7 +24,7 @@
 - Metrics ingestion replaces successful source partitions, reloads changed config, and preserves last-known data on source failure.
 - Historical date selections and attachment-only Feishu delivery are preserved.
 - Configured round/shift times render consistently on desktop and mobile without changing the approved chart layout.
-- Automated regression suite passes 31 tests, including policy parsing, migration, fail-closed behavior, handler integration, and navigation migration.
+- Automated regression suite passes 33 tests, including policy parsing, migration, fail-closed behavior, handler integration, retired-page filtering, and backend preservation.
 - Application version is `2.1.0`; the release folder is derived automatically as `dist/AutoReportFeishuV2-1-0`.
 - Future releases use `python tools/bump_version.py patch` before building; both UI and release folder update from the same source.
 - The complete `AutoReportFeishuV2-1-0` onedir release passed a 12-second launch smoke test with the v2.1.0 title, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.

@@ -184,7 +184,7 @@ DEFAULT_TIME = {
 }
 
 DEFAULT_UI = {
-    "nav_order": "home,workbooks,data_export,dws_plan,jms_user,code_policy,dashboard,settings",
+    "nav_order": "home,workbooks,dws_plan,jms_user,code_policy,settings",
 }
 
 DEFAULT_DWS_JMS = {
@@ -1689,11 +1689,9 @@ class App(ctk.CTk):
         self.nav_items = {
             "home": ("⌂  BOT REPORT", "nav_home"),
             "workbooks": ("▣  ไฟล์ Excel", "nav_workbooks"),
-            "data_export": ("⇩  DATA EXPORT", "nav_data_export"),
             "dws_plan": ("▦  BOT DWS PLAN", "nav_dws_plan"),
             "jms_user": ("👤  BOT JMS USER", "nav_jms_user"),
             "code_policy": ("🔐  สิทธิ์รหัส", "nav_code_policy"),
-            "dashboard": ("📊  DASHBOARD", "nav_dashboard"),
             "settings": ("⚙  ตั้งค่า", "nav_settings"),
         }
         self.render_nav_menu()
@@ -1714,11 +1712,9 @@ class App(ctk.CTk):
         self.pages = {
             "home": self.build_home_page(self.content),
             "workbooks": self.build_workbooks_page(self.content),
-            "data_export": self.build_data_export_page(self.content),
             "dws_plan": self.build_dws_plan_page(self.content),
             "jms_user": self.build_jms_user_page(self.content),
             "code_policy": self.build_code_policy_page(self.content),
-            "dashboard": self.build_dashboard_page(self.content),
             "settings": self.build_settings_page(self.content),
         }
         self.show_page("home")
@@ -3137,7 +3133,7 @@ class App(ctk.CTk):
     def can_open_page_during_runtime(self, key: str) -> bool:
         if not (self.running or self.scheduler_running or self.runtime_locked):
             return True
-        return key in {"home", "dws_plan", "jms_user", "code_policy", "dashboard"}
+        return key in {"home", "dws_plan", "jms_user", "code_policy"}
 
     def layout_nav_rows(self):
         for idx, key in enumerate(self.get_nav_order()):
@@ -3821,7 +3817,7 @@ class App(ctk.CTk):
         for key, btn in getattr(self, "nav_buttons", {}).items():
             try:
                 nav_state = "normal" if active and key in {
-                    "home", "dws_plan", "jms_user", "code_policy", "dashboard"
+                    "home", "dws_plan", "jms_user", "code_policy"
                 } else state
                 btn.configure(state=nav_state)
             except Exception:
