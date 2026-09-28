@@ -1,10 +1,21 @@
 # Changelog
 
+## 2.1.0
+
+- Added a dedicated compact `จัดการสิทธิ์รหัส` page for blocked prefixes and exact-code exemptions.
+- Added multi-line Excel paste, TXT/CSV import/export, search, duplicate/invalid reporting, multi-delete, and 20-row pagination for 50–100+ entries.
+- Moved blocked-prefix editing out of the JMS Bot page and added a direct policy-management link there.
+- Added atomic `jms_user_policy.json` storage, one-time migration from legacy `blocked_keywords`, and preservation across onedir upgrades.
+- Applied exact exemptions before prefix blocks and fail closed when policy data is missing or corrupt.
+- Snapshot policy once per incoming Feishu message so a bulk command cannot use mixed rules during a concurrent edit.
+- Verified the real desktop UI with 100 exemptions; pagination limits rendering to 20 rows and reduced measured render time from about 1.9s to 0.54s.
+- Expanded the automated suite to 31 passing tests and built/smoke-tested `AutoReportFeishuV2-1-0` with a responsive v2.1.0 window and ports 6100/6200.
+
 ## 2.0.3
 
 - Removed the scheduled JMS early-export control and execution path; same-run AUTO/PDA generation remains parallel and starts only at the report cutoff.
 - Made shared `config.ini` writes atomic and preserved the Dashboard-owned token when the main UI saves an older in-memory configuration.
-- Added regression coverage for cross-thread config ownership and literal percent signs in operator-entered secrets/URLs; the full automated suite now has 25 tests.
+- Added regression coverage for cross-thread config ownership and literal percent signs in operator-entered secrets/URLs.
 - Switched production INI readers to raw parsing so `%` in credentials or URLs is treated as data instead of interpolation syntax.
 - Cleared fatal/static closure checks in the Excel export path without changing the accepted workbook or chart layout.
 - Confirmed with live source reads that missing current-day JMS input now stops Dashboard output instead of creating and sending a plausible all-zero report.

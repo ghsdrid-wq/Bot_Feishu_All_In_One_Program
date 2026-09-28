@@ -26,6 +26,7 @@ from waitress import create_server
 
 from controller.controller_api import register_controller, start_api
 from core.jms_api import search_user, reset_app_password, reset_jms_password, enable_user
+from core import jms_policy
 from core.logger import write_log
 from app_version import APP_VERSION
 
@@ -183,7 +184,7 @@ DEFAULT_TIME = {
 }
 
 DEFAULT_UI = {
-    "nav_order": "home,workbooks,data_export,dws_plan,jms_user,settings",
+    "nav_order": "home,workbooks,data_export,dws_plan,jms_user,code_policy,dashboard,settings",
 }
 
 DEFAULT_DWS_JMS = {
@@ -1216,6 +1217,12 @@ class App(ctk.CTk):
         self.auto_run_settings = None
         self.active_run_settings = None
         self.ensure_config()
+        legacy_blocked = (
+            self.config.get("JMS_USER", "blocked_keywords", fallback="").split(",")
+            if "JMS_USER" in self.config else []
+        )
+        self.jms_policy_path = jms_policy.default_policy_path()
+        jms_policy.ensure_policy(self.jms_policy_path, legacy_blocked)
 
         self.task_queue = queue.Queue()
         self.worker_running = True
@@ -1685,6 +1692,7 @@ class App(ctk.CTk):
             "data_export": ("⇩  DATA EXPORT", "nav_data_export"),
             "dws_plan": ("▦  BOT DWS PLAN", "nav_dws_plan"),
             "jms_user": ("👤  BOT JMS USER", "nav_jms_user"),
+            "code_policy": ("🔐  สิทธิ์รหัส", "nav_code_policy"),
             "dashboard": ("📊  DASHBOARD", "nav_dashboard"),
             "settings": ("⚙  ตั้งค่า", "nav_settings"),
         }
@@ -1709,6 +1717,7 @@ class App(ctk.CTk):
             "data_export": self.build_data_export_page(self.content),
             "dws_plan": self.build_dws_plan_page(self.content),
             "jms_user": self.build_jms_user_page(self.content),
+            "code_policy": self.build_code_policy_page(self.content),
             "dashboard": self.build_dashboard_page(self.content),
             "settings": self.build_settings_page(self.content),
         }
@@ -2401,6 +2410,132 @@ class App(ctk.CTk):
         self.build_controller_jms_tab(body)
         return page
 
+    def build_code_policy_page(self, master):
+        page = ctk.CTkFrame(master, fg_color="#2e3440")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(1, weight=1)
+        self.header(
+            page,
+            "จัดการสิทธิ์รหัส",
+            "กำหนดหัวรหัสที่บล็อกและรหัสละเว้นสำหรับคำสั่งรีรหัสหรือเปิดใช้งาน",
+        ).grid(row=0, column=0, padx=24, pady=(22, 12), sticky="ew")
+
+        body = ctk.CTkFrame(page, fg_color="#2e3440")
+        body.grid(row=1, column=0, padx=24, pady=(0, 20), sticky="nsew")
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_rowconfigure(2, weight=1)
+
+        summary = ctk.CTkFrame(body, fg_color="transparent")
+        summary.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        summary.grid_columnconfigure((0, 1), weight=1)
+        blocked_card = self.make_card(summary, "#3b4252", 18)
+        blocked_card.grid(row=0, column=0, padx=(0, 6), sticky="ew")
+        exempt_card = self.make_card(summary, "#3b4252", 18)
+        exempt_card.grid(row=0, column=1, padx=(6, 0), sticky="ew")
+        ctk.CTkLabel(
+            blocked_card, text="หัวรหัสที่บล็อก", text_color="#aeb8cc",
+            font=ctk.CTkFont(size=13),
+        ).grid(row=0, column=0, padx=18, pady=(12, 0), sticky="w")
+        self.policy_blocked_count = ctk.CTkLabel(
+            blocked_card, text="0", text_color="#d3868e",
+            font=ctk.CTkFont(size=27, weight="bold"),
+        )
+        self.policy_blocked_count.grid(row=1, column=0, padx=18, pady=(0, 12), sticky="w")
+        ctk.CTkLabel(
+            exempt_card, text="รหัสละเว้น", text_color="#aeb8cc",
+            font=ctk.CTkFont(size=13),
+        ).grid(row=0, column=0, padx=18, pady=(12, 0), sticky="w")
+        self.policy_exempt_count = ctk.CTkLabel(
+            exempt_card, text="0", text_color="#a3be8c",
+            font=ctk.CTkFont(size=27, weight="bold"),
+        )
+        self.policy_exempt_count.grid(row=1, column=0, padx=18, pady=(0, 12), sticky="w")
+
+        toolbar = self.make_card(body, "#3b4252", 18)
+        toolbar.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        toolbar.grid_columnconfigure(1, weight=1)
+        self.policy_mode = "blocked_prefixes"
+        self.policy_tabs = ctk.CTkSegmentedButton(
+            toolbar,
+            values=["หัวรหัสที่บล็อก", "รหัสละเว้น"],
+            command=self.set_policy_tab,
+            selected_color="#5e81ac",
+            selected_hover_color="#4c6e93",
+            unselected_color="#434c5e",
+            unselected_hover_color="#4c566a",
+        )
+        self.policy_tabs.set("หัวรหัสที่บล็อก")
+        self.policy_tabs.grid(row=0, column=0, padx=(14, 10), pady=14, sticky="w")
+        self.policy_search_var = ctk.StringVar(value="")
+        self.policy_search_var.trace_add("write", lambda *_args: self.on_policy_search())
+        self.policy_search_entry = ctk.CTkEntry(
+            toolbar, textvariable=self.policy_search_var,
+            placeholder_text="ค้นหารหัส...", height=36,
+        )
+        self.policy_search_entry.grid(row=0, column=1, padx=8, pady=14, sticky="ew")
+        ctk.CTkButton(
+            toolbar, text="＋ เพิ่มรายการ", width=120, height=36,
+            fg_color="#5e81ac", hover_color="#4c6e93",
+            command=self.open_policy_bulk_dialog,
+        ).grid(row=0, column=2, padx=6, pady=14)
+        ctk.CTkButton(
+            toolbar, text="นำเข้า", width=74, height=36,
+            fg_color="#4c566a", hover_color="#5e6779",
+            command=self.import_policy_entries,
+        ).grid(row=0, column=3, padx=6, pady=14)
+        ctk.CTkButton(
+            toolbar, text="ส่งออก", width=74, height=36,
+            fg_color="#4c566a", hover_color="#5e6779",
+            command=self.export_policy_entries,
+        ).grid(row=0, column=4, padx=6, pady=14)
+        ctk.CTkButton(
+            toolbar, text="ลบที่เลือก", width=92, height=36,
+            fg_color="#69434a", hover_color="#7d4d56",
+            command=self.delete_selected_policy_entries,
+        ).grid(row=0, column=5, padx=(6, 14), pady=14)
+
+        list_card = self.make_card(body, "#323847", 18)
+        list_card.grid(row=2, column=0, sticky="nsew")
+        list_card.grid_columnconfigure(0, weight=1)
+        list_card.grid_rowconfigure(2, weight=1)
+        list_top = ctk.CTkFrame(list_card, fg_color="transparent")
+        list_top.grid(row=0, column=0, padx=16, pady=(14, 6), sticky="ew")
+        list_top.grid_columnconfigure(0, weight=1)
+        self.policy_list_title = ctk.CTkLabel(
+            list_top, text="หัวรหัสที่บล็อก", text_color="#eceff4",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        )
+        self.policy_list_title.grid(row=0, column=0, sticky="w")
+        self.policy_visible_count = ctk.CTkLabel(
+            list_top, text="0 รายการ", text_color="#aeb8cc")
+        self.policy_visible_count.grid(row=0, column=1, sticky="e")
+        self.policy_prev_button = ctk.CTkButton(
+            list_top, text="‹", width=34, height=28,
+            fg_color="#434c5e", hover_color="#4c566a",
+            command=lambda: self.change_policy_page(-1),
+        )
+        self.policy_prev_button.grid(row=0, column=2, padx=(10, 4))
+        self.policy_next_button = ctk.CTkButton(
+            list_top, text="›", width=34, height=28,
+            fg_color="#434c5e", hover_color="#4c566a",
+            command=lambda: self.change_policy_page(1),
+        )
+        self.policy_next_button.grid(row=0, column=3, padx=(0, 2))
+        ctk.CTkLabel(
+            list_card,
+            text="รหัสละเว้นแบบตรงทั้งรหัสจะมีสิทธิ์เหนือหัวรหัสที่บล็อก",
+            text_color="#7b8496", anchor="w",
+        ).grid(row=1, column=0, padx=16, pady=(0, 6), sticky="ew")
+        self.policy_list_frame = ctk.CTkScrollableFrame(
+            list_card, fg_color="#252b36", corner_radius=12)
+        self.policy_list_frame.grid(row=2, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        self.policy_list_frame.grid_columnconfigure(1, weight=1)
+        self.policy_selection = {}
+        self.policy_page = 0
+        self.policy_page_size = 20
+        self.render_policy_list()
+        return page
+
     def build_controller_dws_tab(self, tab):
         tab.grid_columnconfigure(0, weight=1)
         tab.grid_rowconfigure(2, weight=1)
@@ -2460,75 +2595,311 @@ class App(ctk.CTk):
         self.update_bot_ui()
 
     def get_jms_blocked_keywords(self):
-        raw = self.config["JMS_USER"].get("blocked_keywords", "") if "JMS_USER" in self.config else ""
-        return [k.strip().upper() for k in raw.split(",") if k.strip()]
+        return jms_policy.load_policy(self.jms_policy_path)["blocked_prefixes"]
 
-    def set_jms_blocked_keywords(self, keywords):
-        if "JMS_USER" not in self.config:
-            self.config["JMS_USER"] = {}
-        self.config["JMS_USER"]["blocked_keywords"] = ",".join(keywords)
-        save_config(self.config)
-        self.render_jms_blocked_keywords()
+    def get_jms_exempt_codes(self):
+        return jms_policy.load_policy(self.jms_policy_path)["exempt_codes"]
 
-    def add_jms_blocked_keyword(self):
-        keyword = clean_input_value(self.jms_block_entry.get(), collapse_internal_spaces=True).replace(" ", "").upper()
-        self.jms_block_entry.delete(0, "end")
-        keywords = self.get_jms_blocked_keywords()
-        if not keyword or keyword in keywords:
-            return
-        self.set_jms_blocked_keywords(keywords + [keyword])
-        self.jms_log(f"[BLOCK ADD] {keyword}")
-
-    def remove_jms_blocked_keyword(self, keyword):
-        self.set_jms_blocked_keywords([k for k in self.get_jms_blocked_keywords() if k != keyword])
-        self.jms_log(f"[BLOCK REMOVE] {keyword}")
-
-    def render_jms_blocked_keywords(self):
-        for child in self.jms_block_list_frame.winfo_children():
-            child.destroy()
-        keywords = self.get_jms_blocked_keywords()
-        if not keywords:
-            ctk.CTkLabel(self.jms_block_list_frame, text="ยังไม่มี keyword", text_color="#7b8598").grid(row=0, column=0, sticky="w")
-            return
-        for idx, keyword in enumerate(keywords):
-            ctk.CTkButton(
-                self.jms_block_list_frame, text=f"{keyword}  ✕", width=0, height=28,
-                fg_color="#bf616a", hover_color="#a54f58",
-                command=lambda k=keyword: self.remove_jms_blocked_keyword(k),
-            ).grid(row=0, column=idx, padx=(0, 6), sticky="w")
+    def get_jms_policy_decision(self, staff_no):
+        return jms_policy.evaluate_code(staff_no, self.jms_policy_path)
 
     def get_jms_blocked_match(self, staff_no):
-        staff = str(staff_no or "").strip().upper()
-        return next((k for k in self.get_jms_blocked_keywords() if staff.startswith(k)), None)
+        decision = self.get_jms_policy_decision(staff_no)
+        return decision.matched_prefix if not decision.allowed else None
+
+    def set_policy_tab(self, label):
+        self.policy_mode = (
+            "exempt_codes" if label == "รหัสละเว้น" else "blocked_prefixes")
+        self.policy_page = 0
+        self.policy_search_var.set("")
+        self.render_policy_list()
+
+    def on_policy_search(self):
+        pending = getattr(self, "_policy_search_job", None)
+        if pending is not None:
+            try:
+                self.after_cancel(pending)
+            except Exception:
+                pass
+        self._policy_search_job = self.after(180, self.apply_policy_search)
+
+    def apply_policy_search(self):
+        self._policy_search_job = None
+        self.policy_page = 0
+        self.render_policy_list()
+
+    def change_policy_page(self, delta):
+        self.policy_page = max(0, self.policy_page + int(delta))
+        self.render_policy_list()
+
+    def render_policy_list(self):
+        frame = getattr(self, "policy_list_frame", None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        self.policy_selection = {}
+        try:
+            policy = jms_policy.load_policy(self.jms_policy_path)
+        except jms_policy.PolicyError as exc:
+            self.policy_visible_count.configure(text="อ่านข้อมูลไม่ได้")
+            ctk.CTkLabel(
+                frame, text=f"ไม่สามารถอ่านนโยบายได้\n{exc}",
+                text_color="#d3868e", justify="left",
+            ).grid(row=0, column=0, columnspan=3, padx=18, pady=18, sticky="w")
+            return
+
+        self.policy_blocked_count.configure(
+            text=str(len(policy["blocked_prefixes"])))
+        self.policy_exempt_count.configure(text=str(len(policy["exempt_codes"])))
+        title = "รหัสละเว้น" if self.policy_mode == "exempt_codes" else "หัวรหัสที่บล็อก"
+        self.policy_list_title.configure(text=title)
+        query = self.policy_search_var.get().strip().upper()
+        filtered_values = [
+            value for value in policy[self.policy_mode] if query in value]
+        total = len(filtered_values)
+        page_size = max(1, getattr(self, "policy_page_size", 20))
+        max_page = max(0, (total - 1) // page_size)
+        self.policy_page = min(max(0, getattr(self, "policy_page", 0)), max_page)
+        start_index = self.policy_page * page_size
+        values = filtered_values[start_index:start_index + page_size]
+        if total:
+            self.policy_visible_count.configure(
+                text=f"{start_index + 1}–{start_index + len(values)} จาก {total}")
+        else:
+            self.policy_visible_count.configure(text="0 รายการ")
+        self.policy_prev_button.configure(
+            state="normal" if self.policy_page > 0 else "disabled")
+        self.policy_next_button.configure(
+            state="normal" if self.policy_page < max_page else "disabled")
+        if not filtered_values:
+            message = "ไม่พบรายการที่ค้นหา" if query else "ยังไม่มีรายการ"
+            ctk.CTkLabel(
+                frame, text=message, text_color="#7b8496",
+            ).grid(row=0, column=0, columnspan=3, padx=18, pady=24, sticky="w")
+            return
+
+        for row_index, value in enumerate(values):
+            selected = ctk.BooleanVar(value=False)
+            self.policy_selection[value] = selected
+            ctk.CTkCheckBox(
+                frame, text="", width=24, checkbox_width=19, checkbox_height=19,
+                variable=selected,
+            ).grid(row=row_index, column=0, padx=(12, 6), pady=5)
+            row = ctk.CTkFrame(frame, fg_color="#323847", corner_radius=10)
+            row.grid(row=row_index, column=1, padx=4, pady=5, sticky="ew")
+            row.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                row, text=value, text_color="#eceff4", anchor="w",
+                font=("Consolas", 14, "bold"),
+            ).grid(row=0, column=0, padx=14, pady=(8, 0), sticky="ew")
+            detail = (
+                "อนุญาตเฉพาะรหัสนี้ แม้ตรงกับหัวรหัสที่บล็อก"
+                if self.policy_mode == "exempt_codes"
+                else "บล็อกทุก USER ที่ขึ้นต้นด้วยหัวรหัสนี้"
+            )
+            ctk.CTkLabel(
+                row, text=detail, text_color="#7b8496", anchor="w",
+                font=ctk.CTkFont(size=11),
+            ).grid(row=1, column=0, padx=14, pady=(0, 8), sticky="ew")
+            ctk.CTkButton(
+                frame, text="ลบ", width=54, height=30,
+                fg_color="#4a3438", hover_color="#69434a",
+                command=lambda item=value: self.delete_policy_entry(item),
+            ).grid(row=row_index, column=2, padx=(6, 12), pady=5)
+
+    def open_policy_bulk_dialog(self):
+        title = "เพิ่มรหัสละเว้น" if self.policy_mode == "exempt_codes" else "เพิ่มหัวรหัสที่บล็อก"
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(title)
+        dialog.geometry("720x520")
+        dialog.minsize(620, 440)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.update_idletasks()
+        dialog_x = max(0, self.winfo_rootx() + (self.winfo_width() - 720) // 2)
+        dialog_y = max(0, self.winfo_rooty() + (self.winfo_height() - 520) // 2)
+        dialog.geometry(f"720x520+{dialog_x}+{dialog_y}")
+        dialog.grid_columnconfigure(0, weight=1)
+        dialog.grid_rowconfigure(2, weight=1)
+        ctk.CTkLabel(
+            dialog, text=title, text_color="#eceff4",
+            font=ctk.CTkFont(size=24, weight="bold"),
+        ).grid(row=0, column=0, padx=24, pady=(22, 4), sticky="w")
+        ctk.CTkLabel(
+            dialog,
+            text="วางจาก Excel ได้ทั้งคอลัมน์ หรือคั่นรายการด้วยบรรทัดใหม่ comma และช่องว่าง",
+            text_color="#aeb8cc", anchor="w",
+        ).grid(row=1, column=0, padx=24, pady=(0, 10), sticky="ew")
+        text_box = ctk.CTkTextbox(
+            dialog, fg_color="#252b36", text_color="#eceff4",
+            font=("Consolas", 14), corner_radius=12,
+        )
+        text_box.grid(row=2, column=0, padx=24, pady=(0, 12), sticky="nsew")
+        actions = ctk.CTkFrame(dialog, fg_color="transparent")
+        actions.grid(row=3, column=0, padx=24, pady=(0, 22), sticky="ew")
+        actions.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(
+            actions, text="ยกเลิก", width=90, fg_color="#434c5e",
+            hover_color="#4c566a", command=dialog.destroy,
+        ).grid(row=0, column=1, padx=6)
+        ctk.CTkButton(
+            actions, text="ตรวจสอบและเพิ่ม", width=150,
+            fg_color="#5e81ac", hover_color="#4c6e93",
+            command=lambda: self.add_policy_entries(
+                text_box.get("1.0", "end"), dialog),
+        ).grid(row=0, column=2, padx=(6, 0))
+        text_box.focus_set()
+
+    def add_policy_entries(self, text, dialog=None):
+        valid, invalid, duplicate_input = jms_policy.parse_bulk_entries(
+            text, self.policy_mode)
+        try:
+            policy = jms_policy.load_policy(self.jms_policy_path)
+        except jms_policy.PolicyError as exc:
+            messagebox.showerror("จัดการสิทธิ์รหัส", str(exc), parent=dialog or self)
+            return
+        existing = set(policy[self.policy_mode])
+        new_values = [value for value in valid if value not in existing]
+        duplicate_count = len(duplicate_input) + len(valid) - len(new_values)
+        if invalid:
+            preview = "\n".join(invalid[:10])
+            more = f"\n...อีก {len(invalid) - 10} รายการ" if len(invalid) > 10 else ""
+            proceed = messagebox.askyesno(
+                "พบรายการรูปแบบไม่ถูกต้อง",
+                f"ไม่ถูกต้อง {len(invalid)} รายการ:\n{preview}{more}\n\n"
+                f"เพิ่มเฉพาะรายการที่ถูกต้อง {len(new_values)} รายการหรือไม่?",
+                parent=dialog or self,
+            )
+            if not proceed:
+                return
+        if new_values:
+            policy[self.policy_mode].extend(new_values)
+            try:
+                jms_policy.save_policy(policy, self.jms_policy_path)
+            except jms_policy.PolicyError as exc:
+                messagebox.showerror("จัดการสิทธิ์รหัส", str(exc), parent=dialog or self)
+                return
+        if dialog is not None:
+            dialog.destroy()
+        self.render_policy_list()
+        self.jms_log(
+            f"[POLICY ADD] {self.policy_mode}: {len(new_values)} added, "
+            f"{duplicate_count} duplicate, {len(invalid)} invalid")
+        messagebox.showinfo(
+            "บันทึกเรียบร้อย",
+            f"เพิ่มแล้ว {len(new_values)} รายการ\n"
+            f"รายการซ้ำ {duplicate_count}\nรูปแบบไม่ถูกต้อง {len(invalid)}",
+            parent=self,
+        )
+
+    def delete_policy_entry(self, value, confirm=True):
+        if confirm and not messagebox.askyesno(
+                "ยืนยันการลบ", f"ลบ {value} ออกจากรายการใช่ไหม?", parent=self):
+            return
+        try:
+            policy = jms_policy.load_policy(self.jms_policy_path)
+            policy[self.policy_mode] = [
+                item for item in policy[self.policy_mode] if item != value]
+            jms_policy.save_policy(policy, self.jms_policy_path)
+        except jms_policy.PolicyError as exc:
+            messagebox.showerror("จัดการสิทธิ์รหัส", str(exc), parent=self)
+            return
+        self.render_policy_list()
+        self.jms_log(f"[POLICY REMOVE] {self.policy_mode}: {value}")
+
+    def delete_selected_policy_entries(self):
+        selected = [
+            value for value, variable in self.policy_selection.items()
+            if variable.get()
+        ]
+        if not selected:
+            messagebox.showinfo("ลบรายการ", "กรุณาเลือกรายการก่อน", parent=self)
+            return
+        if not messagebox.askyesno(
+                "ยืนยันการลบ", f"ลบรายการที่เลือก {len(selected)} รายการใช่ไหม?",
+                parent=self):
+            return
+        try:
+            policy = jms_policy.load_policy(self.jms_policy_path)
+            selected_set = set(selected)
+            policy[self.policy_mode] = [
+                item for item in policy[self.policy_mode]
+                if item not in selected_set]
+            jms_policy.save_policy(policy, self.jms_policy_path)
+        except jms_policy.PolicyError as exc:
+            messagebox.showerror("จัดการสิทธิ์รหัส", str(exc), parent=self)
+            return
+        self.render_policy_list()
+        self.jms_log(
+            f"[POLICY REMOVE] {self.policy_mode}: {len(selected)} selected")
+
+    def import_policy_entries(self):
+        path = filedialog.askopenfilename(
+            parent=self,
+            title="นำเข้ารายการสิทธิ์รหัส",
+            filetypes=[("Text or CSV", "*.txt *.csv"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            try:
+                with open(path, "r", encoding="utf-8-sig") as handle:
+                    text = handle.read()
+            except UnicodeDecodeError:
+                with open(path, "r", encoding="cp874") as handle:
+                    text = handle.read()
+        except OSError as exc:
+            messagebox.showerror("นำเข้าไม่สำเร็จ", str(exc), parent=self)
+            return
+        self.add_policy_entries(text)
+
+    def export_policy_entries(self):
+        try:
+            values = jms_policy.load_policy(
+                self.jms_policy_path)[self.policy_mode]
+        except jms_policy.PolicyError as exc:
+            messagebox.showerror("ส่งออกไม่สำเร็จ", str(exc), parent=self)
+            return
+        default_name = (
+            "jms_exempt_codes.txt" if self.policy_mode == "exempt_codes"
+            else "jms_blocked_prefixes.txt")
+        path = filedialog.asksaveasfilename(
+            parent=self, title="ส่งออกรายการสิทธิ์รหัส",
+            defaultextension=".txt", initialfile=default_name,
+            filetypes=[("Text file", "*.txt"), ("CSV file", "*.csv")],
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8-sig", newline="") as handle:
+                handle.write("\n".join(values) + ("\n" if values else ""))
+        except OSError as exc:
+            messagebox.showerror("ส่งออกไม่สำเร็จ", str(exc), parent=self)
+            return
+        messagebox.showinfo(
+            "ส่งออกเรียบร้อย", f"บันทึก {len(values)} รายการแล้ว", parent=self)
 
     def build_controller_jms_tab(self, tab):
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(2, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
         control = self.make_card(tab, "#3b4252", 18)
         control.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
+        control.grid_columnconfigure(2, weight=1)
         self.btn_start_jms = ctk.CTkButton(control, text="START BOT", width=120, fg_color="#a3be8c", hover_color="#8ca876", text_color="#2e3440", command=self.start_jms_placeholder)
         self.btn_stop_jms = ctk.CTkButton(control, text="STOP BOT", width=120, fg_color="#bf616a", hover_color="#a54f58", command=self.stop_jms_placeholder)
         self.btn_start_jms.grid(row=0, column=0, padx=(16, 8), pady=14)
         self.jms_status_label = ctk.CTkLabel(control, text="Bot : OFFLINE", text_color="#d3868e", font=ctk.CTkFont(size=13, weight="bold"))
         self.jms_status_label.grid(row=0, column=1, padx=14, pady=14, sticky="w")
         ctk.CTkLabel(control, text="เมื่อเปิด JMS Bot แล้ว คำสั่งรีรหัส/ปลดล็อคจาก Feishu จะถูกประมวลผล", text_color="#aeb8cc").grid(row=0, column=2, padx=14, pady=14, sticky="w")
-
-        # รหัสที่ขึ้นต้นด้วย keyword เหล่านี้ จะไม่ยอมให้รีรหัส/เปิดใช้งาน
-        block_card = self.make_card(tab, "#3b4252", 18)
-        block_card.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="ew")
-        block_card.grid_columnconfigure(3, weight=1)
-        ctk.CTkLabel(block_card, text="Blocked Keywords", text_color="#eceff4", font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, columnspan=4, padx=16, pady=(12, 2), sticky="w")
-        ctk.CTkLabel(block_card, text="รหัสที่ขึ้นต้นด้วย keyword เหล่านี้ จะรีรหัส/เปิดใช้งานไม่ได้", text_color="#aeb8cc").grid(row=1, column=0, columnspan=4, padx=16, pady=(0, 6), sticky="w")
-        self.jms_block_entry = ctk.CTkEntry(block_card, placeholder_text="เช่น 999004", width=200)
-        self.jms_block_entry.grid(row=2, column=0, padx=(16, 8), pady=(0, 12), sticky="w")
-        self.jms_block_entry.bind("<Return>", lambda _e: self.add_jms_blocked_keyword())
-        ctk.CTkButton(block_card, text="Add", width=70, fg_color="#5e81ac", hover_color="#4c6e93", command=self.add_jms_blocked_keyword).grid(row=2, column=1, padx=(0, 12), pady=(0, 12))
-        self.jms_block_list_frame = ctk.CTkFrame(block_card, fg_color="transparent")
-        self.jms_block_list_frame.grid(row=2, column=2, columnspan=2, padx=(0, 16), pady=(0, 12), sticky="w")
-        self.render_jms_blocked_keywords()
+        ctk.CTkButton(
+            control, text="จัดการสิทธิ์รหัส", width=132,
+            fg_color="#5e81ac", hover_color="#4c6e93",
+            command=lambda: self.show_page("code_policy"),
+        ).grid(row=0, column=3, padx=(8, 16), pady=14)
 
         log_card = self.make_card(tab, "#2e3440", 18)
-        log_card.grid(row=2, column=0, padx=10, pady=(0, 10), sticky="nsew")
+        log_card.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nsew")
         log_card.grid_columnconfigure(0, weight=1)
         log_card.grid_rowconfigure(1, weight=1)
         top = ctk.CTkFrame(log_card, fg_color="transparent")
@@ -2717,8 +3088,19 @@ class App(ctk.CTk):
         raw = self.config.get("UI", "nav_order", fallback=",".join(default_order))
         order = [x.strip() for x in raw.split(",") if x.strip() in self.nav_items]
         for key in default_order:
-            if key not in order:
+            if key in order:
+                continue
+            # Insert newly introduced pages beside their logical neighbours
+            # without discarding an operator's existing drag order.
+            next_existing = next(
+                (candidate for candidate in default_order[default_order.index(key) + 1:]
+                 if candidate in order),
+                None,
+            )
+            if next_existing is None:
                 order.append(key)
+            else:
+                order.insert(order.index(next_existing), key)
         return order
 
     def save_nav_order(self, order):
@@ -2755,7 +3137,7 @@ class App(ctk.CTk):
     def can_open_page_during_runtime(self, key: str) -> bool:
         if not (self.running or self.scheduler_running or self.runtime_locked):
             return True
-        return key in {"home", "dws_plan", "jms_user", "dashboard"}
+        return key in {"home", "dws_plan", "jms_user", "code_policy", "dashboard"}
 
     def layout_nav_rows(self):
         for idx, key in enumerate(self.get_nav_order()):
@@ -3438,7 +3820,9 @@ class App(ctk.CTk):
                 pass
         for key, btn in getattr(self, "nav_buttons", {}).items():
             try:
-                nav_state = "normal" if active and key in {"home", "dws_plan", "jms_user"} else state
+                nav_state = "normal" if active and key in {
+                    "home", "dws_plan", "jms_user", "code_policy", "dashboard"
+                } else state
                 btn.configure(state=nav_state)
             except Exception:
                 pass
@@ -5985,14 +6369,41 @@ class App(ctk.CTk):
             reply_feishu_message(message_id, "❌ ไม่พบ USER")
             return True
 
+        policy_snapshot = None
+        policy_error = None
+        if command_type != "LOOKUP_ONLY":
+            try:
+                # One immutable snapshot per incoming message prevents policy
+                # edits from splitting a multi-user command across two rules.
+                policy_snapshot = jms_policy.load_policy(self.jms_policy_path)
+            except jms_policy.PolicyError as exc:
+                policy_error = str(exc)
+
         success_text, fail_text = [], []
         for staff_no in staff_list:
-            blocked = self.get_jms_blocked_match(staff_no)
-            if blocked and command_type != "LOOKUP_ONLY":
-                fail_text.append(f"❌ รหัส {staff_no} ถูกระงับการใช้งาน (รหัสขึ้นต้นด้วย {blocked} ยกเลิกใช้งานแล้ว) ไม่สามารถรีรหัส/เปิดใช้งานได้")
-                self.jms_log(f"[BLOCKED] {staff_no} (keyword {blocked})")
-                write_log(status="BLOCKED", user=staff_no, action=command_type, detail=f"BLOCKED KEYWORD : {blocked}")
-                continue
+            if command_type != "LOOKUP_ONLY":
+                if policy_error:
+                    fail_text.append(
+                        f"❌ ระบบสิทธิ์รหัสขัดข้อง จึงระงับคำสั่งของ {staff_no} เพื่อความปลอดภัย")
+                    self.jms_log(f"[POLICY ERROR] {policy_error}")
+                    write_log(
+                        status="BLOCKED", user=staff_no, action=command_type,
+                        detail=f"POLICY ERROR : {policy_error}")
+                    continue
+                decision = jms_policy.evaluate_policy(staff_no, policy_snapshot)
+                if not decision.allowed:
+                    blocked = decision.matched_prefix
+                    fail_text.append(f"❌ รหัส {staff_no} ถูกระงับการใช้งาน (รหัสขึ้นต้นด้วย {blocked} ยกเลิกใช้งานแล้ว) ไม่สามารถรีรหัส/เปิดใช้งานได้")
+                    self.jms_log(f"[BLOCKED] {staff_no} (prefix {blocked})")
+                    write_log(status="BLOCKED", user=staff_no, action=command_type, detail=f"BLOCKED PREFIX : {blocked}")
+                    continue
+                if decision.exempt and decision.matched_prefix:
+                    self.jms_log(
+                        f"[EXEMPT ALLOW] {staff_no} (blocked prefix {decision.matched_prefix})")
+                    write_log(
+                        status="EXEMPT_ALLOW", user=staff_no,
+                        action=command_type,
+                        detail=f"EXEMPT FROM PREFIX : {decision.matched_prefix}")
             try:
                 self.jms_log(f"[SEARCH] {staff_no}")
                 user = search_user(staff_no)

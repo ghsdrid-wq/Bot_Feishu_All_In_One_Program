@@ -9,7 +9,8 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 2. **Workbook Manager** — เปิด Excel (win32com) แคปภาพชีตตามช่วงเวลา แล้วส่งรูปเข้า Feishu chat
 3. **DWS Plan Controller** — สั่งเปลี่ยนแพลนการคัดแยก (sorting plan) ของเครื่อง DWS หลายเครื่องพร้อมกันผ่าน HTTP
 4. **JMS User Bot** — รับคำสั่งภาษาไทยผ่าน Feishu (Lark) แล้วไป reset รหัส / ปลดล็อก user บนระบบ JMS ของ J&T
-5. **Auto Scheduler** — ตั้งเวลาให้ pipeline (ดึงยอด → แคปภาพ → ส่ง Feishu) รันเองตามรอบ
+5. **JMS Access Policy** — จัดการหัวรหัสบล็อกและข้อยกเว้นรายรหัส พร้อม bulk paste/import/export
+6. **Auto Scheduler** — ตั้งเวลาให้ pipeline (ดึงยอด → แคปภาพ → ส่ง Feishu) รันเองตามรอบ
 
 รับ event จาก Feishu ผ่าน Flask webhook, คุย LAN กับเครื่อง DWS agent, และต่อ MySQL DB ของ DWS โดยตรง
 
@@ -28,6 +29,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 | `Botmessage.py` | อัปโหลดรูปเข้า Feishu แล้วส่งเข้า chat → `run_send(folder, ...)` (เรียกจาก `App.run_process`) |
 | `controller/controller_api.py` | Flask API พอร์ต **6100** (`/status`, `/switch_plan`, `/refresh`) ให้ระบบอื่นสั่ง controller |
 | `core/jms_api.py` | เรียก JMS J&T: `search_user`, `reset_app_password`, `reset_jms_password`, `enable_user` (BASE_URL `jmsgw.jtexpress.co.th`) |
+| `core/jms_policy.py` | นโยบาย JMS แบบ JSON: normalize, bulk parse, atomic save, exact exemption, prefix block และ fail-closed decision |
 | `core/config.py` | โหลด/เซฟ config (`get_config`, `save_config`) รองรับ frozen exe |
 | `core/logger.py` | `write_log(...)` เขียน log รายวันที่โฟลเดอร์ `logs/` |
 
@@ -39,7 +41,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - `extract_staff_numbers`, `detect_jms_intent` — parse เลข user / ประเภทคำสั่ง JMS
 
 ### คลาส `App(ctk.CTk)` — หน้า UI
-- `build_home_page` / `build_workbooks_page` / `build_data_export_page` / `build_dws_plan_page` / `build_jms_user_page` / `build_settings_page` — สร้างแต่ละหน้า
+- `build_home_page` / `build_workbooks_page` / `build_data_export_page` / `build_dws_plan_page` / `build_jms_user_page` / `build_code_policy_page` / `build_settings_page` — สร้างแต่ละหน้า
 - `render_nav_menu` / `start_nav_drag` / `show_page` — เมนูนำทางลากจัดลำดับเองได้
 - `WorkbookCard`, `SheetRow` (คลาสแยก) — การ์ดตั้งค่าไฟล์ Excel / ชีตในหน้า Workbooks
 
@@ -63,7 +65,15 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 
 ### JMS User Bot
 - `start_feishu_bot` / `run_feishu_server` / `stop_feishu_bot` — คุม webhook server (waitress)
-- `handle_jms_command` — วนทำทีละ user: `search_user` → reset/enable, สรุปผล success/fail กลับ Feishu
+- `handle_jms_command` — snapshot นโยบายหนึ่งครั้งต่อข้อความ แล้ววนทำทีละ user: ตรวจ exact exemption/prefix block → `search_user` → reset/enable → สรุปผลกลับ Feishu
+- หน้า `จัดการสิทธิ์รหัส` — แท็บหัวรหัสบล็อก/รหัสละเว้น, ค้นหา, แบ่งหน้า 20 รายการ, bulk paste, import/export และลบหลายรายการ
+
+## Runtime policy (`jms_user_policy.json`)
+- เก็บข้าง EXE และไม่ commit เข้า Git
+- `blocked_prefixes`: บล็อกทุก USER ที่ขึ้นต้นด้วยค่าในรายการ
+- `exempt_codes`: อนุญาตเฉพาะรหัสเต็มที่ตรงกัน และมีสิทธิ์เหนือ prefix block
+- ถ้าไฟล์อ่านไม่ได้หรือ JSON เสีย คำสั่งแก้ไข USER จะถูกบล็อกไว้ก่อน (fail closed)
+- build จะเก็บไฟล์เดิมข้ามเวอร์ชัน แต่ fresh install จะสร้างไฟล์และย้าย `JMS_USER.blocked_keywords` เดิมให้อัตโนมัติ
 
 ## Config (`config.ini`)
 - `[PATH]`: `output_dir`

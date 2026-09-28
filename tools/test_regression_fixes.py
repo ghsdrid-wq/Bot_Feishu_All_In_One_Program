@@ -22,6 +22,7 @@ import Createphoto  # noqa: E402
 from dashboard import notify, pipeline, render, server  # noqa: E402
 from metrics import core  # noqa: E402
 from metrics import ingest_dws_db  # noqa: E402
+from core import jms_policy  # noqa: E402
 
 
 class SchedulerRegressionTests(unittest.TestCase):
@@ -31,6 +32,24 @@ class SchedulerRegressionTests(unittest.TestCase):
         self.assertEqual(app_version.release_folder(),
                          "AutoReportFeishuV" +
                          app_version.APP_VERSION.replace(".", "-"))
+
+    def test_new_policy_page_is_inserted_before_settings_for_old_nav_order(self) -> None:
+        app = bot_main.App.__new__(bot_main.App)
+        app.config = configparser.RawConfigParser()
+        app.config["UI"] = {
+            "nav_order": "home,workbooks,data_export,dws_plan,jms_user,settings"
+        }
+        app.nav_items = {
+            "home": ("", ""), "workbooks": ("", ""),
+            "data_export": ("", ""), "dws_plan": ("", ""),
+            "jms_user": ("", ""), "code_policy": ("", ""),
+            "dashboard": ("", ""), "settings": ("", ""),
+        }
+        self.assertEqual(
+            app.get_nav_order(),
+            ["home", "workbooks", "data_export", "dws_plan", "jms_user",
+             "code_policy", "dashboard", "settings"],
+        )
 
     def make_app(self) -> bot_main.App:
         app = bot_main.App.__new__(bot_main.App)
@@ -153,6 +172,88 @@ class SchedulerRegressionTests(unittest.TestCase):
         app.prewarm_jms_exports.assert_not_called()
         self.assertFalse(app._jms_marker_usable(
             (datetime(2026, 9, 28, 16, 55), None, time.time())))
+
+
+class JmsPolicyRegressionTests(unittest.TestCase):
+    def test_exempt_exact_code_overrides_blocked_prefix_only_for_that_code(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "policy.json")
+            jms_policy.save_policy({
+                "blocked_prefixes": ["999004"],
+                "exempt_codes": ["999004T00123"],
+            }, path)
+            exempt = jms_policy.evaluate_code("999004t00123", path)
+            blocked = jms_policy.evaluate_code("999004T00999", path)
+            self.assertTrue(exempt.allowed)
+            self.assertTrue(exempt.exempt)
+            self.assertEqual(exempt.matched_prefix, "999004")
+            self.assertFalse(blocked.allowed)
+            self.assertEqual(blocked.matched_prefix, "999004")
+
+    def test_bulk_parser_accepts_excel_column_and_reports_bad_or_duplicate(self) -> None:
+        valid, invalid, duplicates = jms_policy.parse_bulk_entries(
+            "999004T00123\n999004T00456\n999004T00123\nbad!",
+            "exempt_codes",
+        )
+        self.assertEqual(valid, ["999004T00123", "999004T00456"])
+        self.assertEqual(invalid, ["BAD!"])
+        self.assertEqual(duplicates, ["999004T00123"])
+
+    def test_corrupt_policy_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "policy.json"
+            path.write_text("{broken", encoding="utf-8")
+            decision = jms_policy.evaluate_code("999004T00123", str(path))
+            self.assertFalse(decision.allowed)
+            self.assertIsNotNone(decision.error)
+
+    def test_legacy_prefixes_migrate_only_when_policy_is_first_created(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "policy.json")
+            first = jms_policy.ensure_policy(path, ["999004"])
+            self.assertEqual(first["blocked_prefixes"], ["999004"])
+            first["blocked_prefixes"] = []
+            jms_policy.save_policy(first, path)
+            second = jms_policy.ensure_policy(path, ["999004"])
+            self.assertEqual(second["blocked_prefixes"], [])
+
+    def test_command_handler_blocks_prefix_but_executes_exact_exemption(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "policy.json")
+            jms_policy.save_policy({
+                "blocked_prefixes": ["999004"],
+                "exempt_codes": ["999004T00123"],
+            }, path)
+            app = bot_main.App.__new__(bot_main.App)
+            app.jms_policy_path = path
+            app.jms_running = True
+            app.get_feishu_config_value = lambda *_args: "BOT"
+            app.jms_log = lambda *_args: None
+            app.notify_it_alert = lambda *_args: None
+
+            with (mock.patch.object(bot_main, "detect_jms_intent", return_value="APP"),
+                  mock.patch.object(bot_main, "reply_feishu_message"),
+                  mock.patch.object(bot_main, "write_log"),
+                  mock.patch.object(bot_main, "reset_app_password", return_value="1234"),
+                  mock.patch.object(bot_main, "enable_user"),
+                  mock.patch.object(bot_main, "search_user",
+                                    return_value={"id": "u1", "name": "Test"}) as search,
+                  mock.patch.object(bot_main, "extract_staff_numbers",
+                                    return_value=["999004T00999"])):
+                app.handle_jms_command("รีรหัส app", "chat", "message")
+                search.assert_not_called()
+
+            with (mock.patch.object(bot_main, "detect_jms_intent", return_value="APP"),
+                  mock.patch.object(bot_main, "reply_feishu_message"),
+                  mock.patch.object(bot_main, "write_log"),
+                  mock.patch.object(bot_main, "reset_app_password", return_value="1234"),
+                  mock.patch.object(bot_main, "enable_user"),
+                  mock.patch.object(bot_main, "search_user",
+                                    return_value={"id": "u1", "name": "Test"}) as search,
+                  mock.patch.object(bot_main, "extract_staff_numbers",
+                                    return_value=["999004T00123"])):
+                app.handle_jms_command("รีรหัส app", "chat", "message")
+                search.assert_called_once_with("999004T00123")
 
 
 class MetricsRegressionTests(unittest.TestCase):

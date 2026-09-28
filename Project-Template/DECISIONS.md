@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-09-29 - JMS access policy
+
+- Manage blocked prefixes and exact-code exemptions on one dedicated page with two tabs; do not crowd the JMS Bot operations page.
+- Exact exemption wins over a matching blocked prefix, but never exempts neighbouring codes implicitly.
+- Use bulk paste and pagination instead of rendering or entering 50–100 codes individually.
+- Keep policy in an atomic, operator-owned JSON file beside the EXE and preserve it across builds.
+- Fail closed when policy cannot be read, and snapshot rules once for every incoming multi-user command.
+- Keep policy tests internal; do not add a manual test field to the production UI.
+
 ## 2026-09-29 - Shared config ownership and JMS cutoff
 
 - Dashboard owns the `[DASHBOARD]` section of `config.ini`; a main-UI save must preserve its latest on-disk values.

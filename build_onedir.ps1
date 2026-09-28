@@ -35,7 +35,7 @@ if (-not (Test-Path $ExistingDistDir) -and (Test-Path $DistRoot)) {
 $ConfigBackupDir = Join-Path ([System.IO.Path]::GetTempPath()) (
     "AutoReportFeishu-config-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $ConfigBackupDir | Out-Null
-foreach ($Name in @("config.ini", "metrics_config.yaml", "store.db")) {
+foreach ($Name in @("config.ini", "metrics_config.yaml", "jms_user_policy.json", "store.db")) {
     $Existing = Join-Path $ExistingDistDir $Name
     if (Test-Path $Existing) {
         Copy-Item -LiteralPath $Existing -Destination (Join-Path $ConfigBackupDir $Name) -Force
@@ -139,6 +139,10 @@ foreach ($Name in @("config.ini", "metrics_config.yaml")) {
     if (Test-Path $Src) {
         Copy-Item -LiteralPath $Src -Destination (Join-Path $DistDir $Name) -Force
     }
+}
+$SavedPolicy = Join-Path $ConfigBackupDir "jms_user_policy.json"
+if (Test-Path $SavedPolicy) {
+    Copy-Item -LiteralPath $SavedPolicy -Destination (Join-Path $DistDir "jms_user_policy.json") -Force
 }
 $SavedDb = Join-Path $ConfigBackupDir "store.db"
 if (Test-Path $SavedDb) {
