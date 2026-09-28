@@ -92,6 +92,42 @@ class SchedulerRegressionTests(unittest.TestCase):
         self.assertEqual(app.start_date.get_date(), datetime(2026, 9, 20).date())
         self.assertEqual(app.end_date.get_date(), datetime(2026, 9, 21).date())
 
+    def test_export_time_range_serializes_scheduler_snapshot(self) -> None:
+        app = self.make_app()
+        app.active_run_settings = {
+            "time_range": (
+                datetime(2026, 9, 27, 16, 0),
+                datetime(2026, 9, 28, 23, 0),
+            )
+        }
+        self.assertEqual(
+            app.get_time_range(),
+            ("2026-09-27 16:00:00", "2026-09-28 23:00:00"),
+        )
+
+    def test_jms_payload_never_contains_datetime_objects(self) -> None:
+        app = self.make_app()
+        app.stop_requested = False
+        app.log = lambda *_args, **_kwargs: None
+
+        class Response:
+            @staticmethod
+            def json():
+                return {}
+
+        with mock.patch.object(app, "_jms_post", return_value=Response()) as post:
+            app._jms_fire_export(
+                object(), "https://example.invalid", {},
+                datetime(2026, 9, 27, 16, 0),
+                datetime(2026, 9, 28, 23, 0),
+                "scan-type",
+            )
+        payload = post.call_args.args[2]
+        self.assertEqual(payload["startTimeStr"], "2026-09-27 16:00:00")
+        self.assertEqual(payload["endTimeStr"], "2026-09-28 23:00:00")
+        self.assertIsInstance(payload["startTimeStr"], str)
+        self.assertIsInstance(payload["endTimeStr"], str)
+
 
 class MetricsRegressionTests(unittest.TestCase):
     def test_config_cache_reloads_after_file_change(self) -> None:

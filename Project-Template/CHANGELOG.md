@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.1
+
+- Fixed JMS scheduler and prewarm exports passing `datetime` objects into JSON; export ranges are now serialized before requests are sent.
+
 ## 2026-09-28
 
 - Added `app_version.py` as the single version source for the window title, visible sidebar version, tests, and release folder name.

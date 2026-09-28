@@ -1,5 +1,7 @@
 # Current Work
 
+- Version 2.0.1 fixes JMS automatic and prewarm export ranges by normalizing them to JSON-safe strings at both the shared range helper and the JMS request boundary.
+
 ## Objective
 
 - Stabilize the upgraded Scheduler, Dashboard, metrics ingestion, and Feishu delivery pipeline without regressing the accepted chart layout.

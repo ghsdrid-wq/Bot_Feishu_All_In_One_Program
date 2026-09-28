@@ -3885,9 +3885,8 @@ class App(ctk.CTk):
         active = getattr(self, "active_run_settings", None) or {}
         if active.get("time_range"):
             start, end = active["time_range"]
-            return start, end
         # Manual test in Data Export uses manual DateEntry. Auto / Run Now follows Bot Chat scheduler.
-        if getattr(self, "raw_time_source", "manual") == "scheduler":
+        elif getattr(self, "raw_time_source", "manual") == "scheduler":
             start, end = self.get_scheduler_time_range()
         else:
             start_str = f"{self.start_date.get()} {self.start_hour.get()}"
@@ -3896,7 +3895,14 @@ class App(ctk.CTk):
             end = datetime.strptime(end_str, "%Y-%m-%d %H:%M")
             if start > end:
                 start, end = end, start
-        return start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")
+        return self._export_datetime_string(start), self._export_datetime_string(end)
+
+    @staticmethod
+    def _export_datetime_string(value):
+        """Return an API/SQL-safe datetime string from a snapshot value."""
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        return str(value).strip()
 
     def sleep_with_stop(self, seconds):
         # ตอนยิง export ล่วงหน้าเราอยู่นอกรอบรัน self.running จึงเป็น False
@@ -4926,8 +4932,10 @@ class App(ctk.CTk):
         payload = {
             "current": 1,
             "size": 20,
-            "startTimeStr": start,
-            "endTimeStr": end,
+            # Keep this boundary defensive because scheduler prefire may pass
+            # its datetime snapshot directly without going through get_time_range.
+            "startTimeStr": self._export_datetime_string(start),
+            "endTimeStr": self._export_datetime_string(end),
             "scanNetworkCode": "999004",
             "scanType": scanType,
             "excelType": "downExcelAll",
