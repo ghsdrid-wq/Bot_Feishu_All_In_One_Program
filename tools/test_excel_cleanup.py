@@ -51,6 +51,7 @@ def create_test_workbook(path: Path) -> None:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
     logs = []
     captured_pids = []
     original_load_config = Createphoto.load_config

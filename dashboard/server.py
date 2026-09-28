@@ -28,6 +28,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from dashboard import render
+from core.ini_store import update_ini
 from metrics import aggregate, core
 
 CONFIG_INI = os.path.join(core.PROJECT_ROOT, "config.ini")
@@ -51,11 +52,23 @@ def get_settings() -> dict:
 
     token = (section.get("token") or "").strip()
     if not token:
-        # สร้างครั้งแรกอัตโนมัติแล้วเขียนกลับ — จะได้ไม่มีใครเผลอรันแบบไม่มี token
-        token = secrets.token_urlsafe(24)
-        section["token"] = token
-        with open(CONFIG_INI, "w", encoding="utf-8") as fh:
-            parser.write(fh)
+        # Generate inside an atomic read-modify-write.  The main UI saves the
+        # same file from another thread, so a plain write could lose settings.
+        generated = secrets.token_urlsafe(24)
+
+        def ensure_token(current: configparser.RawConfigParser) -> None:
+            nonlocal token
+            if "DASHBOARD" not in current:
+                current["DASHBOARD"] = {}
+            token = (current["DASHBOARD"].get("token") or "").strip()
+            if not token:
+                current["DASHBOARD"]["token"] = generated
+                token = generated
+
+        update_ini(CONFIG_INI, ensure_token)
+        parser = configparser.RawConfigParser()
+        parser.read(CONFIG_INI, encoding="utf-8")
+        section = parser["DASHBOARD"]
 
     return {
         "token": token,

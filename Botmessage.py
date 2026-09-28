@@ -3,7 +3,7 @@ import sys
 import time
 import configparser
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import feishu_client
 
@@ -39,8 +39,8 @@ def resource_path(file: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), file)
 
 
-def load_config() -> configparser.ConfigParser:
-    config = configparser.ConfigParser()
+def load_config() -> configparser.RawConfigParser:
+    config = configparser.RawConfigParser()
     config.read(resource_path("config.ini"), encoding="utf-8")
     return config
 

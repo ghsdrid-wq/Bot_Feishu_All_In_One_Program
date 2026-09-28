@@ -12,6 +12,7 @@ from __future__ import annotations
 import configparser
 import os
 import re
+from datetime import datetime, timedelta
 from typing import Optional
 
 import pymysql
@@ -19,6 +20,19 @@ import pymysql
 from . import core
 
 PROJECT_ROOT = core.PROJECT_ROOT
+
+
+def query_bounds(business_date: Optional[str], start_hour: int,
+                 max_valid_year: int) -> tuple[str, str]:
+    """Return a bounded MySQL window for one business day."""
+    if business_date:
+        start = datetime.strptime(business_date, "%Y-%m-%d").replace(
+            hour=int(start_hour))
+        end = start + timedelta(days=1)
+        return (start.strftime("%Y-%m-%d %H:%M:%S"),
+                end.strftime("%Y-%m-%d %H:%M:%S"))
+    return ("2000-01-01 00:00:00",
+            f"{int(max_valid_year) + 1:04d}-01-01 00:00:00")
 
 
 def db_settings() -> dict:
@@ -64,7 +78,7 @@ def ingest(conn, business_date: Optional[str] = None) -> dict:
                    SUM(IFNULL(ExceptionCode,0) IN ({{normal}})) AS valid_qty,
                    SUM(IFNULL(Weight,0))             AS weight_kg
             FROM {table}
-            WHERE ScanTime >= %s AND YEAR(ScanTime) <= %s
+            WHERE ScanTime >= %s AND ScanTime < %s AND YEAR(ScanTime) <= %s
             GROUP BY DwsNo, bd, hr
         """
         # error แยกตามรหัส — ต้องดึงด้วย ไม่งั้น % error รวมของแท็บ DWS จะต่ำกว่าจริง
@@ -76,7 +90,7 @@ def ingest(conn, business_date: Optional[str] = None) -> dict:
                    ExceptionCode                     AS code,
                    COUNT(*)                          AS qty
             FROM {table}
-            WHERE ScanTime >= %s AND YEAR(ScanTime) <= %s
+            WHERE ScanTime >= %s AND ScanTime < %s AND YEAR(ScanTime) <= %s
               AND IFNULL(ExceptionCode, 0) NOT IN ({{normal}})
             GROUP BY DwsNo, bd, hr, code
         """
@@ -85,11 +99,14 @@ def ingest(conn, business_date: Optional[str] = None) -> dict:
         normal_sql = ",".join(str(int(code)) for code in normal)
         sql = sql.format(normal=normal_sql)
         err_sql = err_sql.format(normal=normal_sql)
-        since = f"{business_date} 00:00:00" if business_date else "2000-01-01 00:00:00"
+        since, until = query_bounds(
+            business_date, start_hour, cfg["max_valid_year"])
         with mysql.cursor() as cur:
-            cur.execute(sql, (start_hour, since, cfg["max_valid_year"]))
+            cur.execute(sql, (
+                start_hour, since, until, cfg["max_valid_year"]))
             records = cur.fetchall()
-            cur.execute(err_sql, (start_hour, since, cfg["max_valid_year"]))
+            cur.execute(err_sql, (
+                start_hour, since, until, cfg["max_valid_year"]))
             err_records = cur.fetchall()
     except pymysql.MySQLError as exc:
         return {"source": "DWS_DB", "rows": 0, "qty": 0,

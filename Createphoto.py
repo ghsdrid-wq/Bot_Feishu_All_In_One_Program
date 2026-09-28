@@ -154,18 +154,20 @@ def resource_path(file: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), file)
 
 
-def load_config() -> configparser.ConfigParser:
-    config = configparser.ConfigParser()
+def load_config() -> configparser.RawConfigParser:
+    config = configparser.RawConfigParser()
     config.read(resource_path("config.ini"), encoding="utf-8")
     return config
 
 
-def save_config(config: configparser.ConfigParser) -> None:
+def save_config(config: configparser.RawConfigParser) -> None:
     config_path = resource_path("config.ini")
-    tmp_path = f"{config_path}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        config.write(f)
-    os.replace(tmp_path, config_path)
+    from core.ini_store import write_ini
+
+    # Dashboard owns this section and may create its access token from a
+    # background thread.  Preserve the latest on-disk value when the main UI
+    # saves its older in-memory ConfigParser.
+    write_ini(config_path, config, preserve_disk_sections=("DASHBOARD",))
 
 
 @dataclass
@@ -269,7 +271,7 @@ def delete_columns_by_start(wb, start_hour: int, target_sheets: List[str], log: 
             try:
                 ws = excel_call(lambda s=sheet: wb.Worksheets(s), log, f"open worksheet {sheet}", timeout=120)
                 for col in range(delete_until - 1, 2, -1):
-                    excel_call(lambda c=col: ws.Columns(c).Delete(Shift=-4159), log, f"delete column {sheet}:{col}", timeout=180)
+                    excel_call(lambda c=col, sheet_ref=ws: sheet_ref.Columns(c).Delete(Shift=-4159), log, f"delete column {sheet}:{col}", timeout=180)
                 if log:
                     log(f"[DELETE] {sheet} {deleted_count} cols")
             except Exception as e:
@@ -1084,24 +1086,26 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                     target_height = excel_call(lambda: target.Height, write, "get target height", timeout=60)
                     chart_objects = cast(Any, excel_call(lambda: ws.ChartObjects(), write, f"get chart objects {item.sheet}", timeout=120))
                     chart = cast(Any, excel_call(
-                        lambda: chart_objects.Add(
-                            target_left,
-                            target_top,
-                            max(float(target_width) + 8, 120),
-                            max(float(target_height) + 8, 80),
+                        lambda objects=chart_objects, left=target_left,
+                               top=target_top, width=target_width,
+                               height=target_height: objects.Add(
+                            left,
+                            top,
+                            max(float(width) + 8, 120),
+                            max(float(height) + 8, 80),
                         ),
                         write,
                         f"create chart {item.name}",
                         timeout=180,
                     ))
-                    excel_call(lambda: chart.Activate(), write, f"activate chart {item.name}", timeout=120)
+                    excel_call(lambda active_chart=chart: active_chart.Activate(), write, f"activate chart {item.name}", timeout=120)
                     _pump_excel_messages(0.3)
 
-                    excel_call(lambda: chart.Chart.Paste(), write, f"paste chart {item.name}", timeout=180)
+                    excel_call(lambda active_chart=chart: active_chart.Chart.Paste(), write, f"paste chart {item.name}", timeout=180)
                     _pump_excel_messages(0.8)
 
                     try:
-                        shape_count = excel_call(lambda: chart.Chart.Shapes.Count, write, f"count chart shapes {item.name}", timeout=60)
+                        shape_count = excel_call(lambda active_chart=chart: active_chart.Chart.Shapes.Count, write, f"count chart shapes {item.name}", timeout=60)
                     except Exception:
                         shape_count = 1
 
@@ -1109,11 +1113,11 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                         raise Exception("Paste produced 0 chart shapes")
 
                     try:
-                        excel_call(lambda: setattr(chart.Chart.ChartArea.Border, "LineStyle", 0), write, f"clear chart border {item.name}", timeout=60)
+                        excel_call(lambda active_chart=chart: setattr(active_chart.Chart.ChartArea.Border, "LineStyle", 0), write, f"clear chart border {item.name}", timeout=60)
                     except Exception:
                         pass
 
-                    ok = excel_call(lambda: chart.Chart.Export(tmp_path, "PNG"), write, f"export chart {item.name}", timeout=180)
+                    ok = excel_call(lambda active_chart=chart: active_chart.Chart.Export(tmp_path, "PNG"), write, f"export chart {item.name}", timeout=180)
                     _pump_excel_messages(0.4)
 
                     if ok is False or not os.path.exists(tmp_path):
@@ -1136,7 +1140,7 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                     try:
                         if chart is not None:
                             target_chart = chart
-                            excel_call(lambda: target_chart.Delete(), write, f"delete temp chart {item.name}", timeout=60)
+                            excel_call(lambda active_chart=target_chart: active_chart.Delete(), write, f"delete temp chart {item.name}", timeout=60)
                     except Exception:
                         pass
 
@@ -1154,8 +1158,8 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
             write(f"[OPEN] {wb_item.display_name}")
 
             wb = cast(Any, excel_call(
-                lambda: excel_app.Workbooks.Open(
-                    wb_item.path,
+                lambda item=wb_item: excel_app.Workbooks.Open(
+                    item.path,
                     UpdateLinks=0,
                     ReadOnly=False,
                     IgnoreReadOnlyRecommended=True,
@@ -1175,7 +1179,7 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                 write(f"[WARN] Could not enable low-load Excel mode: {e}")
             update_excel_date(wb, start_hour, log=write)
 
-            excel_call(lambda: setattr(wb, "Saved", True), write, f"mark workbook saved {wb_item.display_name}", timeout=60)
+            excel_call(lambda workbook=wb: setattr(workbook, "Saved", True), write, f"mark workbook saved {wb_item.display_name}", timeout=60)
             refresh_workbook_queries(wb, excel_app, keep_running, write)
             if not keep_running():
                 return
@@ -1183,14 +1187,14 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
             active_group: List[ExportItem] = []
             sheet_names = set()
             sheet_count = int(excel_call(
-                lambda: wb.Worksheets.Count,
+                lambda workbook=wb: workbook.Worksheets.Count,
                 write,
                 f"count sheets {wb_item.display_name}",
                 timeout=60,
             ))
             for sheet_index in range(1, sheet_count + 1):
                 sheet_name = excel_call(
-                    lambda i=sheet_index: wb.Worksheets.Item(i).Name,
+                    lambda i=sheet_index, workbook=wb: workbook.Worksheets.Item(i).Name,
                     write,
                     f"read sheet {wb_item.display_name}:{sheet_index}",
                     timeout=60,

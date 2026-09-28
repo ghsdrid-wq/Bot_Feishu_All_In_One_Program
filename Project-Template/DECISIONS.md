@@ -1,11 +1,20 @@
 # Decisions
 
+## 2026-09-29 - Shared config ownership and JMS cutoff
+
+- Dashboard owns the `[DASHBOARD]` section of `config.ini`; a main-UI save must preserve its latest on-disk values.
+- All in-process INI read-modify-write operations use one lock and atomic file replacement.
+- Remove scheduled early JMS export from the UI and scheduler instead of retaining a control that cannot produce cutoff-complete data.
+- Keep only same-run AUTO/PDA parallel generation because both requests use the same final report range.
+
 ## 2026-09-29 - Separate scheduler lifetime from report data
 
 - Scheduler Start/End datetimes control only when automatic execution is allowed.
 - Each automatic report uses a fresh current-business-day export window.
 - Manual DATA EXPORT continues to use the exact range selected by the operator.
 - Treat a header/formula hour mismatch as a hard report-integrity failure; never send a plausible-looking image with shifted hourly totals.
+- Never reuse a JMS snapshot fired before the report cutoff; correctness of the final minutes takes priority over speculative pre-fire latency savings.
+- Treat a whole required source with no rows for the requested business date as incomplete input, not as a valid all-zero report.
 
 ## 2026-09-28 - Dashboard correctness gates
 

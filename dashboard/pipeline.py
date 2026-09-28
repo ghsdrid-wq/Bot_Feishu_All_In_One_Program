@@ -125,7 +125,10 @@ def run_cycle(log: Optional[LogFunc] = None,
                 text = str(warning)
                 if any(marker in text for marker in (
                         "ไม่พบไฟล์", "อ่านไม่สำเร็จ", "อ่านไม่ได้",
-                        "ต่อ MySQL ไม่ได้", "ชื่อ table ไม่ถูกต้อง")):
+                        "ต่อ MySQL ไม่ได้", "ชื่อ table ไม่ถูกต้อง",
+                        "ไม่มีข้อมูลของวันรอบงาน",
+                        "ไม่มีแถวที่ขึ้นต้นด้วย",
+                        "ทุกแถวมีหมายเลขกระสอบ")):
                     summary["errors"].append(f"{name}: {text}")
             write(f"Dashboard ingest {name}: {result.get('rows', 0)} rows")
 

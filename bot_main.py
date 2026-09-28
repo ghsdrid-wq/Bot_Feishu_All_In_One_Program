@@ -2,7 +2,6 @@ import os
 import re
 import sys
 import json
-import mimetypes
 import time
 import queue
 import threading
@@ -33,7 +32,6 @@ from app_version import APP_VERSION
 from Createphoto import (
     run_create,
     export_group_of,
-    workbook_group,
     migrate_old_export_config,
     save_config,
     resource_path,
@@ -256,12 +254,6 @@ RAW_STEP_KEYS = ("dws_mirror", "dws", "jms_auto", "jms_pda", "realtime")
 # เมื่อ JMS บอกว่ามีงาน export ค้างอยู่แล้ว ให้รับไฟล์ของงานนั้นได้
 # ถ้าไม่เก่าเกินเท่านี้ เกินกว่านี้ถือว่าเป็นยอดคนละรอบ ไม่ควรเอามาส่ง
 REALTIME_REUSE_MAX_AGE = 15 * 60
-
-JMS_PREFIRE_LEAD_MINUTES = 6
-# มาร์กเกอร์ที่ยิงล่วงหน้าไว้ ใช้ได้นานแค่ไหน — เกินนี้ถือว่าเก่าเกินไป
-# ยิงใหม่ดีกว่าเอาไฟล์ที่ข้อมูลขาดท้ายไปหลายสิบนาที
-JMS_PREFIRE_MAX_AGE = 20 * 60
-
 
 bot_app = Flask(__name__)
 controller_instance = None
@@ -1184,7 +1176,7 @@ class WorkbookCard(ctk.CTkFrame):
         self.app.add_export_for_workbook(self.workbook_key)
 
     def delete_workbook(self):
-        if messagebox.askyesno("Remove Excel file", f"ลบไฟล์ Excel นี้ และรายการ Sheet/Export ทั้งหมดของไฟล์นี้ใช่ไหม?"):
+        if messagebox.askyesno("Remove Excel file", "ลบไฟล์ Excel นี้ และรายการ Sheet/Export ทั้งหมดของไฟล์นี้ใช่ไหม?"):
             self.app.delete_workbook(self.workbook_key)
 
 
@@ -1215,7 +1207,8 @@ class App(ctk.CTk):
         self.resizable(False, False)
         self.ui_thread_id = threading.get_ident()
 
-        self.config = configparser.ConfigParser()
+        # Raw parser accepts operator-entered secrets and URLs containing '%'.
+        self.config = configparser.RawConfigParser()
         self.config.read(CONFIG_FILE, encoding="utf-8")
         self.scheduler_run_minute = 5
         self.scheduler_start_hour = 15
@@ -1353,10 +1346,9 @@ class App(ctk.CTk):
             self.config["TIME"]["end_hour"] = clean_input_value(self.end_hour_var.get()).replace(":00", "") or "12"
             if "summary_header_var" in self.__dict__:
                 self.config["EXPORTS"]["add_summary_header"] = str(self.summary_header_var.get()).lower()
-            if "prefire_var" in self.__dict__:
-                self.config["TIME"]["prefire_enabled"] = str(self.prefire_var.get()).lower()
-                self.config["TIME"]["prefire_lead"] = clean_input_value(
-                    self.prefire_minute_var.get()) or str(JMS_PREFIRE_LEAD_MINUTES)
+            # Early JMS snapshots are intentionally disabled: they cannot
+            # include parcels scanned between pre-fire and the report cutoff.
+            self.config["TIME"]["prefire_enabled"] = "false"
             self.config["FEISHU"]["APP_ID"] = entry_value(self.app_id_entry, collapse_internal_spaces=True)
             self.config["FEISHU"]["APP_SECRET"] = entry_value(self.app_secret_entry, collapse_internal_spaces=True)
             if hasattr(self, "chat_id_entry"):
@@ -1491,19 +1483,10 @@ class App(ctk.CTk):
                 start_raw = self.start_hour_var.get()
             if "end_hour_var" in self.__dict__:
                 end_raw = self.end_hour_var.get()
-        prefire_raw = time_config.get("prefire_enabled", "true")
-        lead_raw = time_config.get("prefire_lead", str(JMS_PREFIRE_LEAD_MINUTES))
-        if self.is_ui_thread():
-            if "prefire_var" in self.__dict__:
-                prefire_raw = str(self.prefire_var.get())
-            if "prefire_minute_var" in self.__dict__:
-                lead_raw = self.prefire_minute_var.get()
         self.scheduler_run_minute = self.parse_minute_value(minute_raw, 5)
         self.scheduler_start_hour = self.parse_hour_value(start_raw, 15)
         self.scheduler_end_hour = self.parse_hour_value(end_raw, 12)
-        self.scheduler_prefire = as_bool(prefire_raw, True)
-        self.scheduler_prefire_lead = self.parse_minute_value(
-            lead_raw, JMS_PREFIRE_LEAD_MINUTES)
+        self.scheduler_prefire = False
         return self.scheduler_run_minute, self.scheduler_start_hour, self.scheduler_end_hour
 
     def send_window(self):
@@ -1640,33 +1623,6 @@ class App(ctk.CTk):
             # Scheduler lifetime and report data range are separate concerns.
             "time_range": None,
         }
-
-    def on_prefire_toggled(self):
-        self.save_config()
-        self.sync_prefire_state()
-
-    def sync_prefire_state(self):
-        """ไม่ได้ติ๊กดึงล่วงหน้า = ช่องนาทีใช้ไม่ได้ ปิดไว้กันเข้าใจผิดว่ามีผล
-
-        ระหว่างมีงานรันอยู่ทุกอย่างถูกล็อกจาก set_ui_running อยู่แล้ว
-        ตรงนี้จึงไม่ไปปลดล็อกทับ
-        """
-        menu = self.__dict__.get("prefire_menu")
-        if menu is None:
-            return
-        if getattr(self, "runtime_locked", False) or self.running:
-            return
-        on = bool(self.prefire_var.get())
-        try:
-            menu.configure(state="normal" if on else "disabled")
-        except Exception:
-            pass
-        label = self.__dict__.get("prefire_unit")
-        if label is not None:
-            try:
-                label.configure(text_color="#aeb8cc" if on else "#5c6678")
-            except Exception:
-                pass
 
     def sync_auto_run_settings_after_save(self):
         if not getattr(self, "scheduler_running", False):
@@ -1905,22 +1861,6 @@ class App(ctk.CTk):
         self.start_date.bind("<<DateEntrySelected>>", self.on_date_selected, "+")
         self.end_date.bind("<<DateEntrySelected>>", self.on_date_selected, "+")
 
-        # ดึงล่วงหน้า — สั่ง JMS สร้างไฟล์ก่อนถึงรอบ ให้เซิร์ฟเวอร์ทำตอนเราว่าง
-        # ปิดได้ถ้าต้องการยอดเต็มเวลาถึงนาทีที่รันจริง
-        self.prefire_var = ctk.BooleanVar(value=True)
-        self.prefire_minute_var = ctk.StringVar(value=str(JMS_PREFIRE_LEAD_MINUTES))
-        self.prefire_chk = ctk.CTkCheckBox(
-            command, text="ดึงล่วงหน้า", variable=self.prefire_var,
-            command=self.on_prefire_toggled, width=120)
-        self.prefire_chk.grid(row=2, column=0, padx=(16, 4), pady=(0, 6), sticky="w")
-        self.prefire_menu = ctk.CTkOptionMenu(
-            command, values=[str(i) for i in range(1, 16)],
-            variable=self.prefire_minute_var, width=82,
-            command=lambda _: self.save_config())
-        self.prefire_menu.grid(row=2, column=1, padx=4, pady=(0, 6), sticky="w")
-        self.prefire_unit = ctk.CTkLabel(command, text="นาที", text_color="#aeb8cc")
-        self.prefire_unit.grid(row=2, column=2, padx=(8, 4), pady=(0, 6), sticky="w")
-        self.sync_prefire_state()
         self.start_hour = self.start_menu
         self.end_hour = self.end_menu
         self.btn_start = ctk.CTkButton(command, text="▣ Start Auto", height=40, fg_color="#5e81ac", hover_color="#4c6e93", command=self.start_scheduler)
@@ -2271,7 +2211,6 @@ class App(ctk.CTk):
         """อ่านยอดล่าสุดมาโชว์ — เปิด DB แบบอ่านอย่างเดียว ไม่แตะข้อมูล"""
         def work():
             try:
-                from dashboard import pipeline as dash_pipeline
                 from metrics import aggregate
                 from metrics import core as mcore
 
@@ -2980,13 +2919,6 @@ class App(ctk.CTk):
             exports = self.config["EXPORTS"] if "EXPORTS" in self.config else {}
             self.summary_header_var.set(as_bool(exports.get("add_summary_header", "false"), False))
 
-        if "prefire_var" in self.__dict__:
-            time_cfg = self.config["TIME"] if "TIME" in self.config else {}
-            self.prefire_var.set(as_bool(time_cfg.get("prefire_enabled", "true"), True))
-            self.prefire_minute_var.set(
-                clean_input_value(time_cfg.get("prefire_lead", "")) or str(JMS_PREFIRE_LEAD_MINUTES))
-            self.sync_prefire_state()
-
         saved_dates = False
         try:
             raw_start = dws.get("start_date", "").strip()
@@ -3497,7 +3429,6 @@ class App(ctk.CTk):
         for w in [
             getattr(self, "minute_menu", None), getattr(self, "start_menu", None), getattr(self, "end_menu", None),
             getattr(self, "chk_bot_export", None), getattr(self, "chk_bot_chat", None),
-            getattr(self, "prefire_chk", None), getattr(self, "prefire_menu", None),
         ]:
             if w is None:
                 continue
@@ -3505,10 +3436,6 @@ class App(ctk.CTk):
                 w.configure(state=state)
             except Exception:
                 pass
-        if not active:
-            # ปลดล็อกแล้วช่องนาทีต้องกลับไปตามติ๊ก ไม่ใช่เปิดทิ้งไว้
-            self.sync_prefire_state()
-
         for key, btn in getattr(self, "nav_buttons", {}).items():
             try:
                 nav_state = "normal" if active and key in {"home", "dws_plan", "jms_user"} else state
@@ -3925,12 +3852,10 @@ class App(ctk.CTk):
         return str(value).strip()
 
     def sleep_with_stop(self, seconds):
-        # ตอนยิง export ล่วงหน้าเราอยู่นอกรอบรัน self.running จึงเป็น False
-        # ถ้าไม่ยกเว้นไว้ การ retry ตอนเน็ตสะดุดจะเลิกทันทีโดยไม่ได้ลองใหม่
         for _ in range(seconds):
             if self.stop_requested:
                 return False
-            if not self.running and not getattr(self, "prefire_active", False):
+            if not self.running:
                 return False
             self.mark_activity()
             time.sleep(1)
@@ -4524,41 +4449,27 @@ class App(ctk.CTk):
 
 
     def _jms_marker_usable(self, entry):
-        """มาร์กเกอร์ยังใช้ได้ไหม — ของรอบนี้ หรือของที่ยิงล่วงหน้าและยังไม่เก่า"""
+        """Return whether a marker belongs to the current pipeline run."""
         if not (isinstance(entry, tuple) and len(entry) == 3):
             return False
         _marker, gen, fired_at = entry
-        if gen == getattr(self, "run_generation", None):
-            return True
-        return gen is None and time.time() - fired_at <= JMS_PREFIRE_MAX_AGE
+        return gen is not None and gen == getattr(self, "run_generation", None)
 
     def prefire_jms_exports(self):
-        """สั่ง export ล่วงหน้าให้รอบถัดไป เรียกจาก scheduler ตอนใกล้ถึงเวลารัน
+        """Do not create an early data snapshot for a future report cutoff.
 
-        อ่านค่าจาก auto_run_settings ที่ snapshot ไว้ตอนกด Start Auto
-        ไม่แตะ widget ใด ๆ เพราะทำงานอยู่บน thread ของ scheduler
+        JMS exports are snapshots.  An export fired before the scheduled run
+        cannot contain parcels scanned during the remaining minutes, and a
+        later download timestamp cannot make that snapshot complete.  The
+        main run still fires AUTO and PDA together so server generation remains
+        parallel without sacrificing the tail of the reporting window.
         """
         if self.running or self.stop_requested or not self.scheduler_running:
             return
-        settings = dict(self.auto_run_settings or {})
-        steps = settings.get("steps") or {}
-        scan_types = [st for key, st in (("jms_auto", "建包扫描"),
-                                         ("jms_pda", "卸车扫描"))
-                      if steps.get(key)]
-        if not scan_types:
-            return
-        lead = getattr(self, "scheduler_prefire_lead", JMS_PREFIRE_LEAD_MINUTES)
         self.write_log(
-            f"Pre-firing JMS export {lead} min ahead ({len(scan_types)} scan type)",
-            level="START")
-        self.prefire_active = True
-        try:
-            target = datetime.now() + timedelta(minutes=lead)
-            self.prewarm_jms_exports(scan_types,
-                                     time_range=self.get_report_time_range(target),
-                                     generation=None)
-        finally:
-            self.prefire_active = False
+            "Early JMS export skipped for data integrity; AUTO and PDA will "
+            "start together at the scheduled run time",
+            level="INFO")
 
     def _jms_base_headers(self):
         base = "https://jmsgw.jtexpress.co.th/operatingplatform"
@@ -4953,8 +4864,7 @@ class App(ctk.CTk):
         payload = {
             "current": 1,
             "size": 20,
-            # Keep this boundary defensive because scheduler prefire may pass
-            # its datetime snapshot directly without going through get_time_range.
+            # Keep the API boundary defensive if a caller passes datetimes.
             "startTimeStr": self._export_datetime_string(start),
             "endTimeStr": self._export_datetime_string(end),
             "scanNetworkCode": "999004",
@@ -5133,11 +5043,6 @@ class App(ctk.CTk):
             if isinstance(entry, tuple) and len(entry) == 3:
                 m, gen, fired_at = entry
                 if gen == getattr(self, "run_generation", None):
-                    marker = m
-                elif gen is None and time.time() - fired_at <= JMS_PREFIRE_MAX_AGE:
-                    # ยิงล่วงหน้าไว้นอกรอบรัน ใช้ได้ถ้ายังไม่เก่าเกินไป
-                    age = int((time.time() - fired_at) / 60)
-                    self.log(f"Using pre-fired export ({age} min ago): {filename}", "JMS")
                     marker = m
 
             if marker is not None:
@@ -5642,7 +5547,6 @@ class App(ctk.CTk):
         self.begin_run_request()
         self.scheduler_running = True
         self.last_run_minute = None
-        self.last_prefire_minute = None
 
         self.set_ui_running(True)
         self.set_status("Auto Running", "#88c0d0", "#3b4252")
@@ -5654,23 +5558,9 @@ class App(ctk.CTk):
             f"{self.get_scheduler_time_range()[1]:%Y-%m-%d %H:%M}",
             level="START",
         )
-        if self.scheduler_prefire:
-            lead = self.scheduler_prefire_lead
-            self.write_log(
-                f"Pre-fire enabled | lead={lead} min | "
-                f"fires at :{(self.scheduler_run_minute - lead) % 60:02}",
-                level="INFO")
-            if lead >= self.scheduler_run_minute:
-                # ยิงก่อนหัวชั่วโมง = ไฟล์ตัดกลางชั่วโมงที่กำลังจะจบ
-                # ยอดของชั่วโมงนั้นในการ์ดใบนี้จะขาดท้ายไป
-                self.write_log(
-                    f"ดึงล่วงหน้า {lead} นาที มากกว่าหรือเท่ากับ Run minute "
-                    f"{self.scheduler_run_minute} — ไฟล์จะถูกตัดก่อนจบชั่วโมง "
-                    f"ยอดชั่วโมงล่าสุดจะขาดไป {lead - self.scheduler_run_minute} นาที "
-                    f"(ตั้ง Run minute ให้มากกว่า {lead} จะได้ยอดครบ)",
-                    level="WARN")
-        else:
-            self.write_log("Pre-fire disabled — ยอดเต็มเวลาถึงนาทีที่รันจริง", level="INFO")
+        self.write_log(
+            "JMS exports start at run time so report data reaches the configured cutoff",
+            level="INFO")
         self.write_log(f"Next auto run: {self.format_next_scheduler_run(next_run)}")
         threading.Thread(target=self.scheduler_loop, daemon=True).start()
 
@@ -5718,18 +5608,6 @@ class App(ctk.CTk):
                     run_generation = self.begin_run_request()
                     self.set_next_run_display(self.get_next_scheduler_run_time(now + timedelta(minutes=1)))
                     self.task_queue.put(lambda settings=settings, g=run_generation: self.run_process(settings, g))
-
-                # ยิง export ล่วงหน้าก่อนถึงรอบรัน ให้เซิร์ฟเวอร์ทำตอนที่เราว่าง
-                lead = getattr(self, "scheduler_prefire_lead", JMS_PREFIRE_LEAD_MINUTES)
-                prefire_minute = (minute - lead) % 60
-                if (getattr(self, "scheduler_prefire", True)
-                        and now.minute == prefire_minute
-                        and getattr(self, "last_prefire_minute", None) != now_key):
-                    self.last_prefire_minute = now_key
-                    target = now + timedelta(minutes=lead)
-                    if self.in_send_window(target) and not self.running:
-                        threading.Thread(target=self.prefire_jms_exports,
-                                         daemon=True).start()
 
                 # ตรวจ token เชิงรุกที่นาที :20/:40 (thread แยก ไม่บล็อกลูป)
                 if now.minute in TOKEN_HEALTHCHECK_MINUTES and getattr(self, "last_token_check_minute", None) != now_key:

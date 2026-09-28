@@ -19,8 +19,9 @@ import bot_main  # noqa: E402
 import card_report  # noqa: E402
 import app_version  # noqa: E402
 import Createphoto  # noqa: E402
-from dashboard import notify, pipeline, render  # noqa: E402
+from dashboard import notify, pipeline, render, server  # noqa: E402
 from metrics import core  # noqa: E402
+from metrics import ingest_dws_db  # noqa: E402
 
 
 class SchedulerRegressionTests(unittest.TestCase):
@@ -140,8 +141,70 @@ class SchedulerRegressionTests(unittest.TestCase):
         self.assertIsInstance(payload["startTimeStr"], str)
         self.assertIsInstance(payload["endTimeStr"], str)
 
+    def test_early_jms_snapshot_is_not_created_or_reused(self) -> None:
+        app = self.make_app()
+        app.running = False
+        app.stop_requested = False
+        app.scheduler_running = True
+        app.run_generation = 8
+        app.write_log = lambda *_args, **_kwargs: None
+        app.prewarm_jms_exports = mock.Mock()
+        app.prefire_jms_exports()
+        app.prewarm_jms_exports.assert_not_called()
+        self.assertFalse(app._jms_marker_usable(
+            (datetime(2026, 9, 28, 16, 55), None, time.time())))
+
 
 class MetricsRegressionTests(unittest.TestCase):
+    def test_main_config_save_preserves_dashboard_owned_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.ini"
+            path.write_text(
+                "[TIME]\nrun_minute = 5\n[DASHBOARD]\ntoken = fresh-token\n",
+                encoding="utf-8",
+            )
+            stale = configparser.RawConfigParser()
+            stale["TIME"] = {"run_minute": "7"}
+            stale["DASHBOARD"] = {"token": "stale-token"}
+            with mock.patch.object(Createphoto, "resource_path", return_value=str(path)):
+                Createphoto.save_config(stale)
+            saved = configparser.RawConfigParser()
+            saved.read(path, encoding="utf-8")
+            self.assertEqual(saved["TIME"]["run_minute"], "7")
+            self.assertEqual(saved["DASHBOARD"]["token"], "fresh-token")
+
+    def test_config_accepts_literal_percent_in_operator_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.ini"
+            path.write_text(
+                "[FEISHU]\nAPP_SECRET = value%with%percent\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(Createphoto, "resource_path", return_value=str(path)):
+                loaded = Createphoto.load_config()
+            self.assertEqual(
+                loaded["FEISHU"]["APP_SECRET"], "value%with%percent")
+
+    def test_dashboard_token_creation_preserves_main_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.ini"
+            path.write_text("[TIME]\nrun_minute = 9\n", encoding="utf-8")
+            with (mock.patch.object(server, "CONFIG_INI", str(path)),
+                  mock.patch.object(server.secrets, "token_urlsafe",
+                                    return_value="generated-token")):
+                settings = server.get_settings()
+            saved = configparser.RawConfigParser()
+            saved.read(path, encoding="utf-8")
+            self.assertEqual(settings["token"], "generated-token")
+            self.assertEqual(saved["TIME"]["run_minute"], "9")
+            self.assertEqual(saved["DASHBOARD"]["token"], "generated-token")
+
+    def test_dws_db_query_is_bounded_to_one_business_day(self) -> None:
+        self.assertEqual(
+            ingest_dws_db.query_bounds("2026-09-28", 16, 2099),
+            ("2026-09-28 16:00:00", "2026-09-29 16:00:00"),
+        )
+
     def test_config_cache_reloads_after_file_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "metrics.yaml"
@@ -288,6 +351,31 @@ class DashboardRegressionTests(unittest.TestCase):
             self.assertEqual(result["status"], "error")
             self.assertFalse(render_tabs.called)
             self.assertNotIn("png", result)
+
+    def test_missing_business_date_rows_block_render(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = {
+                "enabled": True, "render_png": True, "png_dir": tmp,
+                "hide_empty_png": False, "tables_only_png": True,
+            }
+            ok = {"rows": 1, "warnings": []}
+            missing = {
+                "rows": 0,
+                "warnings": ["ไม่มีข้อมูลของวันรอบงาน 2026-09-28"],
+            }
+            with (mock.patch.object(pipeline, "_settings", return_value=settings),
+                  mock.patch.object(pipeline.ingest_autopacking, "ingest_folder",
+                                    return_value=ok),
+                  mock.patch.object(pipeline.ingest_dws, "ingest_all", return_value=ok),
+                  mock.patch.object(pipeline.ingest_dws_db, "ingest", return_value=ok),
+                  mock.patch.object(pipeline.ingest_jms, "ingest_all", return_value=missing),
+                  mock.patch.object(render, "render_all_tabs") as render_tabs):
+                result = pipeline.run_cycle(
+                    business_date="2026-09-28",
+                    db_path=str(Path(tmp) / "store.db"),
+                    log=lambda *_args, **_kw: None)
+            self.assertEqual(result["status"], "error")
+            self.assertFalse(render_tabs.called)
 
     def test_missing_fresh_png_is_rejected_before_feishu_api(self) -> None:
         cfg = {

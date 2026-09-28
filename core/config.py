@@ -30,7 +30,7 @@ CONFIG_FILE = os.path.join(
 
 def load_config():
 
-    config = configparser.ConfigParser()
+    config = configparser.RawConfigParser()
     config.read(CONFIG_FILE, encoding="utf-8")
     return config
 
@@ -41,7 +41,7 @@ def load_config():
 
 if not os.path.exists(CONFIG_FILE):
 
-    config = configparser.ConfigParser()
+    config = configparser.RawConfigParser()
 
     config["FEISHU"] = {
         "APP_ID": "",

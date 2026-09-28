@@ -3,6 +3,10 @@
 - Automatic and Run Now reports now calculate a fresh current-business-day data window at execution time; manual DATA EXPORT continues to honor its explicitly selected range.
 - Hourly Excel reports are validated after start-hour column trimming; a shifted header/formula pair now fails the pipeline before any incorrect image can be sent.
 - The operational DWS/PDA workbook was checked across the exported ranges; 40 DWS/PDA hourly formula columns align after correcting `AUTO PDA!T15`. Backup: `C:\0DWS\1DWS_&_PDA_v1.8.3 Bot.before-hour-fix-20260929.xlsx`.
+- Scheduled early JMS snapshots are no longer created or reused because they cannot contain scans from the remaining minutes; AUTO/PDA generation still starts in parallel inside the actual run.
+- Dashboard now fails closed when a required JMS file has no data for the requested business date, and DWS9-11 aggregation reads only the requested business-day window.
+- Shared `config.ini` updates are atomic inside the application; main-UI saves preserve the Dashboard-owned access token.
+- The misleading scheduled pre-fire control and scheduler path have been removed. Same-run JMS AUTO/PDA requests still start together.
 
 - Version 2.0.1 fixes JMS automatic and prewarm export ranges by normalizing them to JSON-safe strings at both the shared range helper and the JMS request boundary.
 
@@ -17,12 +21,14 @@
 - Metrics ingestion replaces successful source partitions, reloads changed config, and preserves last-known data on source failure.
 - Historical date selections and attachment-only Feishu delivery are preserved.
 - Configured round/shift times render consistently on desktop and mobile without changing the approved chart layout.
-- Automated regression suite passes 12 tests; responsive browser QA passes with no console/page errors or horizontal overflow.
-- Application version is `2.0.0`; the release folder is derived automatically as `dist/AutoReportFeishuV2-0-0`.
+- Automated regression suite passes 25 tests; focused fatal/static checks and Python compilation pass.
+- Application version is `2.0.3`; the release folder is derived automatically as `dist/AutoReportFeishuV2-0-3`.
 - Future releases use `python tools/bump_version.py patch` before building; both UI and release folder update from the same source.
-- The complete onedir release was built and passed a 10-second launch smoke test with config, metrics config, `_internal`, and bundled Playwright present.
+- The complete `AutoReportFeishuV2-0-3` onedir release passed a 12-second launch smoke test with the v2.0.3 title, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.
 - Excel `CopyPicture` still fails in the local Office environment in both the old and new versions; cleanup succeeds with no leftover Excel process, so it is not a regression from this change.
 
-## Next Action
+## Remaining live acceptance
 
-- Run one controlled live DWS/JMS/Feishu cycle on the production network, then commit and push when requested.
+- Run one controlled live DWS/JMS/Excel/Feishu cycle with the production token and chat configuration. The repository and carried-forward build config do not contain those operator secrets.
+- Decide whether LAN plan-switch endpoints on ports 6100 and the configured bot port must remain unauthenticated for legacy clients or receive a coordinated shared-token migration before wider deployment.
+- Local Office still rejects `Range.CopyPicture` for the synthetic cleanup workbook; the test confirms forced cleanup leaves no Excel process behind, but a production-machine Excel-image run is still required.

@@ -1,10 +1,23 @@
 # Changelog
 
+## 2.0.3
+
+- Removed the scheduled JMS early-export control and execution path; same-run AUTO/PDA generation remains parallel and starts only at the report cutoff.
+- Made shared `config.ini` writes atomic and preserved the Dashboard-owned token when the main UI saves an older in-memory configuration.
+- Added regression coverage for cross-thread config ownership and literal percent signs in operator-entered secrets/URLs; the full automated suite now has 25 tests.
+- Switched production INI readers to raw parsing so `%` in credentials or URLs is treated as data instead of interpolation syntax.
+- Cleared fatal/static closure checks in the Excel export path without changing the accepted workbook or chart layout.
+- Confirmed with live source reads that missing current-day JMS input now stops Dashboard output instead of creating and sending a plausible all-zero report.
+- Built `dist/AutoReportFeishuV2-0-3` and smoke-tested its EXE for 12 seconds; the v2.0.3 window stayed responsive and ports 6100/6200 listened successfully.
+
 ## 2.0.2
 
 - Separated the automatic scheduler lifetime from each report's business-day export range, preventing multi-day queries from mixing report dates, slowing JMS, and producing incomplete hourly tables.
 - Added a fail-closed Excel report check that blocks image delivery when a visible hour header no longer matches the hour used by its formulas.
 - Corrected the operational `AUTO PDA!T15` template formula for `Autopacking_pda11` from hour 12 to hour 04; preserved a dated backup beside the workbook.
+- Prevented scheduled JMS pre-fire snapshots from being reused after their data cutoff, eliminating missing tail-minute scans while retaining same-run parallel AUTO/PDA generation.
+- Blocked Dashboard rendering when a required JMS source has no rows for the requested business date.
+- Bounded the DWS9-11 metrics query to one business-day window instead of scanning all later records.
 
 ## 2.0.1
 
