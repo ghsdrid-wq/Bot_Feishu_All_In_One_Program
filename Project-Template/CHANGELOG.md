@@ -9,6 +9,8 @@
 - Prevented stopped or superseded pipeline steps from being marked successful or publishing late output.
 - Fixed the scheduler's final minute so a loop wake-up a few seconds after the configured end still runs that minute once.
 - Expanded regression coverage to 43 passing tests before packaging.
+- Passed a controlled production-like live cycle using the `C:\0DWS` workbooks and the test Feishu chat: DWS, JMS AUTO/PDA, Realtime, four Excel images, the group card, and the Realtime workbook were delivered successfully in 441.9 seconds.
+- Validated all four generated XLSX archives and PNG images after the live cycle; no partial-download file, Excel process, or AutoReport process remained.
 
 ## 2.1.2
 
