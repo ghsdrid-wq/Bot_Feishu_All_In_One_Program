@@ -516,8 +516,10 @@ class JmsPolicyRegressionTests(unittest.TestCase):
             self.assertTrue(exempt.allowed)
             self.assertTrue(exempt.exempt)
             self.assertEqual(exempt.matched_prefix, "999004")
+            self.assertEqual(exempt.reason, "ALLOW_EXEMPT")
             self.assertFalse(blocked.allowed)
             self.assertEqual(blocked.matched_prefix, "999004")
+            self.assertEqual(blocked.reason, "BLOCKED_PREFIX")
 
     def test_bulk_parser_accepts_excel_column_and_reports_bad_or_duplicate(self) -> None:
         valid, invalid, duplicates = jms_policy.parse_bulk_entries(
@@ -589,6 +591,78 @@ class JmsPolicyRegressionTests(unittest.TestCase):
                                     return_value=["999004T00123"])):
                 app.handle_jms_command("รีรหัส app", "chat", "message")
                 search.assert_called_once_with("999004T00123")
+
+    def test_multi_code_command_keeps_exempt_blocked_and_default_results_separate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "policy.json")
+            jms_policy.save_policy({
+                "blocked_prefixes": ["999004"],
+                "exempt_codes": ["999004T00123"],
+            }, path)
+            app = bot_main.App.__new__(bot_main.App)
+            app.jms_policy_path = path
+            app.jms_running = True
+            app.get_feishu_config_value = lambda *_args: "BOT"
+            app.jms_log = lambda *_args: None
+            app.notify_it_alert = lambda *_args: None
+
+            def user_for(staff_no):
+                return {"id": "id-" + staff_no, "name": staff_no,
+                        "staffNo": staff_no}
+
+            with (mock.patch.object(bot_main, "search_user",
+                                    side_effect=user_for) as search,
+                  mock.patch.object(bot_main, "reset_app_password",
+                                    return_value="NEWPASS"),
+                  mock.patch.object(bot_main, "enable_user"),
+                  mock.patch.object(bot_main, "reply_feishu_message",
+                                    return_value=True) as reply,
+                  mock.patch.object(bot_main, "write_log")):
+                app.handle_jms_command(
+                    "รี app 999004T00123 999004T00999 888888T00001",
+                    "chat", "message")
+
+            self.assertEqual(
+                [call.args[0] for call in search.call_args_list],
+                ["999004T00123", "888888T00001"],
+            )
+            response = reply.call_args.args[1]
+            self.assertIn("999004T00123", response)
+            self.assertIn("888888T00001", response)
+            self.assertIn("รหัสที่ขึ้นต้นด้วย 999004", response)
+
+    def test_offline_jms_bot_always_replies_with_all_requested_codes(self) -> None:
+        app = bot_main.App.__new__(bot_main.App)
+        app.jms_running = False
+        app.get_feishu_config_value = lambda *_args: "BOT"
+        app.jms_log = lambda *_args: None
+        app.notify_it_alert = lambda *_args: None
+        with (mock.patch.object(bot_main, "reply_feishu_message",
+                                return_value=True) as reply,
+              mock.patch.object(bot_main, "send_feishu_chat_message") as send):
+            handled = app.handle_jms_command(
+                "รี app 999004T00123 888888T00001",
+                "chat", "message")
+        self.assertTrue(handled)
+        reply.assert_called_once()
+        response = reply.call_args.args[1]
+        self.assertIn("BOT JMS USER", response)
+        self.assertIn("999004T00123", response)
+        self.assertIn("888888T00001", response)
+        send.assert_not_called()
+
+    def test_feishu_response_falls_back_to_chat_send(self) -> None:
+        with (mock.patch.object(bot_main, "reply_feishu_message",
+                                return_value=False) as reply,
+              mock.patch.object(bot_main, "send_feishu_chat_message",
+                                return_value=True) as send,
+              mock.patch.object(bot_main, "_webhook_log") as log):
+            delivered = bot_main.deliver_feishu_response(
+                "message", "chat", "result")
+        self.assertTrue(delivered)
+        reply.assert_called_once_with("message", "result")
+        send.assert_called_once_with("chat", "result")
+        log.assert_called_once()
 
     def test_reset_success_is_returned_when_enable_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

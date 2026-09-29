@@ -416,6 +416,23 @@ def send_feishu_chat_message(chat_id, text):
         return False
 
 
+def deliver_feishu_response(message_id, chat_id, text):
+    """Deliver one user-visible result, falling back from reply to chat send."""
+    if reply_feishu_message(message_id, text):
+        return True
+    if chat_id and send_feishu_chat_message(chat_id, formalize_reply_text(text)):
+        _webhook_log(
+            f"Reply failed; sent fallback message to chat {chat_id}",
+            level="WARN",
+        )
+        return True
+    _webhook_log(
+        f"Unable to deliver Feishu response for message {message_id}",
+        level="ERROR",
+    )
+    return False
+
+
 def send_system_alert(text):
     return send_feishu_chat_message(SYSTEM_ALERT_CHAT_ID, text)
 
@@ -6563,9 +6580,18 @@ class App(ctk.CTk):
                 "ต้องเปิด BOT JMS USER",
                 "มีคำสั่ง JMS จาก Feishu เข้ามา แต่ BOT JMS USER ยังไม่ได้ START BOT"
             )
+            deliver_feishu_response(
+                message_id,
+                chat_id,
+                "ไม่สามารถดำเนินการได้ เนื่องจาก BOT JMS USER ยังไม่ได้เปิดใช้งาน\n"
+                f"รหัส: {', '.join(staff_list)}\n"
+                "กรุณาติดต่อผู้ดูแลระบบ",
+            )
             return True
         if not staff_list:
-            reply_feishu_message(message_id, "ไม่พบข้อมูลผู้ใช้งาน กรุณาตรวจสอบอีกครั้ง")
+            deliver_feishu_response(
+                message_id, chat_id,
+                "ไม่พบข้อมูลผู้ใช้งาน กรุณาตรวจสอบอีกครั้ง")
             return True
 
         policy_snapshot = None
@@ -6590,6 +6616,15 @@ class App(ctk.CTk):
                         detail=f"POLICY ERROR : {policy_error}")
                     continue
                 decision = jms_policy.evaluate_policy(staff_no, policy_snapshot)
+                if decision.error:
+                    fail_text.append(
+                        f"ไม่สามารถตรวจสอบสิทธิ์ของ {staff_no} ได้ กรุณาตรวจสอบรูปแบบรหัส")
+                    self.jms_log(
+                        f"[POLICY INVALID] {staff_no} -> {decision.error}")
+                    write_log(
+                        status="BLOCKED", user=staff_no,
+                        action=command_type, detail=decision.error)
+                    continue
                 if not decision.allowed:
                     blocked = decision.matched_prefix
                     fail_text.append(f"รหัสที่ขึ้นต้นด้วย {blocked} ยกเลิกการใช้งานแล้ว กรุณาติดต่อ HR")
@@ -6694,12 +6729,15 @@ class App(ctk.CTk):
                 final_message += "\n\n"
             final_message += "\n".join(fail_text)
         if not final_message:
-            return True
+            final_message = (
+                "ไม่สามารถสรุปผลการดำเนินการได้ กรุณาติดต่อผู้ดูแลระบบ")
+            self.jms_log("[ERROR] JMS command produced no result message")
         if len(final_message) > 3000:
             for i in range(0, len(final_message), 3000):
-                reply_feishu_message(message_id, final_message[i:i + 3000])
+                deliver_feishu_response(
+                    message_id, chat_id, final_message[i:i + 3000])
         else:
-            reply_feishu_message(message_id, final_message)
+            deliver_feishu_response(message_id, chat_id, final_message)
         return True
 
     def on_close(self):

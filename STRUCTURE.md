@@ -67,13 +67,14 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 
 ### JMS User Bot
 - `start_feishu_bot` / `run_feishu_server` / `stop_feishu_bot` — คุม webhook server (waitress)
-- `handle_jms_command` — snapshot นโยบายหนึ่งครั้งต่อข้อความ แล้ววนทำทีละ user: ตรวจ exact exemption/prefix block → ค้นหา `staffNo` ที่ตรงรหัสเต็มเท่านั้น → reset/enable → ตอบผลสำเร็จ/สำเร็จบางส่วน/ล้มเหลวกลับ Feishu รวมถึงกรณี token หมดอายุ
+- `handle_jms_command` — snapshot นโยบายหนึ่งครั้งต่อข้อความ แล้ววนทำทีละ user: ตรวจ exact exemption ก่อน prefix block → ค้นหา `staffNo` ที่ตรงรหัสเต็มเท่านั้น → reset/enable → รวมผลทุกรหัสตอบกลับ Feishu รวมถึงกรณี bot offline/token หมดอายุ; ถ้า reply ไม่สำเร็จจะลองส่งเข้าห้องเป็นทางสำรอง
 - หน้า `จัดการสิทธิ์รหัส` — แท็บหัวรหัสบล็อก/รหัสละเว้น, ค้นหา, แบ่งหน้า 20 รายการ, bulk paste, import/export และลบหลายรายการ
 
 ## Runtime policy (`jms_user_policy.json`)
 - เก็บข้าง EXE และไม่ commit เข้า Git
 - `blocked_prefixes`: บล็อกทุก USER ที่ขึ้นต้นด้วยค่าในรายการ
 - `exempt_codes`: อนุญาตเฉพาะรหัสเต็มที่ตรงกัน และมีสิทธิ์เหนือ prefix block
+- ลำดับตัดสินคงที่: policy ผิดพลาด/รหัสไม่ถูกต้อง → block, exact exemption → allow, prefix block → block, นอกนั้น → allow
 - ถ้าไฟล์อ่านไม่ได้หรือ JSON เสีย คำสั่งแก้ไข USER จะถูกบล็อกไว้ก่อน (fail closed)
 - build จะเก็บไฟล์เดิมข้ามเวอร์ชัน แต่ fresh install จะสร้างไฟล์และย้าย `JMS_USER.blocked_keywords` เดิมให้อัตโนมัติ
 

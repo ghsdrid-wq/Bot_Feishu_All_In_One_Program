@@ -30,6 +30,7 @@ class PolicyDecision:
     exempt: bool = False
     matched_prefix: str | None = None
     error: str | None = None
+    reason: str = "ALLOW_DEFAULT"
 
 
 def default_policy_path() -> str:
@@ -150,21 +151,49 @@ def parse_bulk_entries(text: str, kind: str) -> tuple[list[str], list[str], list
 def evaluate_policy(staff_code: object, policy: dict) -> PolicyDecision:
     code = normalize_entry(staff_code)
     clean = validate_policy(policy)
+    if not _CODE_RE.fullmatch(code):
+        return PolicyDecision(
+            allowed=False,
+            error=f"Invalid staff code: {code or '<empty>'}",
+            reason="INVALID_CODE",
+        )
+
+    # An exemption is part of the prefix-block rule, not a competing allow
+    # rule.  Decide the exact exemption first so a future early-return in the
+    # prefix branch cannot accidentally block an exempt code.
+    if code in set(clean["exempt_codes"]):
+        matching = sorted(
+            (prefix for prefix in clean["blocked_prefixes"]
+             if code.startswith(prefix)),
+            key=len,
+            reverse=True,
+        )
+        return PolicyDecision(
+            allowed=True,
+            exempt=True,
+            matched_prefix=matching[0] if matching else None,
+            reason="ALLOW_EXEMPT",
+        )
+
     matching = sorted(
         (prefix for prefix in clean["blocked_prefixes"] if code.startswith(prefix)),
         key=len,
         reverse=True,
     )
     matched = matching[0] if matching else None
-    if code in set(clean["exempt_codes"]):
+    if matched:
         return PolicyDecision(
-            allowed=True, exempt=True, matched_prefix=matched)
-    return PolicyDecision(allowed=matched is None, matched_prefix=matched)
+            allowed=False,
+            matched_prefix=matched,
+            reason="BLOCKED_PREFIX",
+        )
+    return PolicyDecision(allowed=True, reason="ALLOW_DEFAULT")
 
 
 def evaluate_code(staff_code: object, path: str | None = None) -> PolicyDecision:
     try:
         policy = load_policy(path)
     except PolicyError as exc:
-        return PolicyDecision(allowed=False, error=str(exc))
+        return PolicyDecision(
+            allowed=False, error=str(exc), reason="POLICY_ERROR")
     return evaluate_policy(staff_code, policy)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.6
+
+- Evaluated exact JMS code exemptions before blocked prefixes and attached explicit decision reasons to every policy result.
+- Preserved mixed multi-code commands so exempt/default codes continue while blocked codes are reported in the same combined response.
+- Replied to the requester when BOT JMS USER is offline instead of silently marking the command handled.
+- Added a fallback chat message when a Feishu threaded reply cannot be delivered, and logged a terminal delivery failure when both methods fail.
+- Added regression coverage for mixed multi-code decisions, offline replies, and fallback delivery.
+
 ## 2.1.5
 
 - Added an atomic self-repair path that restores a missing editable `metrics_config.yaml` from a bundled read-only default without overwriting an existing operator configuration.
