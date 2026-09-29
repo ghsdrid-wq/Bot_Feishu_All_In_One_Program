@@ -151,6 +151,62 @@ def apply_nord_theme():
                 pass
 
 
+class SmoothScrollableFrame(ctk.CTkScrollableFrame):
+    """Scrollable frame with coalesced, eased mouse-wheel movement on Windows."""
+
+    _wheel_step_pixels = 72
+    _animation_interval_ms = 16
+    _animation_easing = 0.42
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._smooth_scroll_target = None
+        self._smooth_scroll_job = None
+
+    def _mouse_wheel_all(self, event):
+        if (
+            sys.platform.startswith("win")
+            and not self._shift_pressed
+            and self._check_if_valid_scroll(event.widget)
+            and self._parent_canvas.yview() != (0.0, 1.0)
+        ):
+            first, last = self._parent_canvas.yview()
+            visible_fraction = max(0.0, last - first)
+            max_first = max(0.0, 1.0 - visible_fraction)
+            bbox = self._parent_canvas.bbox("all")
+            content_height = max(1, (bbox[3] - bbox[1]) if bbox else 1)
+            base = (
+                self._smooth_scroll_target
+                if self._smooth_scroll_target is not None
+                else first
+            )
+            notches = event.delta / 120 if event.delta else 0
+            delta_fraction = (-notches * self._wheel_step_pixels) / content_height
+            self._smooth_scroll_target = min(
+                max_first, max(0.0, base + delta_fraction))
+            if self._smooth_scroll_job is None:
+                self._smooth_scroll_job = self.after(
+                    self._animation_interval_ms, self._animate_smooth_scroll)
+            return "break"
+        return super()._mouse_wheel_all(event)
+
+    def _animate_smooth_scroll(self):
+        self._smooth_scroll_job = None
+        target = self._smooth_scroll_target
+        if target is None or not self.winfo_exists():
+            return
+        current = self._parent_canvas.yview()[0]
+        distance = target - current
+        if abs(distance) <= 0.0004:
+            self._parent_canvas.yview_moveto(target)
+            self._smooth_scroll_target = None
+            return
+        self._parent_canvas.yview_moveto(
+            current + distance * self._animation_easing)
+        self._smooth_scroll_job = self.after(
+            self._animation_interval_ms, self._animate_smooth_scroll)
+
+
 APP_TITLE = f"Auto Report Feishu Enterprise Console v{APP_VERSION}"
 CONFIG_FILE = resource_path("config.ini")
 SINGLE_INSTANCE_MUTEX_NAME = "Local\\AutoReportFeishuEnterpriseConsole"
@@ -311,6 +367,20 @@ def get_tenant_access_token():
         return None
 
 
+REPLY_EMOJI_RE = re.compile(
+    "[\U0001F1E6-\U0001F1FF\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]+"
+)
+
+
+def formalize_reply_text(text):
+    """Remove decorative emoji from user-visible Feishu replies."""
+    lines = []
+    for raw_line in str(text or "").splitlines():
+        cleaned = REPLY_EMOJI_RE.sub("", raw_line)
+        lines.append(re.sub(r"[ \t]{2,}", " ", cleaned).strip())
+    return "\n".join(lines).strip()
+
+
 def reply_feishu_message(message_id, text):
     """ตอบกลับข้อความที่ทักมา — คืน True/False ไม่โยน error
 
@@ -320,6 +390,9 @@ def reply_feishu_message(message_id, text):
     """
     token = get_tenant_access_token()
     if not token:
+        return False
+    text = formalize_reply_text(text)
+    if not text:
         return False
     try:
         feishu_client.reply_text(token, message_id, text, log=_webhook_log)
@@ -693,7 +766,7 @@ def feishu_event():
             continue
 
         if "/status" in command_lower:
-            reply_feishu_message(message_id, "🟢 Controller Online")
+            reply_feishu_message(message_id, "Controller Online")
             processed_any = True
 
     if processed_any:
@@ -2973,7 +3046,7 @@ class App(ctk.CTk):
         self.controller_client_frame.grid_columnconfigure(1, weight=1)
 
     def build_settings_page(self, master):
-        page = ctk.CTkScrollableFrame(master, fg_color="#2e3440", corner_radius=0)
+        page = SmoothScrollableFrame(master, fg_color="#2e3440", corner_radius=0)
         page.grid_columnconfigure(0, weight=1)
         self.header(page, "ตั้งค่า", "รวม config ทั้งหมดไว้ที่นี่: Feishu, DWS/JMS Export, ชื่อไฟล์, DWS PLAN และ JMS USER").grid(row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
 
@@ -6362,7 +6435,7 @@ class App(ctk.CTk):
             )
             return True
         if not staff_list:
-            reply_feishu_message(message_id, "❌ ไม่พบ USER")
+            reply_feishu_message(message_id, "ไม่พบข้อมูลผู้ใช้งาน กรุณาตรวจสอบอีกครั้ง")
             return True
 
         policy_snapshot = None
@@ -6380,7 +6453,7 @@ class App(ctk.CTk):
             if command_type != "LOOKUP_ONLY":
                 if policy_error:
                     fail_text.append(
-                        f"❌ ระบบสิทธิ์รหัสขัดข้อง จึงระงับคำสั่งของ {staff_no} เพื่อความปลอดภัย")
+                        f"ระบบสิทธิ์รหัสขัดข้อง จึงระงับคำสั่งของ {staff_no} เพื่อความปลอดภัย")
                     self.jms_log(f"[POLICY ERROR] {policy_error}")
                     write_log(
                         status="BLOCKED", user=staff_no, action=command_type,
@@ -6389,7 +6462,7 @@ class App(ctk.CTk):
                 decision = jms_policy.evaluate_policy(staff_no, policy_snapshot)
                 if not decision.allowed:
                     blocked = decision.matched_prefix
-                    fail_text.append(f"❌ รหัส {staff_no} ถูกระงับการใช้งาน (รหัสขึ้นต้นด้วย {blocked} ยกเลิกใช้งานแล้ว) ไม่สามารถรีรหัส/เปิดใช้งานได้")
+                    fail_text.append(f"รหัสที่ขึ้นต้นด้วย {blocked} ยกเลิกการใช้งานแล้ว กรุณาติดต่อ HR")
                     self.jms_log(f"[BLOCKED] {staff_no} (prefix {blocked})")
                     write_log(status="BLOCKED", user=staff_no, action=command_type, detail=f"BLOCKED PREFIX : {blocked}")
                     continue
@@ -6404,12 +6477,12 @@ class App(ctk.CTk):
                 self.jms_log(f"[SEARCH] {staff_no}")
                 user = search_user(staff_no)
                 if not user or not isinstance(user, dict):
-                    fail_text.append(f"❌ ไม่พบ USER {staff_no}")
+                    fail_text.append(f"ไม่พบข้อมูลผู้ใช้งาน: {staff_no} กรุณาตรวจสอบอีกครั้ง")
                     continue
                 user_id = user.get("id")
                 user_name = str(user.get("name") or "")
                 if not user_id:
-                    fail_text.append(f"❌ USER DATA INVALID {staff_no}")
+                    fail_text.append(f"USER DATA INVALID {staff_no}")
                     continue
                 if command_type == "APP":
                     new_password = reset_app_password(user_id)
@@ -6429,7 +6502,7 @@ class App(ctk.CTk):
                     self.jms_log(f"[ENABLE USER] {staff_no}")
                     write_log(status="SUCCESS", user=staff_no, name=user_name, action="ENABLE", detail="USER ENABLE SENT")
                 elif command_type == "LOOKUP_ONLY":
-                    fail_text.append(f"❌ ระบุคำสั่งไม่ชัดเจน {staff_no} : กรุณาพิมพ์ รี app หรือ รี jms")
+                    fail_text.append(f"ระบุคำสั่งไม่ชัดเจน {staff_no} : กรุณาพิมพ์ รี app หรือ รี jms")
             except Exception as e:
                 error_text = str(e)
                 if "JMS_TOKEN" in error_text or "Missing JMS_TOKEN" in error_text:
@@ -6444,7 +6517,7 @@ class App(ctk.CTk):
                 display_error = re.sub(r"\s*\(isEnable=.*?\)", "", error_text)
                 if display_error.startswith("เปิดใช้งานไม่สำเร็จ:"):
                     display_error = "เปิดใช้งานไม่สำเร็จ " + staff_no + " : " + display_error.split(":", 1)[1].strip()
-                    fail_text.append(f"❌ {display_error}")
+                    fail_text.append(display_error)
                 else:
                     fail_text.append(f"{staff_no} : {display_error}")
                 self.jms_log(f"[ERROR] {staff_no} -> {e}")
@@ -6454,7 +6527,9 @@ class App(ctk.CTk):
         if success_text:
             final_message += "ดำเนินการเสร็จเรียบร้อย\n\n" + "\n\n".join(success_text)
         if fail_text:
-            final_message += "\n\n⚠ FAILED\n\n" + "\n".join(fail_text)
+            if final_message:
+                final_message += "\n\n"
+            final_message += "\n".join(fail_text)
         if not final_message:
             return True
         if len(final_message) > 3000:

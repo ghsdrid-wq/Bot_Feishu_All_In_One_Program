@@ -1,5 +1,7 @@
 # Current Work
 
+- Version 2.1.2 removes decorative emoji and the user-visible `⚠ FAILED` heading from Feishu replies; individual failure details and internal status logging are preserved.
+- Version 2.1.1 smooths Settings-page mouse-wheel scrolling; operator acceptance confirms the full page now takes about 3-4 wheel rotations instead of 5-6.
 - Version 2.1.0 adds a dedicated JMS access-policy page with blocked prefixes, exact-code exemptions, bulk paste/import/export, search, multi-delete, and pagination.
 - The standalone Dashboard and DATA EXPORT navigation pages are removed from the desktop UI. Dashboard remains available as a BOT REPORT step, and the underlying DWS/JMS export routines remain intact for the main pipeline.
 - JMS commands now snapshot one atomic JSON policy per message; exact exemptions override matching prefixes, while unreadable policy data blocks modifying commands.
@@ -24,10 +26,12 @@
 - Metrics ingestion replaces successful source partitions, reloads changed config, and preserves last-known data on source failure.
 - Historical date selections and attachment-only Feishu delivery are preserved.
 - Configured round/shift times render consistently on desktop and mobile without changing the approved chart layout.
-- Automated regression suite passes 33 tests, including policy parsing, migration, fail-closed behavior, handler integration, retired-page filtering, and backend preservation.
-- Application version is `2.1.0`; the release folder is derived automatically as `dist/AutoReportFeishuV2-1-0`.
+- Automated regression suite passes 34 tests, including policy parsing, migration, fail-closed behavior, handler integration, reply formatting, retired-page filtering, and backend preservation.
+- Application version is `2.1.2`; the release folder is derived automatically as `dist/AutoReportFeishuV2-1-2`.
 - Future releases use `python tools/bump_version.py patch` before building; both UI and release folder update from the same source.
 - The complete `AutoReportFeishuV2-1-0` onedir release passed a 12-second launch smoke test with the v2.1.0 title, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.
+- The complete `AutoReportFeishuV2-1-1` onedir release passed a 12-second launch smoke test with the v2.1.1 title, a responsive window, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.
+- The complete `AutoReportFeishuV2-1-2` onedir release passed a 12-second launch smoke test with the v2.1.2 title, a responsive window, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.
 - Excel `CopyPicture` still fails in the local Office environment in both the old and new versions; cleanup succeeds with no leftover Excel process, so it is not a regression from this change.
 
 ## Remaining live acceptance

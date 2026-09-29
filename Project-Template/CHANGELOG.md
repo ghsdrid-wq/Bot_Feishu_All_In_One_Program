@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.2
+
+- Removed decorative emoji and the informal `⚠ FAILED` heading from all Feishu replies while preserving individual failure details and backend status logging.
+
+## 2.1.1
+
+- Smoothed mouse-wheel scrolling on the Settings page by coalescing wheel input and easing canvas movement without changing any settings fields or persistence behavior.
+- Added a repeatable UI responsiveness profiler for Settings-page scrolling.
+
 ## 2.1.0
 
 - Removed the redundant standalone Dashboard navigation page while preserving the BOT REPORT Dashboard step and its generation, web-server, and Feishu delivery paths.

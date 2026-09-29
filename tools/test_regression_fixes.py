@@ -26,6 +26,13 @@ from core import jms_policy  # noqa: E402
 
 
 class SchedulerRegressionTests(unittest.TestCase):
+    def test_feishu_reply_text_removes_decorative_emoji(self) -> None:
+        self.assertEqual(
+            bot_main.formalize_reply_text(
+                "❌ ไม่พบ USER\n🟢 Controller Online\n⚠️ กรุณาตรวจสอบ"),
+            "ไม่พบ USER\nController Online\nกรุณาตรวจสอบ",
+        )
+
     def test_version_drives_title_and_release_folder(self) -> None:
         self.assertEqual(bot_main.APP_VERSION, app_version.APP_VERSION)
         self.assertIn(f"v{app_version.APP_VERSION}", bot_main.APP_TITLE)
@@ -239,7 +246,7 @@ class JmsPolicyRegressionTests(unittest.TestCase):
             app.notify_it_alert = lambda *_args: None
 
             with (mock.patch.object(bot_main, "detect_jms_intent", return_value="APP"),
-                  mock.patch.object(bot_main, "reply_feishu_message"),
+                  mock.patch.object(bot_main, "reply_feishu_message") as reply,
                   mock.patch.object(bot_main, "write_log"),
                   mock.patch.object(bot_main, "reset_app_password", return_value="1234"),
                   mock.patch.object(bot_main, "enable_user"),
@@ -249,6 +256,12 @@ class JmsPolicyRegressionTests(unittest.TestCase):
                                     return_value=["999004T00999"])):
                 app.handle_jms_command("รีรหัส app", "chat", "message")
                 search.assert_not_called()
+                reply.assert_called_once()
+                reply_text = reply.call_args.args[1]
+                self.assertNotIn("⚠", reply_text)
+                self.assertNotIn("❌", reply_text)
+                self.assertNotIn("FAILED", reply_text)
+                self.assertIn("รหัสที่ขึ้นต้นด้วย", reply_text)
 
             with (mock.patch.object(bot_main, "detect_jms_intent", return_value="APP"),
                   mock.patch.object(bot_main, "reply_feishu_message"),
