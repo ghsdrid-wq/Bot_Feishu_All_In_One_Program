@@ -58,6 +58,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - `start_scheduler` / `scheduler_loop` / `stop_scheduler` — Auto รันตามรอบ (`run_minute`, `start_hour`/`end_hour`) โดยเทียบเป็นช่องนาที จึงไม่พลาดรอบสุดท้ายจาก loop ที่ตื่นหลังวินาที 00
 - `run_once` / `run_process` / `worker_loop` / `watchdog` — คุมการรัน manual + กันค้าง; `run_generation` กันงานเก่ากลับมาเขียนผลหลังผู้ใช้หยุดแล้วเริ่มรอบใหม่
 - `run_token_healthcheck` / `notify_it_alert` / `notify_export_token_error` — ตรวจ token เชิงรุกแล้วแจ้ง Feishu
+- กล่อง `Live Log`, `Controller Logs` และ `JMS Logs` เป็น read-only: โปรแกรมปลดล็อกเฉพาะตอนเติม/ล้างข้อความแล้วล็อกกลับทันที ผู้ใช้ยังถมดำ เลื่อน และคัดลอกได้ แต่พิมพ์ทับ วาง หรือลบข้อความไม่ได้
 
 ### DWS Plan Controller
 - `switch_plan` / `switch_plan_thread` / `switch_single_client` — ยิง POST เปลี่ยนแพลนทุกเครื่องแบบขนาน

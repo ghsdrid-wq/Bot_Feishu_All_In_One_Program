@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.4
+
+- Made all three desktop log panes read-only while preserving text selection, scrolling, and copying.
+- Kept automatic log appends, color tags, trimming, and the Clear buttons working by unlocking each pane only for the programmatic operation and relocking it in a `finally` block.
+- Added regression coverage that verifies programmatic writes and clears always restore the disabled state.
+
 ## 2.1.3
 
 - Protected Feishu webhook and plan/refresh mutation endpoints with the configured verification token while leaving read-only status available.

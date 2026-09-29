@@ -7,9 +7,11 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import zipfile
+from collections import deque
 from unittest import mock
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +46,52 @@ class SchedulerRegressionTests(unittest.TestCase):
         self.assertEqual(app_version.release_folder(),
                          "AutoReportFeishuV" +
                          app_version.APP_VERSION.replace(".", "-"))
+
+    def test_log_box_is_relocked_after_program_write_and_clear(self) -> None:
+        class LogBox:
+            def __init__(self):
+                self.states = []
+                self.content = ""
+
+            def configure(self, **kwargs):
+                self.states.append(kwargs["state"])
+
+            def insert(self, _where, text, _tag=None):
+                self.content += text
+
+            def delete(self, *_args):
+                self.content = ""
+
+            @staticmethod
+            def index(_where):
+                return "1.0"
+
+            @staticmethod
+            def see(_where):
+                return None
+
+        app = bot_main.App.__new__(bot_main.App)
+        app.ui_thread_id = threading.get_ident()
+        box = LogBox()
+        app.log_box = box
+        app.log_buffers = {
+            "main": deque([("error details\n", "ERROR")]),
+            "controller": deque(),
+            "jms": deque(),
+        }
+        app.log_flush_pending = {
+            "main": True, "controller": False, "jms": False,
+        }
+        app.log_flush_lock = threading.Lock()
+        app.log_flush_batch_size = 200
+        app.log_flush_delay_ms = 3000
+        app.flush_log_buffer("main")
+        self.assertEqual(box.content, "error details\n")
+        self.assertEqual(box.states, ["normal", "disabled"])
+
+        app.clear_log_box("log_box")
+        self.assertEqual(box.content, "")
+        self.assertEqual(box.states[-2:], ["normal", "disabled"])
 
     def test_policy_page_is_inserted_and_retired_pages_are_removed(self) -> None:
         app = bot_main.App.__new__(bot_main.App)

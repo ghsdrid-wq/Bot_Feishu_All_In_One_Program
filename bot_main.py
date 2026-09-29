@@ -2026,7 +2026,7 @@ class App(ctk.CTk):
         top.grid(row=0, column=0, padx=16, pady=(14, 6), sticky="ew")
         top.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(top, text="Live Log", font=ctk.CTkFont(size=16, weight="bold"), text_color="#e5e9f0").grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(top, text="Clear", width=70, fg_color="#4c566a", hover_color="#5e6779", command=lambda: self.log_box.delete("1.0", "end")).grid(row=0, column=1, sticky="e")
+        ctk.CTkButton(top, text="Clear", width=70, fg_color="#4c566a", hover_color="#5e6779", command=lambda: self.clear_log_box("log_box")).grid(row=0, column=1, sticky="e")
         self.log_box = ctk.CTkTextbox(log_card, fg_color="#252b36", text_color="#a3be8c", font=("Consolas", 12), corner_radius=12, height=150)
         self.log_box.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
         try:
@@ -2037,6 +2037,7 @@ class App(ctk.CTk):
             self.log_box.tag_config("ERROR", foreground="#d3868e")
         except Exception:
             pass
+        self.log_box.configure(state="disabled")
         return page
 
     def build_workbooks_page(self, master):
@@ -2697,9 +2698,10 @@ class App(ctk.CTk):
         top.grid(row=0, column=0, padx=14, pady=(12, 6), sticky="ew")
         top.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(top, text="Controller Logs", text_color="#eceff4", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(top, text="Clear", width=70, fg_color="#4c566a", hover_color="#5e6779", command=lambda: self.controller_log_box.delete("1.0", "end")).grid(row=0, column=1, sticky="e")
+        ctk.CTkButton(top, text="Clear", width=70, fg_color="#4c566a", hover_color="#5e6779", command=lambda: self.clear_log_box("controller_log_box")).grid(row=0, column=1, sticky="e")
         self.controller_log_box = ctk.CTkTextbox(log_card, fg_color="#252b36", text_color="#a3be8c", font=("Consolas", 11), corner_radius=12)
         self.controller_log_box.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        self.controller_log_box.configure(state="disabled")
         self.update_bot_ui()
 
     def get_jms_blocked_keywords(self):
@@ -3014,9 +3016,10 @@ class App(ctk.CTk):
         top.grid(row=0, column=0, padx=14, pady=(12, 6), sticky="ew")
         top.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(top, text="JMS Logs", text_color="#eceff4", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(top, text="Clear", width=70, fg_color="#4c566a", hover_color="#5e6779", command=lambda: self.jms_log_text.delete("1.0", "end")).grid(row=0, column=1, sticky="e")
+        ctk.CTkButton(top, text="Clear", width=70, fg_color="#4c566a", hover_color="#5e6779", command=lambda: self.clear_log_box("jms_log_text")).grid(row=0, column=1, sticky="e")
         self.jms_log_text = ctk.CTkTextbox(log_card, fg_color="#252b36", text_color="#a3be8c", font=("Consolas", 11), corner_radius=12)
         self.jms_log_text.grid(row=1, column=0, padx=14, pady=(0, 14), sticky="nsew")
+        self.jms_log_text.configure(state="disabled")
         self.jms_log("[SYSTEM] JMS TAB READY")
         self.update_jms_ui()
 
@@ -3647,22 +3650,41 @@ class App(ctk.CTk):
         if key == "main":
             box = getattr(self, "log_box", None)
             if box is not None:
-                for line, tag in items:
-                    try:
-                        box.insert("end", line, tag)
-                    except Exception:
-                        box.insert("end", line)
-                self.trim_log_box(box)
-                box.see("end")
+                box.configure(state="normal")
+                try:
+                    for line, tag in items:
+                        try:
+                            box.insert("end", line, tag)
+                        except Exception:
+                            box.insert("end", line)
+                    self.trim_log_box(box)
+                    box.see("end")
+                finally:
+                    box.configure(state="disabled")
         else:
             box_name = "controller_log_box" if key == "controller" else "jms_log_text"
             box = getattr(self, box_name, None)
             if box is not None:
-                box.insert("end", "".join(items))
-                self.trim_log_box(box)
-                box.see("end")
+                box.configure(state="normal")
+                try:
+                    box.insert("end", "".join(items))
+                    self.trim_log_box(box)
+                    box.see("end")
+                finally:
+                    box.configure(state="disabled")
         if has_more:
             self.after(getattr(self, "log_flush_delay_ms", 3000), lambda k=key: self.flush_log_buffer(k))
+
+    def clear_log_box(self, box_name):
+        """Clear a read-only log box without leaving it editable."""
+        box = getattr(self, box_name, None)
+        if box is None:
+            return
+        box.configure(state="normal")
+        try:
+            box.delete("1.0", "end")
+        finally:
+            box.configure(state="disabled")
 
     def trim_log_box(self, box, max_lines: int = 100):
         """จำกัดจำนวนบรรทัดใน log box — เกิน max_lines ตัดแถวบนสุด (เก่าสุด) ออก
