@@ -100,10 +100,14 @@ def search_user(staff_no):
         .get("records", [])
     )
 
-    if not records:
-        return None
-
-    return records[0]
+    requested = str(staff_no).strip().upper()
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        returned = str(record.get("staffNo") or "").strip().upper()
+        if returned == requested:
+            return record
+    return None
 
 
 # =========================================

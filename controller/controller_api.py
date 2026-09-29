@@ -2,6 +2,7 @@ from flask import Flask
 from flask import request
 from flask import jsonify
 
+import hmac
 import threading
 
 try:
@@ -12,6 +13,29 @@ except Exception:
 app = Flask(__name__)
 
 controller_instance = None
+
+
+def _authorized(data=None):
+    if controller_instance is None:
+        return False
+    expected = str(
+        controller_instance.get_feishu_config_value("VERIFY_TOKEN", "") or ""
+    ).strip()
+    if not expected:
+        return False
+    data = data if isinstance(data, dict) else {}
+    authorization = str(request.headers.get("Authorization", "")).strip()
+    bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    candidates = (
+        data.get("token"),
+        request.headers.get("X-Controller-Token"),
+        bearer,
+    )
+    return any(
+        bool(candidate)
+        and hmac.compare_digest(str(candidate).strip(), expected)
+        for candidate in candidates
+    )
 
 
 # =========================================
@@ -53,6 +77,13 @@ def switch_plan():
 
     data = request.get_json(silent=True) or {}
 
+    if not _authorized(data):
+
+        return jsonify({
+            "success": False,
+            "message": "Unauthorized"
+        }), 401
+
     target_plan = str(data.get("plan", "")).strip()
 
     if not target_plan:
@@ -87,6 +118,15 @@ def refresh():
         return jsonify({
             "success": False
         })
+
+    data = request.get_json(silent=True) or {}
+
+    if not _authorized(data):
+
+        return jsonify({
+            "success": False,
+            "message": "Unauthorized"
+        }), 401
 
     controller_instance.refresh_status()
 

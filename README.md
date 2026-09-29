@@ -57,6 +57,7 @@ python bot_main.py
 - ตอนเปิด: โหลด/สร้าง `config.ini` และ start controller API (Flask) พอร์ต **6100**
 - กด **START BOT** ในหน้า JMS User / DWS → เปิด Feishu webhook server (พอร์ตจาก `bot_port`, default 7000)
 - ต้องมี reverse proxy / ngrok ชี้เข้ามาที่ webhook `/feishu_event`
+- ตั้ง `verify_token` ให้ตรงกับ Feishu Event Subscription; `/feishu_event`, `/switch_plan` และ controller `/refresh` จะปฏิเสธคำขอที่ไม่มี token หรือ token ไม่ตรง
 - เปิดได้ครั้งละ 1 instance (single-instance lock)
 
 ## การออกเวอร์ชันและ Build

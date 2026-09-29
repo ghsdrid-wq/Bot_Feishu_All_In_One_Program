@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-09-29 - Reliability and inbound-control gates
+
+- Require the configured `VERIFY_TOKEN` before processing Feishu events or state-changing controller requests; keep `/status` read-only and available for health checks.
+- Match JMS users by the complete normalized `staffNo`; never act on the first fuzzy API result.
+- Treat reset-success/enable-failure as partial success and return the generated password so the completed reset is not hidden.
+- Download and transform XLSX files under a temporary `.xlsx` name, validate them, then atomically replace the prior complete file.
+- Bind every running export to its run generation so cancelled or superseded work cannot publish late output.
+- Treat the configured scheduler end as an inclusive minute slot even when the loop wakes after second zero.
+
 ## 2026-09-29 - JMS access policy
 
 - Manage blocked prefixes and exact-code exemptions on one dedicated page with two tabs; do not crowd the JMS Bot operations page.

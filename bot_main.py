@@ -8,6 +8,8 @@ import threading
 import webbrowser
 import configparser
 import ctypes
+import hmac
+import zipfile
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -644,12 +646,39 @@ def bot_status():
 @bot_app.route("/switch_plan", methods=["POST"])
 def bot_switch_plan():
     data = request.get_json(silent=True) or {}
+    app = controller_instance
+    if app is None:
+        return jsonify({"success": False, "message": "Controller not ready"}), 503
+    if not request_token_valid(app, data):
+        return jsonify({"success": False, "message": "Unauthorized"}), 401
     plan = data.get("plan", "").strip()
     if not plan:
         return jsonify({"success": False, "message": "Plan Empty"})
     if controller_instance:
         controller_instance.switch_plan(plan)
     return jsonify({"success": True, "message": f"Switching to {plan}"})
+
+
+def request_token_valid(app, payload=None):
+    """Validate Feishu/controller requests against the configured token."""
+    expected = str(app.get_feishu_config_value("VERIFY_TOKEN", "") or "").strip()
+    if not expected:
+        return False
+    payload = payload if isinstance(payload, dict) else {}
+    authorization = str(request.headers.get("Authorization", "")).strip()
+    bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    header = payload.get("header") if isinstance(payload.get("header"), dict) else {}
+    candidates = (
+        header.get("token"),
+        payload.get("token"),
+        request.headers.get("X-Controller-Token"),
+        bearer,
+    )
+    return any(
+        bool(candidate)
+        and hmac.compare_digest(str(candidate).strip(), expected)
+        for candidate in candidates
+    )
 
 
 @bot_app.route("/feishu_event", methods=["POST"])
@@ -659,6 +688,9 @@ def feishu_event():
         return jsonify({"success": False, "message": "controller_not_ready"})
 
     data = request.get_json(silent=True) or {}
+    if not request_token_valid(app, data):
+        app.jms_log("[REJECT] Invalid Feishu verification token")
+        return jsonify({"success": False, "message": "unauthorized"}), 401
     if "challenge" in data:
         return jsonify({"challenge": data["challenge"]})
     if not getattr(app, "bot_running", False):
@@ -1302,6 +1334,7 @@ class App(ctk.CTk):
         self.running = False
         self.current_run_source = None
         self.run_generation = 0
+        self.active_run_generation = None
         self.run_state_lock = threading.Lock()
         self.scheduler_running = False
         self.last_run_minute = None
@@ -1589,6 +1622,12 @@ class App(ctk.CTk):
         if first <= last:
             return first <= hour <= last
         return hour >= first or hour <= last
+
+    def scheduler_slot_in_range(self, moment: datetime) -> bool:
+        """Compare the scheduled minute, not loop wake-up seconds, to the range."""
+        start_dt, end_dt = self.get_scheduler_time_range()
+        slot = moment.replace(second=0, microsecond=0)
+        return start_dt <= slot <= end_dt
 
     def get_next_scheduler_run_time(
             self, now: Optional[datetime] = None) -> Optional[datetime]:
@@ -4304,6 +4343,26 @@ class App(ctk.CTk):
             return value.strftime("%Y-%m-%d %H:%M:%S")
         return str(value).strip()
 
+    @staticmethod
+    def _validate_xlsx_download(path):
+        if not os.path.exists(path) or os.path.getsize(path) < 1000:
+            raise Exception("Downloaded file too small")
+        if not zipfile.is_zipfile(path):
+            raise Exception("Downloaded file is not a valid XLSX workbook")
+
+    @staticmethod
+    def _download_temp_path(path):
+        root, extension = os.path.splitext(path)
+        return f"{root}.download.tmp{extension or '.xlsx'}"
+
+    @staticmethod
+    def _remove_partial_download(path):
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+
     def sleep_with_stop(self, seconds):
         for _ in range(seconds):
             if self.stop_requested:
@@ -4340,11 +4399,23 @@ class App(ctk.CTk):
     def is_run_generation_active(self, run_generation):
         if run_generation is None:
             return True
-        lock = getattr(self, "run_state_lock", None)
+        # Use __dict__ so lightweight test instances created without Tk do not
+        # fall through tkinter.Misc.__getattr__ and recurse through self.tk.
+        lock = self.__dict__.get("run_state_lock")
         if lock is None:
             return run_generation == self.run_generation
         with lock:
             return run_generation == self.run_generation
+
+    def run_cancelled(self):
+        """Return True when the active operation must not publish more output."""
+        if getattr(self, "stop_requested", False) or not getattr(self, "running", False):
+            return True
+        active_generation = self.__dict__.get("active_run_generation")
+        return (
+            active_generation is not None
+            and not self.is_run_generation_active(active_generation)
+        )
 
     def schedule_pipeline_reset(self, run_generation=None):
         self.after(
@@ -4421,6 +4492,7 @@ class App(ctk.CTk):
             else:
                 self.stop_requested = False
                 self.last_activity = time.time()
+            self.active_run_generation = run_generation
             self.running = True
             self.raw_time_source = "manual"
             self.set_pipeline_state(None, "ready")
@@ -4440,6 +4512,10 @@ class App(ctk.CTk):
                 self.set_pipeline_state(key, "run")
                 self.write_log(f"Run step {idx}/{total}: {name}", level="START")
                 func()
+                if self.run_cancelled():
+                    self.set_pipeline_state(key, "skip")
+                    self.write_log("DWS/JMS stopped before publishing step output")
+                    return
                 self.set_pipeline_state(key, "ok")
                 self.set_progress(int(idx / total * 100))
                 if mode == "full" and idx < total:
@@ -4460,6 +4536,8 @@ class App(ctk.CTk):
             if is_current:
                 self.stop_requested = False
             self.active_run_settings = None
+            if getattr(self, "active_run_generation", None) == run_generation:
+                self.active_run_generation = None
             self.raw_time_source = "manual"
             if is_current:
                 self.current_run_source = None
@@ -4992,6 +5070,13 @@ class App(ctk.CTk):
             self.log(f"Prewarm skipped ({e}) — fallback sequential", "JMS", "WARN")
 
     def run_realtime_db(self):
+        session = requests.Session()
+        try:
+            return self._run_realtime_db(session)
+        finally:
+            session.close()
+
+    def _run_realtime_db(self, session):
 
         self.log("Loading Realtime DB", "REALTIME")
 
@@ -5008,8 +5093,6 @@ class App(ctk.CTk):
             "timezone": "GMT+0700",
             "Cache-Control": "max-age=2, must-revalidate",
         }
-
-        session = requests.Session()
 
         # ==================================================
         # STEP 1 : CREATE EXPORT TASK
@@ -5258,19 +5341,24 @@ class App(ctk.CTk):
             self.get_dws_export_filename("name_realtime_db", "RealtimeDB.xlsx")
         )
 
-        if len(file_resp.content) < 1000:
-            raise Exception(
-                "Downloaded file too small"
-            )
+        temp_path = self._download_temp_path(save_path)
+        self._remove_partial_download(temp_path)
+        try:
+            with open(temp_path, "wb") as f:
+                f.write(file_resp.content)
+            self._validate_xlsx_download(temp_path)
+            if self.run_cancelled():
+                return None
 
-        with open(save_path, "wb") as f:
-            f.write(file_resp.content)
-
-        # แปลงไฟล์ดิบเป็นรายงานในตัวเอง ได้ทั้งชีตตารางสรุปและชีตข้อมูลดิบ
-        # พัสดุเกินเวลาเป็นงานของ QC จึงไม่ต้องไปพึ่ง Power Query ในไฟล์ยอด KPI
-        # ไม่เรียก autofit ต่อท้าย เพราะ realtime_report จัดความกว้างคอลัมน์
-        # ของทั้งสองชีตไว้แล้ว ปล่อยให้ autofit รื้อจะทำให้ตารางในรูปเพี้ยน
-        realtime_report.build_report(save_path, log=self.log_realtime)
+            # สร้างรายงานบนไฟล์ชั่วคราวก่อน ไฟล์รอบก่อนจึงไม่เสียหาย
+            # หากการดาวน์โหลด/แปลงรายงานล้มเหลวหรือผู้ใช้กดหยุดกลางทาง
+            realtime_report.build_report(temp_path, log=self.log_realtime)
+            self._validate_xlsx_download(temp_path)
+            if self.run_cancelled():
+                return None
+            os.replace(temp_path, save_path)
+        finally:
+            self._remove_partial_download(temp_path)
 
         self.log(
             f"Downloaded {os.path.basename(save_path)}",
@@ -5288,7 +5376,7 @@ class App(ctk.CTk):
         (token error เด้งทันที ไม่ retry). คืน None เมื่อผู้ใช้กด stop."""
         last_err = None
         for attempt in range(retries + 1):
-            if self.stop_requested:
+            if self.run_cancelled():
                 return None
             try:
                 resp = session.post(url, json=payload, headers=headers, timeout=timeout)
@@ -5364,7 +5452,7 @@ class App(ctk.CTk):
 
         while time.time() < deadline:
 
-            if self.stop_requested:
+            if self.run_cancelled():
                 return None
 
             resp = self._jms_post(session, list_url, {"current": 1, "size": 20}, headers)
@@ -5452,26 +5540,35 @@ class App(ctk.CTk):
         raw_dir = self.get_raw_export_folder()
         os.makedirs(raw_dir, exist_ok=True)
         save_path = os.path.join(raw_dir, filename)
+        temp_path = self._download_temp_path(save_path)
+        self._remove_partial_download(temp_path)
 
         written = 0
-        with session.get(download_url, timeout=(30, 600), stream=True) as file_resp:
-            file_resp.raise_for_status()
-            content_type = str(file_resp.headers.get("Content-Type", "")).lower()
-            if "html" in content_type:
-                raise Exception(f"{filename}: downloaded file invalid (login/html)")
-            with open(save_path, "wb") as f:
-                for chunk in file_resp.iter_content(chunk_size=262144):
-                    if self.stop_requested:
-                        return None
-                    if chunk:
-                        f.write(chunk)
-                        written += len(chunk)
-                    self.mark_activity()
+        try:
+            with session.get(download_url, timeout=(30, 600), stream=True) as file_resp:
+                file_resp.raise_for_status()
+                content_type = str(file_resp.headers.get("Content-Type", "")).lower()
+                if "html" in content_type:
+                    raise Exception(f"{filename}: downloaded file invalid (login/html)")
+                with open(temp_path, "wb") as f:
+                    for chunk in file_resp.iter_content(chunk_size=262144):
+                        if self.run_cancelled():
+                            return None
+                        if chunk:
+                            f.write(chunk)
+                            written += len(chunk)
+                        self.mark_activity()
 
-        if written < 1000:
-            raise Exception(f"{filename}: downloaded file too small")
-
-        self.autofit_excel_file(save_path)
+            if written < 1000:
+                raise Exception(f"{filename}: downloaded file too small")
+            self._validate_xlsx_download(temp_path)
+            self.autofit_excel_file(temp_path)
+            self._validate_xlsx_download(temp_path)
+            if self.run_cancelled():
+                return None
+            os.replace(temp_path, save_path)
+        finally:
+            self._remove_partial_download(temp_path)
 
         self.log(
             f"File saved → {filename}",
@@ -5769,6 +5866,7 @@ class App(ctk.CTk):
             else:
                 self.stop_requested = False
                 self.last_activity = time.time()
+            self.active_run_generation = run_generation
             self.running = True
             self.set_status("Processing", "#ebcb8b", "#4a4433")
             self.set_progress(8)
@@ -5821,6 +5919,9 @@ class App(ctk.CTk):
                 self.set_pipeline_state(key, "run")
                 self.write_log(f"Raw export step {idx}/{len(active_raw)} — {name}", level="START")
                 func()
+                if self.run_cancelled():
+                    self.set_pipeline_state(key, "skip")
+                    return
                 self.set_pipeline_state(key, "ok")
                 pipeline_error_key = None
                 self.set_progress(8 + idx * 9)
@@ -5960,6 +6061,8 @@ class App(ctk.CTk):
             if is_current:
                 self.stop_requested = False
             self.active_run_settings = None
+            if getattr(self, "active_run_generation", None) == run_generation:
+                self.active_run_generation = None
             self.raw_time_source = "manual"
             if is_current:
                 self.current_run_source = None
@@ -6024,7 +6127,12 @@ class App(ctk.CTk):
                 minute = self.scheduler_run_minute
                 now_key = now.strftime("%Y-%m-%d %H:%M")
                 _range_start, range_end = self.get_scheduler_time_range()
-                if now > range_end:
+                due_in_final_minute = (
+                    now.minute == minute
+                    and self.last_run_minute != now_key
+                    and self.scheduler_slot_in_range(now)
+                )
+                if now > range_end and not due_in_final_minute:
                     self.scheduler_running = False
                     self.set_next_run_display(clear=True)
                     self.set_ui_running(False)
@@ -6034,7 +6142,7 @@ class App(ctk.CTk):
                         level="SUCCESS")
                     break
                 if now.minute == minute and self.last_run_minute != now_key:
-                    if not self.in_send_window(now):
+                    if not self.scheduler_slot_in_range(now):
                         self.last_run_minute = now_key
                         start_dt, end_dt = self.get_scheduler_time_range()
                         self.write_log(
@@ -6448,7 +6556,7 @@ class App(ctk.CTk):
             except jms_policy.PolicyError as exc:
                 policy_error = str(exc)
 
-        success_text, fail_text = [], []
+        success_text, partial_text, fail_text = [], [], []
         for staff_no in staff_list:
             if command_type != "LOOKUP_ONLY":
                 if policy_error:
@@ -6486,13 +6594,39 @@ class App(ctk.CTk):
                     continue
                 if command_type == "APP":
                     new_password = reset_app_password(user_id)
-                    enable_user(user)
+                    try:
+                        enable_user(user)
+                    except Exception as enable_error:
+                        partial_text.append(
+                            f"Name : {user_name}\nUser : {staff_no}\n"
+                            f"APP Password : {new_password}\n"
+                            f"Status : รีรหัสสำเร็จ แต่เปิดใช้งานไม่สำเร็จ ({enable_error})")
+                        self.jms_log(
+                            f"[PARTIAL] RESET APP OK / ENABLE FAILED {staff_no} -> {enable_error}")
+                        write_log(
+                            status="PARTIAL", user=staff_no, name=user_name,
+                            action="APP",
+                            detail=f"PASSWORD : {new_password} | ENABLE FAILED : {enable_error}")
+                        continue
                     success_text.append(f"Name : {user_name}\nUser : {staff_no}\nAPP Password : {new_password}\nStatus : เปิดใช้งานแล้ว")
                     self.jms_log(f"[RESET APP + ENABLE] {staff_no}")
                     write_log(status="SUCCESS", user=staff_no, name=user_name, action="APP", detail=f"PASSWORD : {new_password} | USER ENABLE SENT")
                 elif command_type == "JMS":
                     new_password = reset_jms_password(user_id)
-                    enable_user(user)
+                    try:
+                        enable_user(user)
+                    except Exception as enable_error:
+                        partial_text.append(
+                            f"Name : {user_name}\nUser : {staff_no}\n"
+                            f"JMS Password : {new_password}\n"
+                            f"Status : รีรหัสสำเร็จ แต่เปิดใช้งานไม่สำเร็จ ({enable_error})")
+                        self.jms_log(
+                            f"[PARTIAL] RESET JMS OK / ENABLE FAILED {staff_no} -> {enable_error}")
+                        write_log(
+                            status="PARTIAL", user=staff_no, name=user_name,
+                            action="JMS",
+                            detail=f"PASSWORD : {new_password} | ENABLE FAILED : {enable_error}")
+                        continue
                     success_text.append(f"Name : {user_name}\nUser : {staff_no}\nJMS Password : {new_password}\nStatus : เปิดใช้งานแล้ว")
                     self.jms_log(f"[RESET JMS + ENABLE] {staff_no}")
                     write_log(status="SUCCESS", user=staff_no, name=user_name, action="JMS", detail=f"PASSWORD : {new_password} | USER ENABLE SENT")
@@ -6513,7 +6647,10 @@ class App(ctk.CTk):
                     )
                     self.jms_log(f"[ERROR] {staff_no} -> {e}")
                     write_log(status="FAILED", user=staff_no, action=command_type, detail=str(e))
-                    continue
+                    fail_text.append(
+                        "ไม่สามารถดำเนินการได้ เนื่องจาก JMS_TOKEN หมดอายุหรือไม่ถูกต้อง "
+                        "กรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า แล้วเริ่ม BOT JMS USER ใหม่")
+                    break
                 display_error = re.sub(r"\s*\(isEnable=.*?\)", "", error_text)
                 if display_error.startswith("เปิดใช้งานไม่สำเร็จ:"):
                     display_error = "เปิดใช้งานไม่สำเร็จ " + staff_no + " : " + display_error.split(":", 1)[1].strip()
@@ -6526,6 +6663,10 @@ class App(ctk.CTk):
         final_message = ""
         if success_text:
             final_message += "ดำเนินการเสร็จเรียบร้อย\n\n" + "\n\n".join(success_text)
+        if partial_text:
+            if final_message:
+                final_message += "\n\n"
+            final_message += "ดำเนินการได้บางส่วน\n\n" + "\n\n".join(partial_text)
         if fail_text:
             if final_message:
                 final_message += "\n\n"

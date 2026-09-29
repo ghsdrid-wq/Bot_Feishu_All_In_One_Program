@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import configparser
+import io
+import json
 import os
 import sqlite3
 import sys
 import tempfile
 import time
 import unittest
+import zipfile
 from unittest import mock
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +26,8 @@ from dashboard import notify, pipeline, render, server  # noqa: E402
 from metrics import core  # noqa: E402
 from metrics import ingest_dws_db  # noqa: E402
 from core import jms_policy  # noqa: E402
+from core import jms_api  # noqa: E402
+from controller import controller_api  # noqa: E402
 
 
 class SchedulerRegressionTests(unittest.TestCase):
@@ -91,6 +96,117 @@ class SchedulerRegressionTests(unittest.TestCase):
         )
         self.assertIsNone(
             app.get_next_scheduler_run_time(datetime(2026, 9, 28, 23, 30)))
+
+    def test_scheduler_accepts_final_minute_even_after_second_zero(self) -> None:
+        app = self.make_app()
+        app.config["TIME"]["run_minute"] = "0"
+        self.assertTrue(
+            app.scheduler_slot_in_range(datetime(2026, 9, 28, 23, 0, 59)))
+        self.assertFalse(
+            app.scheduler_slot_in_range(datetime(2026, 9, 28, 23, 1, 0)))
+
+    def test_feishu_webhook_and_plan_endpoint_require_token(self) -> None:
+        class DummyController:
+            bot_running = True
+            event_lock = None
+
+            def __init__(self):
+                self.processed_events = []
+                self.handled = []
+                self.plan = None
+
+            def get_feishu_config_value(self, key, default=""):
+                return "secret-token" if key == "VERIFY_TOKEN" else (
+                    "BOT" if key == "BOT_NAME" else default)
+
+            def notify_it_alert(self, *_args):
+                return None
+
+            def jms_log(self, *_args):
+                return None
+
+            def add_log(self, *_args):
+                return None
+
+            def handle_jms_command(self, text, *_args):
+                self.handled.append(text)
+                return True
+
+            def switch_plan(self, plan):
+                self.plan = plan
+
+        previous = bot_main.controller_instance
+        dummy = DummyController()
+        bot_main.controller_instance = dummy
+        client = bot_main.bot_app.test_client()
+        payload = {
+            "header": {"event_id": "auth-test"},
+            "event": {"message": {
+                "chat_id": "chat", "message_id": "message",
+                "chat_type": "p2p",
+                "content": json.dumps({"text": "รี app 999004T00001"}),
+            }},
+        }
+        try:
+            rejected = client.post("/feishu_event", json=payload)
+            self.assertEqual(rejected.status_code, 401)
+            self.assertEqual(dummy.handled, [])
+
+            payload["header"]["token"] = "secret-token"
+            accepted = client.post("/feishu_event", json=payload)
+            self.assertEqual(accepted.status_code, 200)
+            self.assertEqual(dummy.handled, ["รี app 999004T00001"])
+
+            rejected_plan = client.post("/switch_plan", json={"plan": "DWSA"})
+            self.assertEqual(rejected_plan.status_code, 401)
+            accepted_plan = client.post(
+                "/switch_plan", json={"plan": "DWSA"},
+                headers={"X-Controller-Token": "secret-token"})
+            self.assertEqual(accepted_plan.status_code, 200)
+            self.assertEqual(dummy.plan, "DWSA")
+        finally:
+            bot_main.controller_instance = previous
+
+    def test_controller_api_mutations_require_token(self) -> None:
+        class DummyController:
+            def __init__(self):
+                self.plans = []
+                self.refreshes = 0
+
+            def get_feishu_config_value(self, key, default=""):
+                return "secret-token" if key == "VERIFY_TOKEN" else default
+
+            def switch_plan(self, plan):
+                self.plans.append(plan)
+
+            def refresh_status(self):
+                self.refreshes += 1
+
+        previous = controller_api.controller_instance
+        dummy = DummyController()
+        controller_api.register_controller(dummy)
+        client = controller_api.app.test_client()
+        try:
+            self.assertEqual(
+                client.post("/switch_plan", json={"plan": "DWSA"}).status_code,
+                401,
+            )
+            with mock.patch.object(controller_api.threading, "Thread") as thread:
+                response = client.post(
+                    "/switch_plan", json={"plan": "DWSA"},
+                    headers={"Authorization": "Bearer secret-token"})
+                self.assertEqual(response.status_code, 200)
+                thread.assert_called_once()
+            self.assertEqual(client.post("/refresh").status_code, 401)
+            self.assertEqual(
+                client.post(
+                    "/refresh",
+                    headers={"X-Controller-Token": "secret-token"}).status_code,
+                200,
+            )
+            self.assertEqual(dummy.refreshes, 1)
+        finally:
+            controller_api.controller_instance = previous
 
     def test_attachment_only_block_is_not_dropped(self) -> None:
         app = self.make_app()
@@ -187,8 +303,159 @@ class SchedulerRegressionTests(unittest.TestCase):
         self.assertFalse(app._jms_marker_usable(
             (datetime(2026, 9, 28, 16, 55), None, time.time())))
 
+    def test_cancelled_jms_download_preserves_previous_complete_file(self) -> None:
+        class JsonResponse:
+            headers = {
+                "Content-Type":
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            }
+
+            def __init__(self, data=None):
+                self.data = data or {}
+
+            def json(self):
+                return self.data
+
+            def raise_for_status(self):
+                return None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def iter_content(self, chunk_size):
+                del chunk_size
+                yield b"A" * 600
+                app.stop_requested = True
+                yield b"B" * 600
+
+        class Session:
+            def get(self, *_args, **_kwargs):
+                return JsonResponse()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "DWSXAUTOPDA.xlsx"
+            target.write_bytes(b"previous-complete-file")
+            app = self.make_app()
+            app.stop_requested = False
+            app.running = True
+            app.active_run_generation = 1
+            app.run_generation = 1
+            app.get_raw_export_folder = lambda: tmp
+            app.log = lambda *_args, **_kwargs: None
+            app.mark_activity = lambda: None
+            now = datetime.now().replace(microsecond=0)
+            records = {"data": {"records": [{
+                "finishOrNot": "1", "downUrl": "raw",
+                "queryJson": "建包扫描",
+                "downTime": now.strftime("%Y-%m-%d %H:%M:%S"),
+            }]}}
+
+            def post(_session, url, _payload, _headers, *_args, **_kwargs):
+                if "getDownloadSignedUrl" in url:
+                    return JsonResponse({"data": "https://download.invalid"})
+                return JsonResponse(records)
+
+            app._jms_post = post
+            result = app._jms_collect_export(
+                Session(), "https://base.invalid", {}, "建包扫描",
+                target.name, now, max_rounds=1)
+            self.assertIsNone(result)
+            self.assertEqual(target.read_bytes(), b"previous-complete-file")
+            self.assertFalse(Path(app._download_temp_path(str(target))).exists())
+
+    def test_stale_run_generation_is_cancelled_even_if_stop_flag_was_reset(self) -> None:
+        app = self.make_app()
+        app.running = True
+        app.stop_requested = False
+        app.active_run_generation = 4
+        app.run_generation = 5
+        self.assertTrue(app.run_cancelled())
+
+    def test_complete_jms_download_atomically_replaces_previous_file(self) -> None:
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as workbook:
+            workbook.writestr("[Content_Types].xml", "x" * 1200)
+        workbook_bytes = archive.getvalue()
+
+        class Response:
+            headers = {
+                "Content-Type":
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            }
+
+            def __init__(self, data=None):
+                self.data = data or {}
+
+            def json(self):
+                return self.data
+
+            def raise_for_status(self):
+                return None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def iter_content(self, chunk_size):
+                del chunk_size
+                yield workbook_bytes
+
+        class Session:
+            def get(self, *_args, **_kwargs):
+                return Response()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "DWSXAUTOPDA.xlsx"
+            target.write_bytes(b"previous-complete-file")
+            app = self.make_app()
+            app.running = True
+            app.stop_requested = False
+            app.active_run_generation = 2
+            app.run_generation = 2
+            app.get_raw_export_folder = lambda: tmp
+            app.log = lambda *_args, **_kwargs: None
+            app.mark_activity = lambda: None
+            app.autofit_excel_file = mock.Mock()
+            now = datetime.now().replace(microsecond=0)
+            records = {"data": {"records": [{
+                "finishOrNot": "1", "downUrl": "raw",
+                "queryJson": "建包扫描",
+                "downTime": now.strftime("%Y-%m-%d %H:%M:%S"),
+            }]}}
+
+            def post(_session, url, _payload, _headers, *_args, **_kwargs):
+                if "getDownloadSignedUrl" in url:
+                    return Response({"data": "https://download.invalid"})
+                return Response(records)
+
+            app._jms_post = post
+            result = app._jms_collect_export(
+                Session(), "https://base.invalid", {}, "建包扫描",
+                target.name, now, max_rounds=1)
+            self.assertTrue(result)
+            self.assertTrue(zipfile.is_zipfile(target))
+            temp_path = Path(app._download_temp_path(str(target)))
+            self.assertEqual(temp_path.suffix, ".xlsx")
+            self.assertFalse(temp_path.exists())
+
 
 class JmsPolicyRegressionTests(unittest.TestCase):
+    def test_search_user_requires_exact_staff_number(self) -> None:
+        response = {
+            "data": {"records": [
+                {"id": "wrong", "staffNo": "999004T99999"},
+                {"id": "right", "staffNo": "999004T00001"},
+            ]}
+        }
+        with mock.patch.object(jms_api, "post_json", return_value=response):
+            result = jms_api.search_user("999004t00001")
+        self.assertEqual(result["id"], "right")
+
     def test_exempt_exact_code_overrides_blocked_prefix_only_for_that_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = str(Path(tmp) / "policy.json")
@@ -274,6 +541,56 @@ class JmsPolicyRegressionTests(unittest.TestCase):
                                     return_value=["999004T00123"])):
                 app.handle_jms_command("รีรหัส app", "chat", "message")
                 search.assert_called_once_with("999004T00123")
+
+    def test_reset_success_is_returned_when_enable_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "policy.json")
+            jms_policy.save_policy({
+                "blocked_prefixes": [], "exempt_codes": []}, path)
+            app = bot_main.App.__new__(bot_main.App)
+            app.jms_policy_path = path
+            app.jms_running = True
+            app.get_feishu_config_value = lambda *_args: "BOT"
+            app.jms_log = lambda *_args: None
+            app.notify_it_alert = lambda *_args: None
+            with (mock.patch.object(bot_main, "detect_jms_intent", return_value="APP"),
+                  mock.patch.object(bot_main, "extract_staff_numbers",
+                                    return_value=["999004T00123"]),
+                  mock.patch.object(bot_main, "search_user", return_value={
+                      "id": "u1", "name": "Test", "staffNo": "999004T00123"}),
+                  mock.patch.object(bot_main, "reset_app_password",
+                                    return_value="NEWPASS123"),
+                  mock.patch.object(bot_main, "enable_user",
+                                    side_effect=Exception("enable failed")),
+                  mock.patch.object(bot_main, "reply_feishu_message") as reply,
+                  mock.patch.object(bot_main, "write_log")):
+                app.handle_jms_command("รี app", "chat", "message")
+            text = reply.call_args.args[1]
+            self.assertIn("NEWPASS123", text)
+            self.assertIn("รีรหัสสำเร็จ", text)
+            self.assertIn("เปิดใช้งานไม่สำเร็จ", text)
+
+    def test_token_failure_always_replies_to_requester(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "policy.json")
+            jms_policy.save_policy({
+                "blocked_prefixes": [], "exempt_codes": []}, path)
+            app = bot_main.App.__new__(bot_main.App)
+            app.jms_policy_path = path
+            app.jms_running = True
+            app.get_feishu_config_value = lambda *_args: "BOT"
+            app.jms_log = lambda *_args: None
+            app.notify_it_alert = lambda *_args: None
+            with (mock.patch.object(bot_main, "detect_jms_intent", return_value="APP"),
+                  mock.patch.object(bot_main, "extract_staff_numbers",
+                                    return_value=["999004T00123"]),
+                  mock.patch.object(bot_main, "search_user",
+                                    side_effect=Exception("JMS_TOKEN expired")),
+                  mock.patch.object(bot_main, "reply_feishu_message") as reply,
+                  mock.patch.object(bot_main, "write_log")):
+                app.handle_jms_command("รี app", "chat", "message")
+            reply.assert_called_once()
+            self.assertIn("JMS_TOKEN", reply.call_args.args[1])
 
 
 class MetricsRegressionTests(unittest.TestCase):

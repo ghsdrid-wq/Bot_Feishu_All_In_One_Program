@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.3
+
+- Protected Feishu webhook and plan/refresh mutation endpoints with the configured verification token while leaving read-only status available.
+- Required exact JMS `staffNo` matches so a partial or ambiguous search result cannot reset the wrong user.
+- Reported password-reset partial success when reset succeeds but account enabling fails, and now replies to the requester when the JMS token is invalid.
+- Preserved the previous complete JMS/Realtime workbook during cancellation, invalid downloads, conversion failures, and stale queued runs by validating and atomically replacing XLSX files.
+- Prevented stopped or superseded pipeline steps from being marked successful or publishing late output.
+- Fixed the scheduler's final minute so a loop wake-up a few seconds after the configured end still runs that minute once.
+- Expanded regression coverage to 43 passing tests before packaging.
+
 ## 2.1.2
 
 - Removed decorative emoji and the informal `⚠ FAILED` heading from all Feishu replies while preserving individual failure details and backend status logging.

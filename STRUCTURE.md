@@ -27,7 +27,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 | `bot_main.py` | **หัวใจหลัก (~6000 บรรทัด)** — Flask `bot_app` (webhook) + คลาส `App(ctk.CTk)` รวมทุกหน้า/ทุกระบบ + Data Export (DWS DB + JMS API) + scheduler |
 | `Createphoto.py` | เปิด Excel ผ่าน win32com, จัดวันที่/คอลัมน์ตามเวลา, แคปภาพชีต → `run_create(...)` (เรียกจาก `App.run_process`) |
 | `Botmessage.py` | อัปโหลดรูปเข้า Feishu แล้วส่งเข้า chat → `run_send(folder, ...)` (เรียกจาก `App.run_process`) |
-| `controller/controller_api.py` | Flask API พอร์ต **6100** (`/status`, `/switch_plan`, `/refresh`) ให้ระบบอื่นสั่ง controller |
+| `controller/controller_api.py` | Flask API พอร์ต **6100** (`/status`, `/switch_plan`, `/refresh`); endpoint ที่แก้สถานะต้องส่ง `VERIFY_TOKEN` |
 | `core/jms_api.py` | เรียก JMS J&T: `search_user`, `reset_app_password`, `reset_jms_password`, `enable_user` (BASE_URL `jmsgw.jtexpress.co.th`) |
 | `core/jms_policy.py` | นโยบาย JMS แบบ JSON: normalize, bulk parse, atomic save, exact exemption, prefix block และ fail-closed decision |
 | `core/config.py` | โหลด/เซฟ config (`get_config`, `save_config`) รองรับ frozen exe |
@@ -35,8 +35,8 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 
 ## ฟังก์ชัน/ส่วนสำคัญใน bot_main.py
 ### Feishu webhook (module-level, บน `bot_app`)
-- `feishu_event()` (route `/feishu_event`) — รับ event, ตรวจ challenge, กัน event ซ้ำ(`processed_events`), บังคับ @mention ในกลุ่ม (`feishu_bot_mentioned`), แยกคำสั่งหลายบรรทัด (`split_feishu_command_blocks`), จัด intent ด้วย `detect_jms_intent` / `detect_plan_intent`
-- `bot_status()` (`/status`), `bot_switch_plan()` (`/switch_plan`) — endpoint ให้ระบบภายนอกเช็ค/สั่งเปลี่ยนแพลน
+- `feishu_event()` (route `/feishu_event`) — ตรวจ `VERIFY_TOKEN` ก่อนรับ challenge/event, กัน event ซ้ำ(`processed_events`), บังคับ @mention ในกลุ่ม (`feishu_bot_mentioned`), แยกคำสั่งหลายบรรทัด (`split_feishu_command_blocks`), จัด intent ด้วย `detect_jms_intent` / `detect_plan_intent`
+- `bot_status()` (`/status`), `bot_switch_plan()` (`/switch_plan`) — เช็คสถานะได้แบบ read-only; การสั่งเปลี่ยนแพลนต้องส่ง `VERIFY_TOKEN` ผ่าน payload, `X-Controller-Token` หรือ Bearer token
 - `get_tenant_access_token`, `reply_feishu_message`, `send_feishu_chat_message`, `send_system_alert` — คุย Feishu OpenAPI
 - `extract_staff_numbers`, `detect_jms_intent` — parse เลข user / ประเภทคำสั่ง JMS
 
@@ -48,15 +48,15 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 ### Data Export pipeline (DWS DB + JMS API)
 - `run_dws_jms_task` / `run_dws_jms_process` — orchestrate การดึงยอด
 - `run_dws()` — query MySQL DB (`get_dws_db_config`, `_probe_dws_db` ผ่าน pymysql) แปลงเป็น Excel (`_dws_row_from_record`, `autofit_excel_file`)
-- `run_jms_auto` / `run_jms_pda` / `run_realtime_db` / `_export_jms` / `_jms_fire_export` / `_jms_collect_export` — ยิง JMS export API แล้วรวมผลเป็นไฟล์
+- `run_jms_auto` / `run_jms_pda` / `run_realtime_db` / `_export_jms` / `_jms_fire_export` / `_jms_collect_export` — ยิง JMS export API, ตรวจว่าไฟล์เป็น XLSX จริง, เขียนไฟล์ชั่วคราวที่ยังมีนามสกุล `.xlsx` แล้วแทนไฟล์หลักแบบ atomic เมื่อจบครบเท่านั้น
 - `send_selected_excel_files_to_feishu` — อัปโหลด+ส่งไฟล์ Excel เข้า Feishu
 
 ### Workbook (แคปภาพ) + ส่ง
 - `run_process()` — เรียก `run_create(...)` (Createphoto) แคปภาพ แล้ว `run_send(...)` (Botmessage) ส่งรูป
 
 ### Scheduler / runtime
-- `start_scheduler` / `scheduler_loop` / `stop_scheduler` — Auto รันตามรอบ (`run_minute`, `start_hour`/`end_hour`)
-- `run_once` / `run_process` / `worker_loop` / `watchdog` — คุมการรัน manual + กันค้าง
+- `start_scheduler` / `scheduler_loop` / `stop_scheduler` — Auto รันตามรอบ (`run_minute`, `start_hour`/`end_hour`) โดยเทียบเป็นช่องนาที จึงไม่พลาดรอบสุดท้ายจาก loop ที่ตื่นหลังวินาที 00
+- `run_once` / `run_process` / `worker_loop` / `watchdog` — คุมการรัน manual + กันค้าง; `run_generation` กันงานเก่ากลับมาเขียนผลหลังผู้ใช้หยุดแล้วเริ่มรอบใหม่
 - `run_token_healthcheck` / `notify_it_alert` / `notify_export_token_error` — ตรวจ token เชิงรุกแล้วแจ้ง Feishu
 
 ### DWS Plan Controller
@@ -65,7 +65,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 
 ### JMS User Bot
 - `start_feishu_bot` / `run_feishu_server` / `stop_feishu_bot` — คุม webhook server (waitress)
-- `handle_jms_command` — snapshot นโยบายหนึ่งครั้งต่อข้อความ แล้ววนทำทีละ user: ตรวจ exact exemption/prefix block → `search_user` → reset/enable → สรุปผลกลับ Feishu
+- `handle_jms_command` — snapshot นโยบายหนึ่งครั้งต่อข้อความ แล้ววนทำทีละ user: ตรวจ exact exemption/prefix block → ค้นหา `staffNo` ที่ตรงรหัสเต็มเท่านั้น → reset/enable → ตอบผลสำเร็จ/สำเร็จบางส่วน/ล้มเหลวกลับ Feishu รวมถึงกรณี token หมดอายุ
 - หน้า `จัดการสิทธิ์รหัส` — แท็บหัวรหัสบล็อก/รหัสละเว้น, ค้นหา, แบ่งหน้า 20 รายการ, bulk paste, import/export และลบหลายรายการ
 
 ## Runtime policy (`jms_user_policy.json`)
