@@ -90,6 +90,10 @@ $Args = @(
     # มองไม่เห็น ต้องบอกเอง
     "--add-data", "dashboard/templates;dashboard/templates",
     "--add-data", "metrics/schema.sql;metrics",
+    # Independent fallback if the normal metrics resource is omitted/damaged.
+    "--add-data", "metrics/schema.sql;.",
+    # Recovery copy used only when the editable file beside the EXE is absent.
+    "--add-data", "metrics_config.yaml;.",
     "--collect-submodules", "dashboard",
     "--collect-submodules", "metrics",
     "--collect-submodules", "core",
@@ -138,6 +142,20 @@ foreach ($Name in @("config.ini", "metrics_config.yaml")) {
     $Src = if (Test-Path $Saved) { $Saved } else { Join-Path $ProjectDir $Name }
     if (Test-Path $Src) {
         Copy-Item -LiteralPath $Src -Destination (Join-Path $DistDir $Name) -Force
+    }
+}
+
+# Refuse to publish an incomplete onedir folder.  These checks cover the two
+# runtime files required by metrics ingestion and its automatic recovery path.
+$RequiredReleaseFiles = @(
+    (Join-Path $DistDir "metrics_config.yaml"),
+    (Join-Path $DistDir "_internal\metrics_config.yaml"),
+    (Join-Path $DistDir "_internal\metrics\schema.sql"),
+    (Join-Path $DistDir "_internal\schema.sql")
+)
+foreach ($RequiredFile in $RequiredReleaseFiles) {
+    if (-not (Test-Path -LiteralPath $RequiredFile -PathType Leaf)) {
+        throw "Incomplete release: missing required file $RequiredFile"
     }
 }
 $SavedPolicy = Join-Path $ConfigBackupDir "jms_user_policy.json"

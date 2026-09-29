@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.5
+
+- Added an atomic self-repair path that restores a missing editable `metrics_config.yaml` from a bundled read-only default without overwriting an existing operator configuration.
+- Added an independent bundled SQLite schema fallback and made lookup tolerant of both source and PyInstaller onedir resource layouts.
+- Added release validation that stops packaging when the editable config, bundled recovery config, or bundled metrics schema is missing.
+- Added regression coverage for config recovery, operator-config preservation, and packaged schema fallback.
+
 ## 2.1.4
 
 - Made all three desktop log panes read-only while preserving text selection, scrolling, and copying.

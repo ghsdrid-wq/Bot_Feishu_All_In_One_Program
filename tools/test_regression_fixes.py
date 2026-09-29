@@ -704,6 +704,35 @@ class MetricsRegressionTests(unittest.TestCase):
             self.assertEqual(core.load_config(str(path))["cache_probe"], 16)
             core.clear_config_cache()
 
+    def test_missing_metrics_config_is_restored_without_overwriting_existing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            editable = root / "metrics_config.yaml"
+            bundled = root / "_internal" / "metrics_config.yaml"
+            bundled.parent.mkdir()
+            bundled.write_text("source: bundled\n", encoding="utf-8")
+
+            restored = core.ensure_metrics_config(
+                str(editable), str(bundled))
+            self.assertEqual(Path(restored), editable)
+            self.assertEqual(
+                editable.read_text(encoding="utf-8"), "source: bundled\n")
+
+            editable.write_text("source: operator\n", encoding="utf-8")
+            core.ensure_metrics_config(str(editable), str(bundled))
+            self.assertEqual(
+                editable.read_text(encoding="utf-8"), "source: operator\n")
+
+    def test_schema_resolver_uses_bundled_onedir_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundled = Path(tmp) / "metrics" / "schema.sql"
+            bundled.parent.mkdir()
+            bundled.write_text("SELECT 1;\n", encoding="utf-8")
+            with mock.patch.object(core, "BUNDLED_SCHEMA_PATH", str(bundled)):
+                resolved = core.resolve_schema_path(
+                    str(Path(tmp) / "missing" / "schema.sql"))
+            self.assertEqual(Path(resolved), bundled)
+
     def test_replace_partition_removes_only_requested_scope(self) -> None:
         conn = sqlite3.connect(":memory:")
         conn.execute("""

@@ -32,6 +32,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 | `core/jms_policy.py` | นโยบาย JMS แบบ JSON: normalize, bulk parse, atomic save, exact exemption, prefix block และ fail-closed decision |
 | `core/config.py` | โหลด/เซฟ config (`get_config`, `save_config`) รองรับ frozen exe |
 | `core/logger.py` | `write_log(...)` เขียน log รายวันที่โฟลเดอร์ `logs/` |
+| `metrics/core.py` | โหลด metrics config/SQLite schema; ถ้า `metrics_config.yaml` ข้าง EXE หายจะกู้จากสำเนา read-only ใน `_internal` แบบ atomic และ `schema.sql` มีสำเนาสำรองอีกตำแหน่งใน onedir |
 
 ## ฟังก์ชัน/ส่วนสำคัญใน bot_main.py
 ### Feishu webhook (module-level, บน `bot_app`)
@@ -84,6 +85,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - `[DWS1]..[DWS9-11]`: `ip`, `port` ของเครื่อง agent (default subnet `10.30.32.x`, พอร์ต 4000/4001)
 - `[WORKBOOKS]` / `[EXPORTS]`: `items` — รายการไฟล์ Excel/ชีต ที่จัดการในหน้า Workbooks
 - หมายเหตุ: `core/config.ini` เป็นไฟล์แยกของ `core/*` (มี `[FEISHU]`, `[NGROK]`)
+- Build เก็บ `metrics_config.yaml` สองตำแหน่ง: สำเนาที่ผู้ใช้แก้ได้ข้าง EXE และสำเนากู้คืน read-only ใน `_internal`; ไฟล์เดิมของผู้ใช้มีสิทธิ์สูงสุดและไม่ถูกเขียนทับ
 
 ## Dependencies / บริการภายนอก
 - Python libs (ดู `requirements.txt`): `customtkinter`, `tkcalendar`, `requests`, `flask`, `waitress`, `pywin32`, `Pillow`, `pymysql`, `openpyxl`, `pyinstaller`

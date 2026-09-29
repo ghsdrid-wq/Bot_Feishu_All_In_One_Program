@@ -1,5 +1,6 @@
 # Current Work
 
+- Version 2.1.5 repairs the incomplete-release failure where missing `metrics_config.yaml` or `metrics/schema.sql` stopped AutoPacking refresh and metrics ingestion. New releases carry read-only recovery copies of the config and schema in `_internal`, restore only a missing editable config, and fail the build if any required runtime file is absent.
 - Version 2.1.4 prevents users from typing over or deleting visible errors in Live Log, Controller Logs, and JMS Logs while preserving selection and copy behavior.
 - Version 2.1.3 hardens authenticated inbound control, exact JMS user selection, partial reset reporting, final-minute scheduling, cancellation isolation, and atomic XLSX downloads.
 - Version 2.1.2 removes decorative emoji and the user-visible `⚠ FAILED` heading from Feishu replies; individual failure details and internal status logging are preserved.
@@ -28,14 +29,15 @@
 - Metrics ingestion replaces successful source partitions, reloads changed config, and preserves last-known data on source failure.
 - Historical date selections and attachment-only Feishu delivery are preserved.
 - Configured round/shift times render consistently on desktop and mobile without changing the approved chart layout.
-- Automated regression suite passes 44 tests, including read-only log relocking, inbound-token rejection, exact-user matching, partial reset replies, final-minute scheduling, cancellation isolation, atomic download replacement, policy handling, and backend preservation.
-- Application version is `2.1.4`; the release folder is derived automatically as `dist/AutoReportFeishuV2-1-4`.
+- Automated regression suite passes 44 tests, covering missing metrics config recovery and packaged schema fallback in addition to read-only log relocking, inbound-token rejection, exact-user matching, partial reset replies, final-minute scheduling, cancellation isolation, atomic download replacement, policy handling, and backend preservation.
+- Application version is `2.1.5`; the release folder is derived automatically as `dist/AutoReportFeishuV2-1-5`.
 - Future releases use `python tools/bump_version.py patch` before building; both UI and release folder update from the same source.
 - The complete `AutoReportFeishuV2-1-0` onedir release passed a 12-second launch smoke test with the v2.1.0 title, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.
 - The complete `AutoReportFeishuV2-1-1` onedir release passed a 12-second launch smoke test with the v2.1.1 title, a responsive window, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.
 - The complete `AutoReportFeishuV2-1-2` onedir release passed a 12-second launch smoke test with the v2.1.2 title, a responsive window, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.
 - The complete `AutoReportFeishuV2-1-3` onedir release passed a 12-second launch smoke test with the v2.1.3 title, a responsive window, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.
 - The complete `AutoReportFeishuV2-1-4` onedir release passed a 12-second launch smoke test with the v2.1.4 title, a responsive window, ports 6100/6200, the provided production config carried forward unchanged, `_internal`, and bundled Playwright present.
+- The complete `AutoReportFeishuV2-1-5` onedir release passed launch and Dashboard health smoke tests with ports 6100/6200, the editable config, bundled recovery config, primary schema, matching fallback schema, `_internal`, and bundled Playwright present. A packaged missing-config simulation restored the bundled default and the original operator config was then restored unchanged.
 - A controlled live v2.1.3 pipeline using the production-like `C:\0DWS` paths and a dedicated test Feishu chat completed successfully in 441.9 seconds. It exported 18,492 DWS rows, built both JMS workbooks, built Realtime from 1,821 rows, generated all four configured PNGs on the first attempt, sent the cards and `RealtimeDB.xlsx`, and left no Excel/AutoReport process or partial download behind.
 - Excel `CopyPicture` still fails in the local Office environment in both the old and new versions; cleanup succeeds with no leftover Excel process, so it is not a regression from this change.
 

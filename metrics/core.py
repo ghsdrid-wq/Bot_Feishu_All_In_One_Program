@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sqlite3
 import sys
+import tempfile
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional
 
@@ -31,6 +33,13 @@ CONFIG_PATH = os.path.join(PROJECT_ROOT, "metrics_config.yaml")
 SCHEMA_PATH = os.path.join(HERE, "schema.sql")   # ของอ่านอย่างเดียว ฝังไปกับโค้ดได้
 DEFAULT_DB_PATH = os.path.join(DATA_ROOT, "store.db")
 
+# PyInstaller keeps bundled data under _MEIPASS (the _internal directory for
+# an onedir build).  Keep a read-only default config there as recovery media;
+# the editable copy still lives beside the EXE and is never overwritten.
+BUNDLE_ROOT = os.path.abspath(getattr(sys, "_MEIPASS", PROJECT_ROOT))
+BUNDLED_CONFIG_PATH = os.path.join(BUNDLE_ROOT, "metrics_config.yaml")
+BUNDLED_SCHEMA_PATH = os.path.join(BUNDLE_ROOT, "schema.sql")
+
 _config_cache: Optional[Dict[str, Any]] = None
 _config_cache_signature: Optional[tuple[str, int, int]] = None
 
@@ -49,13 +58,65 @@ def clear_config_cache() -> None:
     _config_cache_signature = None
 
 
+def ensure_metrics_config(path: str = CONFIG_PATH,
+                          bundled_path: str = BUNDLED_CONFIG_PATH) -> str:
+    """Restore a missing editable metrics config from the bundled default.
+
+    Existing operator configuration is authoritative and is never changed.
+    The temporary file + replace keeps concurrent dashboard/ingest startup
+    from exposing a partially copied YAML file.
+    """
+    resolved = os.path.abspath(path)
+    if os.path.isfile(resolved):
+        return resolved
+
+    fallback = os.path.abspath(bundled_path)
+    if not os.path.isfile(fallback) or fallback == resolved:
+        raise FileNotFoundError(
+            f"Metrics config is missing: {resolved}; "
+            f"bundled recovery copy is missing: {fallback}")
+
+    parent = os.path.dirname(resolved)
+    os.makedirs(parent, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=".metrics_config-", suffix=".tmp", dir=parent)
+    os.close(fd)
+    try:
+        shutil.copyfile(fallback, temporary)
+        os.replace(temporary, resolved)
+    finally:
+        try:
+            os.remove(temporary)
+        except FileNotFoundError:
+            pass
+    return resolved
+
+
+def resolve_schema_path(path: str = SCHEMA_PATH) -> str:
+    """Find the packaged SQLite schema across source and onedir layouts."""
+    candidates = (
+        os.path.abspath(path),
+        os.path.abspath(BUNDLED_SCHEMA_PATH),
+        os.path.join(PROJECT_ROOT, "_internal", "metrics", "schema.sql"),
+    )
+    searched: list[str] = []
+    for candidate in candidates:
+        if candidate in searched:
+            continue
+        searched.append(candidate)
+        if os.path.isfile(candidate):
+            return candidate
+    raise FileNotFoundError(
+        "Metrics schema is missing; searched: " + "; ".join(searched))
+
+
 def load_config(path: str = CONFIG_PATH) -> Dict[str, Any]:
     global _config_cache, _config_cache_signature
-    resolved = os.path.abspath(path)
+    resolved = ensure_metrics_config(path)
     program_config = os.path.join(PROJECT_ROOT, "config.ini")
     signature = (resolved, _mtime_ns(resolved), _mtime_ns(program_config))
     if _config_cache is None or _config_cache_signature != signature:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(resolved, "r", encoding="utf-8") as fh:
             _config_cache = yaml.safe_load(fh) or {}
         _merge_program_config(_config_cache)
         _config_cache_signature = signature
@@ -226,7 +287,7 @@ def connect(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     """เปิด DB พร้อมสร้าง schema ถ้ายังไม่มี — เรียกซ้ำได้ (schema เป็น IF NOT EXISTS)"""
     conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
-    with open(SCHEMA_PATH, "r", encoding="utf-8") as fh:
+    with open(resolve_schema_path(), "r", encoding="utf-8") as fh:
         conn.executescript(fh.read())
     _migrate(conn)
     seed_stations(conn)          # sync ทุกครั้ง — in_service ใน config เปลี่ยนได้
