@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.7
+
+- Replaced employee action audit files with daily operational runtime logs that retain warnings, errors, and available tracebacks while masking secrets.
+- Stopped persisting successful, blocked, and exempt JMS employee actions; the chat and in-app JMS log remain unchanged.
+- Treated transient pywin32 `<unknown>.Refreshing` and `<unknown>.Item` status-poll failures as retryable within the existing bounded Excel refresh loop.
+- Added regression coverage for runtime log selection, secret masking, traceback capture, and both new Excel COM error variants.
+
 ## 2.1.6
 
 - Evaluated exact JMS code exemptions before blocked prefixes and attached explicit decision reasons to every policy result.

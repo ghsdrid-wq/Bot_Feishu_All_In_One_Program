@@ -846,6 +846,11 @@ def _is_query_status_poll_error(error: Exception) -> bool:
         _is_excel_busy_error(error)
         or _is_query_reference_error(error)
         or "excel busy timeout during check query" in text
+        # pywin32 can lose the IDispatch member name while Excel is busy.
+        # These variants occur only while polling QueryTable.Refreshing and
+        # should be retried by the bounded workbook refresh loop.
+        or "<unknown>.refreshing" in text
+        or "<unknown>.item" in text
     )
 
 

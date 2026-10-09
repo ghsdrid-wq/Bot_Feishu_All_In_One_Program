@@ -29,10 +29,51 @@ from metrics import core  # noqa: E402
 from metrics import ingest_dws_db  # noqa: E402
 from core import jms_policy  # noqa: E402
 from core import jms_api  # noqa: E402
+from core import logger as runtime_logger  # noqa: E402
 from controller import controller_api  # noqa: E402
 
 
 class SchedulerRegressionTests(unittest.TestCase):
+    def test_runtime_file_log_keeps_errors_not_employee_success_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(runtime_logger, "LOG_DIR", tmp):
+            result = runtime_logger.write_log(
+                status="SUCCESS", user="999004T00123", name="Test User",
+                action="APP", detail="PASSWORD : 1234 | USER ENABLE SENT")
+            self.assertIsNone(result)
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+            path = runtime_logger.write_runtime_log(
+                "ERROR", "Pipeline failed — PASSWORD : 1234",
+                "MAIN", "Traceback line")
+            content = Path(path).read_text(encoding="utf-8")
+            self.assertIn("LEVEL  : ERROR", content)
+            self.assertIn("SOURCE : MAIN", content)
+            self.assertIn("Pipeline failed", content)
+            self.assertIn("Traceback line", content)
+            self.assertNotIn("1234", content)
+            self.assertNotIn("999004T00123", content)
+            self.assertNotIn("Test User", content)
+
+    def test_ui_warning_and_error_are_persisted_but_info_is_not(self) -> None:
+        app = bot_main.App.__new__(bot_main.App)
+        app.mark_activity = lambda: None
+        app.queue_log_line = mock.Mock()
+        with mock.patch.object(bot_main, "write_runtime_log") as persist:
+            app.write_log("Pipeline started", level="INFO")
+            persist.assert_not_called()
+
+            app.write_log("WAIT EXCEL — query busy", level="WARN")
+            self.assertEqual(persist.call_args.args[:3], (
+                "WARN", "WAIT EXCEL — query busy", "MAIN"))
+
+            try:
+                raise RuntimeError("refresh exploded")
+            except RuntimeError as error:
+                app.write_log(f"Pipeline failed — {error}", level="ERROR")
+            self.assertEqual(persist.call_count, 2)
+            self.assertIn("RuntimeError: refresh exploded", persist.call_args.args[3])
+
     def test_feishu_reply_text_removes_decorative_emoji(self) -> None:
         self.assertEqual(
             bot_main.formalize_reply_text(

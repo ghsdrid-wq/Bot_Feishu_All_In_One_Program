@@ -1,5 +1,12 @@
 # Decisions
 
+## 2026-10-10 - Operational logs instead of employee activity files
+
+- Persist daily runtime warnings and errors, including available tracebacks, so failures visible in the UI remain diagnosable after the program closes.
+- Do not persist successful, blocked, or exempt employee account actions because Feishu retains the operational conversation.
+- Mask passwords and tokens before writing runtime files, and never include employee name or number in the compatibility logger.
+- Retry transient `<unknown>.Refreshing` and `<unknown>.Item` failures only in the bounded QueryTable status-poll path; do not classify them globally or hide permanent workbook errors.
+
 ## 2026-09-29 - Reliability and inbound-control gates
 
 - Require the configured `VERIFY_TOKEN` before processing Feishu events or state-changing controller requests; keep `/status` read-only and available for health checks.

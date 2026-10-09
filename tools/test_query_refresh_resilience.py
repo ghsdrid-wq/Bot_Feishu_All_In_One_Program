@@ -88,6 +88,8 @@ def main() -> None:
     assert _is_query_status_poll_error(
         Exception("Excel busy timeout during check query 05/_05")
     )
+    assert _is_query_status_poll_error(Exception("<unknown>.Refreshing"))
+    assert _is_query_status_poll_error(Exception("<unknown>.Item"))
     assert not _is_query_reference_error(FileNotFoundError("missing workbook"))
 
     attempts = 0

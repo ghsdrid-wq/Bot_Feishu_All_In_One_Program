@@ -10,6 +10,7 @@ import configparser
 import ctypes
 import hmac
 import zipfile
+import traceback
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -29,7 +30,7 @@ from waitress import create_server
 from controller.controller_api import register_controller, start_api
 from core.jms_api import search_user, reset_app_password, reset_jms_password, enable_user
 from core import jms_policy
-from core.logger import write_log
+from core.logger import write_log, write_runtime_log
 from app_version import APP_VERSION
 
 from Createphoto import (
@@ -3628,6 +3629,14 @@ class App(ctk.CTk):
         icon, text, tag = self.format_log_line(str(msg), level=level)
         line = f"[{stamp}] {icon} {text}\n"
         self.queue_log_line("main", (line, tag))
+        if tag in {"WARN", "ERROR"}:
+            trace = traceback.format_exc()
+            if trace.strip() == "NoneType: None":
+                trace = ""
+            try:
+                write_runtime_log(tag, str(msg), "MAIN", trace)
+            except Exception as log_error:
+                print(f"Runtime log write failed: {log_error}")
 
     def queue_log_line(self, key, payload):
         buffers = getattr(self, "log_buffers", None)
@@ -6310,10 +6319,26 @@ class App(ctk.CTk):
     def add_log(self, message):
         line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n"
         self.queue_log_line("controller", line)
+        if "[ERROR]" in str(message).upper():
+            try:
+                write_runtime_log("ERROR", str(message), "CONTROLLER")
+            except Exception as log_error:
+                print(f"Runtime log write failed: {log_error}")
 
     def jms_log(self, message):
         line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n"
         self.queue_log_line("jms", line)
+        upper = str(message).upper()
+        level = None
+        if "[ERROR]" in upper or "[POLICY ERROR]" in upper or "[POLICY INVALID]" in upper:
+            level = "ERROR"
+        elif "[PARTIAL]" in upper:
+            level = "WARNING"
+        if level:
+            try:
+                write_runtime_log(level, str(message), "JMS")
+            except Exception as log_error:
+                print(f"Runtime log write failed: {log_error}")
 
     def load_controller_clients(self):
         self.controller_clients = []
@@ -6611,9 +6636,6 @@ class App(ctk.CTk):
                     fail_text.append(
                         f"ระบบสิทธิ์รหัสขัดข้อง จึงระงับคำสั่งของ {staff_no} เพื่อความปลอดภัย")
                     self.jms_log(f"[POLICY ERROR] {policy_error}")
-                    write_log(
-                        status="BLOCKED", user=staff_no, action=command_type,
-                        detail=f"POLICY ERROR : {policy_error}")
                     continue
                 decision = jms_policy.evaluate_policy(staff_no, policy_snapshot)
                 if decision.error:
@@ -6621,23 +6643,15 @@ class App(ctk.CTk):
                         f"ไม่สามารถตรวจสอบสิทธิ์ของ {staff_no} ได้ กรุณาตรวจสอบรูปแบบรหัส")
                     self.jms_log(
                         f"[POLICY INVALID] {staff_no} -> {decision.error}")
-                    write_log(
-                        status="BLOCKED", user=staff_no,
-                        action=command_type, detail=decision.error)
                     continue
                 if not decision.allowed:
                     blocked = decision.matched_prefix
                     fail_text.append(f"รหัสที่ขึ้นต้นด้วย {blocked} ยกเลิกการใช้งานแล้ว กรุณาติดต่อ HR")
                     self.jms_log(f"[BLOCKED] {staff_no} (prefix {blocked})")
-                    write_log(status="BLOCKED", user=staff_no, action=command_type, detail=f"BLOCKED PREFIX : {blocked}")
                     continue
                 if decision.exempt and decision.matched_prefix:
                     self.jms_log(
                         f"[EXEMPT ALLOW] {staff_no} (blocked prefix {decision.matched_prefix})")
-                    write_log(
-                        status="EXEMPT_ALLOW", user=staff_no,
-                        action=command_type,
-                        detail=f"EXEMPT FROM PREFIX : {decision.matched_prefix}")
             try:
                 self.jms_log(f"[SEARCH] {staff_no}")
                 user = search_user(staff_no)
@@ -6660,14 +6674,9 @@ class App(ctk.CTk):
                             f"Status : รีรหัสสำเร็จ แต่เปิดใช้งานไม่สำเร็จ ({enable_error})")
                         self.jms_log(
                             f"[PARTIAL] RESET APP OK / ENABLE FAILED {staff_no} -> {enable_error}")
-                        write_log(
-                            status="PARTIAL", user=staff_no, name=user_name,
-                            action="APP",
-                            detail=f"PASSWORD : {new_password} | ENABLE FAILED : {enable_error}")
                         continue
                     success_text.append(f"Name : {user_name}\nUser : {staff_no}\nAPP Password : {new_password}\nStatus : เปิดใช้งานแล้ว")
                     self.jms_log(f"[RESET APP + ENABLE] {staff_no}")
-                    write_log(status="SUCCESS", user=staff_no, name=user_name, action="APP", detail=f"PASSWORD : {new_password} | USER ENABLE SENT")
                 elif command_type == "JMS":
                     new_password = reset_jms_password(user_id)
                     try:
@@ -6679,19 +6688,13 @@ class App(ctk.CTk):
                             f"Status : รีรหัสสำเร็จ แต่เปิดใช้งานไม่สำเร็จ ({enable_error})")
                         self.jms_log(
                             f"[PARTIAL] RESET JMS OK / ENABLE FAILED {staff_no} -> {enable_error}")
-                        write_log(
-                            status="PARTIAL", user=staff_no, name=user_name,
-                            action="JMS",
-                            detail=f"PASSWORD : {new_password} | ENABLE FAILED : {enable_error}")
                         continue
                     success_text.append(f"Name : {user_name}\nUser : {staff_no}\nJMS Password : {new_password}\nStatus : เปิดใช้งานแล้ว")
                     self.jms_log(f"[RESET JMS + ENABLE] {staff_no}")
-                    write_log(status="SUCCESS", user=staff_no, name=user_name, action="JMS", detail=f"PASSWORD : {new_password} | USER ENABLE SENT")
                 elif command_type == "ENABLE":
                     enable_user(user)
                     success_text.append(f"Name : {user_name}\nUser : {staff_no}\nStatus : เปิดใช้งานแล้ว")
                     self.jms_log(f"[ENABLE USER] {staff_no}")
-                    write_log(status="SUCCESS", user=staff_no, name=user_name, action="ENABLE", detail="USER ENABLE SENT")
                 elif command_type == "LOOKUP_ONLY":
                     fail_text.append(f"ระบุคำสั่งไม่ชัดเจน {staff_no} : กรุณาพิมพ์ รี app หรือ รี jms")
             except Exception as e:
@@ -6703,7 +6706,6 @@ class App(ctk.CTk):
                         "กรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า แล้วกด START BOT ที่หน้า BOT JMS USER"
                     )
                     self.jms_log(f"[ERROR] {staff_no} -> {e}")
-                    write_log(status="FAILED", user=staff_no, action=command_type, detail=str(e))
                     fail_text.append(
                         "ไม่สามารถดำเนินการได้ เนื่องจาก JMS_TOKEN หมดอายุหรือไม่ถูกต้อง "
                         "กรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า แล้วเริ่ม BOT JMS USER ใหม่")
@@ -6715,7 +6717,6 @@ class App(ctk.CTk):
                 else:
                     fail_text.append(f"{staff_no} : {display_error}")
                 self.jms_log(f"[ERROR] {staff_no} -> {e}")
-                write_log(status="FAILED", user=staff_no, action=command_type, detail=str(e))
 
         final_message = ""
         if success_text:
