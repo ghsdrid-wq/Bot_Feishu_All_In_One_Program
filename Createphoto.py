@@ -854,6 +854,18 @@ def _is_query_status_poll_error(error: Exception) -> bool:
     )
 
 
+def _is_workbook_open_retry_error(error: Exception) -> bool:
+    """Retry transient Excel Open failures only at the Workbooks.Open boundary."""
+    text = str(error).lower()
+    return (
+        _is_excel_busy_error(error)
+        or "-2146827284" in text
+        or "0x800a03ec" in text
+        or "method open of class workbooks failed" in text
+        or "เมธอด open ของคลาส workbooks ล้มเหลว" in text
+    )
+
+
 def excel_call(
     action: Callable[[], Any],
     write: Optional[LogFunc],
@@ -1171,7 +1183,8 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                 ),
                 write,
                 f"open workbook {wb_item.display_name}",
-                timeout=240,
+                timeout=60,
+                retry_errors=_is_workbook_open_retry_error,
             ))
             _move_excel_offscreen(excel_app)
             opened[wb_item.key] = wb
@@ -1247,6 +1260,9 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
             excel_call(lambda target=wb: getattr(target, "Close")(False), write, f"close workbook {wb_item.display_name}", timeout=180)
             opened[wb_item.key] = None
             wb = None
+            # Excel releases workbook/clipboard/chart state asynchronously.
+            # Give it a message-pump window before opening the next workbook.
+            _pump_excel_messages(1.0)
 
     finally:
         cleanup_done, cleanup_watchdog = start_excel_cleanup_watchdog(excel_pid, write)

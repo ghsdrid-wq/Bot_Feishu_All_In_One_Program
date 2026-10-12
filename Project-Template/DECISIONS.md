@@ -1,5 +1,11 @@
 # Decisions
 
+## 2026-10-13 - RealtimeDB raw values and Excel open recovery
+
+- Treat every JMS field copied into the RealtimeDB `DATA` sheet as source data; a string beginning with `=` remains text and must never become an executable Excel formula.
+- Retry `0x800A03EC` only at the `Workbooks.Open` boundary for up to 60 seconds. Do not classify it as globally retryable because the same HRESULT can represent permanent Excel errors elsewhere.
+- Pump Excel messages after closing one workbook before opening the next, because workbook and clipboard cleanup is asynchronous.
+
 ## 2026-10-10 - Operational logs instead of employee activity files
 
 - Persist daily runtime warnings and errors, including available tracebacks, so failures visible in the UI remain diagnosable after the program closes.

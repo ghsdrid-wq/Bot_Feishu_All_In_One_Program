@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from Createphoto import (  # noqa: E402
+    _is_workbook_open_retry_error,
     _is_query_reference_error,
     _is_query_status_poll_error,
     excel_call,
@@ -90,6 +91,11 @@ def main() -> None:
     )
     assert _is_query_status_poll_error(Exception("<unknown>.Refreshing"))
     assert _is_query_status_poll_error(Exception("<unknown>.Item"))
+    assert _is_workbook_open_retry_error(Exception(
+        "(-2147352567, 'Exception occurred.', (0, 'Microsoft Excel', "
+        "'method Open of class Workbooks failed', '', 0, -2146827284), None)"
+    ))
+    assert not _is_workbook_open_retry_error(FileNotFoundError("missing workbook"))
     assert not _is_query_reference_error(FileNotFoundError("missing workbook"))
 
     attempts = 0
@@ -111,6 +117,27 @@ def main() -> None:
     )
     assert result == 42
     assert attempts == 3
+
+    open_attempts = 0
+
+    def flaky_workbook_open() -> str:
+        nonlocal open_attempts
+        open_attempts += 1
+        if open_attempts < 3:
+            raise Exception(
+                "method Open of class Workbooks failed (-2146827284)")
+        return "opened"
+
+    result = excel_call(
+        flaky_workbook_open,
+        write=None,
+        label="test workbook open",
+        timeout=1,
+        delay=0.001,
+        retry_errors=_is_workbook_open_retry_error,
+    )
+    assert result == "opened"
+    assert open_attempts == 3
 
     query = FakeQuery()
     worksheet = FakeWorksheet(FakeTable(query))

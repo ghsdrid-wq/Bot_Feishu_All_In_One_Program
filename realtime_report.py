@@ -186,9 +186,24 @@ def _write_table(sheet, counts: Dict[str, Dict[int, int]], pulled_at: datetime) 
 
 
 def _write_raw(sheet, header: Sequence[str], data: Sequence[tuple]) -> None:
-    sheet.append(list(header))
+    def append_values(values: Sequence[object]) -> None:
+        """Append source values without turning formula-like text into formulas.
+
+        JMS fields are raw data, not workbook calculations. openpyxl normally
+        changes any string beginning with '=' into a formula cell. Some JMS
+        text is not valid Excel formula syntax, which makes Excel repair
+        sheet2.xml and prevents an unattended Workbooks.Open call.
+        """
+        row = list(values)
+        sheet.append(row)
+        row_number = sheet.max_row
+        for column, value in enumerate(row, start=1):
+            if isinstance(value, str) and value.startswith("="):
+                sheet.cell(row=row_number, column=column).data_type = "s"
+
+    append_values(header)
     for row in data:
-        sheet.append(list(row))
+        append_values(row)
     for cell in sheet[1]:
         cell.font = Font(bold=True)
     sheet.freeze_panes = "A2"

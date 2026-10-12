@@ -24,6 +24,8 @@ import bot_main  # noqa: E402
 import card_report  # noqa: E402
 import app_version  # noqa: E402
 import Createphoto  # noqa: E402
+import openpyxl  # noqa: E402
+import realtime_report  # noqa: E402
 from dashboard import notify, pipeline, render, server  # noqa: E402
 from metrics import core  # noqa: E402
 from metrics import ingest_dws_db  # noqa: E402
@@ -34,6 +36,39 @@ from controller import controller_api  # noqa: E402
 
 
 class SchedulerRegressionTests(unittest.TestCase):
+    def test_realtime_raw_formula_like_text_remains_plain_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "RealtimeDB.xlsx"
+            book = openpyxl.Workbook()
+            sheet = book.active
+            sheet.append([
+                realtime_report.COL_OPERATE,
+                realtime_report.COL_OVERTIME,
+                "note",
+            ])
+            sheet.append([
+                "arrive scan", "Exceed 4 hours with no track", "placeholder"])
+            source = sheet.cell(row=2, column=3)
+            source.value = "=INVALID["
+            source.data_type = "s"
+            book.save(path)
+            book.close()
+
+            realtime_report.build_report(str(path), log=lambda *_args: None)
+
+            with zipfile.ZipFile(path) as archive:
+                raw_xml = archive.read(
+                    "xl/worksheets/sheet2.xml").decode("utf-8")
+            self.assertNotIn("<f", raw_xml)
+
+            result = openpyxl.load_workbook(path, data_only=False)
+            try:
+                cell = result[realtime_report.SHEET_RAW]["C2"]
+                self.assertEqual(cell.value, "=INVALID[")
+                self.assertEqual(cell.data_type, "s")
+            finally:
+                result.close()
+
     def test_runtime_file_log_keeps_errors_not_employee_success_audit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(runtime_logger, "LOG_DIR", tmp):

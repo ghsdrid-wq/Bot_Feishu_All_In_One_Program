@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.8
+
+- Preserved formula-like JMS raw values such as text beginning with `=` as plain text in the RealtimeDB `DATA` sheet, preventing Excel from repairing `sheet2.xml`.
+- Added a bounded retry for transient `Workbooks.Open` error `0x800A03EC` and a message-pump pause between workbooks.
+- Added regression coverage for formula-like raw values and transient workbook-open retries.
+
 ## 2.1.7
 
 - Replaced employee action audit files with daily operational runtime logs that retain warnings, errors, and available tracebacks while masking secrets.
