@@ -289,6 +289,18 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(f"{values['No Plan'][1] * 100:.2f}%", "17.40%")
         self.assertEqual(f"{values['Max Cycles'][1] * 100:.2f}%", "82.75%")
 
+    def test_blank_post_title_is_omitted(self) -> None:
+        import feishu_client
+        sent = {}
+        with mock.patch.object(feishu_client, "_post_json",
+                               side_effect=lambda url, token, payload, name, **kw: sent.update(payload)):
+            feishu_client.send_post("t", "oc", "  ", [[{"tag": "text", "text": "x"}]])
+        self.assertNotIn('"title"', sent["content"])
+        with mock.patch.object(feishu_client, "_post_json",
+                               side_effect=lambda url, token, payload, name, **kw: sent.update(payload)):
+            feishu_client.send_post("t", "oc", "สรุป", [])
+        self.assertIn('"title": "สรุป"', sent["content"])
+
     def test_oversized_raw_file_is_zipped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "raw.xlsx")

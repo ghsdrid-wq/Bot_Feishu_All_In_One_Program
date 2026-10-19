@@ -221,8 +221,12 @@ def send_post(token: str, chat_id: str, title: str, content: list,
 
     content คือรายการ "บรรทัด" แต่ละบรรทัดเป็นรายการ element เช่น
     [[{"tag": "text", "text": "หัวข้อ"}], [{"tag": "img", "image_key": "..."}]]
+    title ว่าง = ไม่มีบรรทัดหัวเรื่องของข้อความ
     """
-    post = {"zh_cn": {"title": title, "content": content}}
+    body: Dict[str, Any] = {"content": content}
+    if str(title or "").strip():
+        body["title"] = title.strip()
+    post = {"zh_cn": body}
     return _post_json(
         MESSAGE_URL, token,
         {"receive_id": chat_id, "msg_type": "post",

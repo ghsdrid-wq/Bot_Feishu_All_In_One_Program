@@ -3321,7 +3321,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(sections,
                      text="ติ๊ก = ส่งหัวข้อนั้น | ในหัวข้อใช้ {date} {start} {end} ได้ และใช้ | เพื่อขึ้นบรรทัดใหม่",
                      text_color="#aeb8cc").grid(row=1, column=0, columnspan=3, padx=16, pady=(0, 6), sticky="w")
-        ctk.CTkLabel(sections, text="หัวข้อความ", text_color="#d8dee9", width=200, anchor="w").grid(
+        ctk.CTkLabel(sections, text="หัวข้อความ (ว่าง = ไม่มี)", text_color="#d8dee9", width=200, anchor="w").grid(
             row=2, column=0, columnspan=2, padx=(16, 8), pady=6, sticky="w")
         title_post = ctk.CTkEntry(sections)
         title_post.grid(row=2, column=2, padx=(8, 16), pady=6, sticky="ew")
