@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.9
 
 - Added Daily Summary (`daily_summary.py`): one Feishu post with the manual-report headings and tables (AutoPacking, PDA 人工建包, red zip bags, PDA unloading scans, DWS, AutoPacking abnormal report), followed by one raw-data workbook with a sheet per source.
 - PDA 人工建包, red zip bag, and PDA unloading tables are computed directly from the JMS raw files and rendered with the manual workbook's colour scale; red zip bags de-duplicate bag numbers across the whole file (first row kept, like the manual `PDA BAG DATA`) before counting `B…` bags per PDA. Verified cell-for-cell against the 2026-09-11 Excel results.
