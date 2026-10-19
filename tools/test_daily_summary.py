@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+import configparser
+import os
+import sys
+import tempfile
+import unittest
+from datetime import datetime
+from pathlib import Path
+from unittest import mock
+
+import openpyxl
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import daily_summary as ds  # noqa: E402
+
+
+def _scan_file(path: str, rows: list) -> str:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["หมายเลข AWB", "หมายเลขกระสอบ", "ประเภทที่สแกน", "เวลาที่สแกน",
+               "สาขาที่สแกน", "พนักงานสแกน", "เวลาอัปโหลด"])
+    for awb, bag, scanned, scanner in rows:
+        ws.append([awb, bag, "สแกน", scanned, "KKN_GW", scanner, scanned])
+        ws.cell(ws.max_row, 1).data_type = "s"  # ข้อความที่ขึ้นต้นด้วย = จาก JMS ไม่ใช่สูตร
+    wb.save(path)
+    return path
+
+
+class WindowTests(unittest.TestCase):
+    def test_hours_run_from_start_until_day_end_and_split_shifts(self) -> None:
+        window = ds.make_window(datetime(2026, 10, 18, 15, 0), datetime(2026, 10, 19, 10, 5))
+        self.assertEqual(window.hours[0], 15)
+        self.assertEqual(window.hours[-1], 11)
+        self.assertEqual(len(window.hours), 21)
+        self.assertEqual(window.shift_of(0), "A")
+        self.assertEqual(window.shift_of(1), "B")
+        self.assertEqual(window.labels(), {"date": "2026/10/18", "start": "15.00", "end": "10.00"})
+
+    def test_rows_outside_window_are_ignored(self) -> None:
+        window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
+        self.assertIsNone(window.slot_of(datetime(2026, 10, 18, 14, 59)))
+        self.assertIsNone(window.slot_of(datetime(2026, 10, 19, 10, 0)))
+        self.assertEqual(window.slot_of(datetime(2026, 10, 19, 0, 30)), 0)
+
+    def test_title_labels_trim_partial_hour_columns_below_100(self) -> None:
+        window = ds.make_window(datetime(2026, 10, 18, 14), datetime(2026, 10, 19, 11))
+        totals = {hour: 1_000 for hour in window.hours}
+        totals[14] = 35  # ชั่วโมงเริ่มต้นยังไม่เต็ม
+        totals[10] = 99  # ชั่วโมงท้ายยังไม่เต็ม
+        totals[11] = 0   # คอลัมน์นอกเวลาส่งรายงาน
+        self.assertEqual(window.labels_for_hourly_totals(totals), {
+            "date": "2026/10/18", "start": "15.00", "end": "10.00",
+        })
+
+    def test_title_labels_keep_configured_range_when_no_hour_reaches_100(self) -> None:
+        window = ds.make_window(datetime(2026, 10, 18, 14), datetime(2026, 10, 19, 11))
+        self.assertEqual(window.labels_for_hourly_totals({hour: 99 for hour in window.hours}),
+                         window.labels())
+
+
+class SendTimeTests(unittest.TestCase):
+    def test_sends_once_at_first_run_after_send_time(self) -> None:
+        start = datetime(2026, 10, 18, 14)
+        self.assertEqual(ds.scheduled_send_at(start, "12:00"), datetime(2026, 10, 19, 12))
+        self.assertFalse(ds.due_to_send(start, datetime(2026, 10, 19, 11, 5), "12:00", "")[0])
+        self.assertTrue(ds.due_to_send(start, datetime(2026, 10, 19, 12, 0), "12:00", "")[0])
+        # รอบ 12:00 พลาด รอบถัดไปของรอบงานเดียวกันส่งแทน
+        self.assertTrue(ds.due_to_send(start, datetime(2026, 10, 19, 13, 5), "12:00", "")[0])
+        # ส่งแล้ว ไม่ส่งซ้ำ
+        self.assertFalse(ds.due_to_send(start, datetime(2026, 10, 19, 12, 5), "12:00", "2026-10-18")[0])
+
+    def test_new_business_day_waits_for_its_own_send_time(self) -> None:
+        start = datetime(2026, 10, 19, 14)  # รอบงานใหม่เริ่มแล้ว ต้องรอถึง 12:00 ของวันถัดไป
+        self.assertFalse(ds.due_to_send(start, datetime(2026, 10, 19, 14, 5), "12:00", "2026-10-18")[0])
+        self.assertEqual(ds.scheduled_send_at(start, "22:00"), datetime(2026, 10, 19, 22))
+
+
+class CountTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
+        self.rows = [
+            ds.ScanRow("A1", "B100", datetime(2026, 10, 18, 15, 1), "Autopacking_pda01", ""),
+            ds.ScanRow("A2", "B100", datetime(2026, 10, 18, 15, 2), "autopacking_PDA01", ""),
+            ds.ScanRow("A3", "b200", datetime(2026, 10, 19, 1, 0), "Autopacking_pda01", ""),
+            ds.ScanRow("A4", "P300", datetime(2026, 10, 18, 16, 0), "Autopacking_pda02", ""),
+            ds.ScanRow("A5", "B400", datetime(2026, 10, 18, 16, 0), "Autopacking_KKN_WCS_01", ""),
+        ]
+        self.names = ds.machine_names("Autopacking_pda", 2)
+
+    def test_hourly_counts_count_rows_case_insensitively(self) -> None:
+        counts = ds.hourly_counts(self.rows, self.names, self.window)
+        self.assertEqual(counts["Autopacking_pda01"][15], 2)
+        self.assertEqual(counts["Autopacking_pda01"][1], 1)
+        self.assertEqual(counts["Autopacking_pda02"][16], 1)
+        self.assertNotIn("Autopacking_KKN_WCS_01", counts)
+
+    def test_bag_counts_are_distinct_b_bags_per_machine(self) -> None:
+        self.assertEqual(ds.bag_counts(self.rows, self.names),
+                         {"Autopacking_pda01": 2, "Autopacking_pda02": 0})
+
+    def test_shared_bag_counts_only_for_first_scanner_in_file(self) -> None:
+        rows = self.rows + [
+            ds.ScanRow("A6", "B100", datetime(2026, 10, 18, 17, 0), "Autopacking_pda02", ""),
+            ds.ScanRow("A7", "B900", datetime(2026, 10, 18, 17, 0), "Autopacking_pda02", ""),
+        ]
+        self.assertEqual(ds.bag_counts(rows, self.names),
+                         {"Autopacking_pda01": 2, "Autopacking_pda02": 1})
+        self.assertEqual([r.bag for r in ds.unique_bag_rows(rows)],
+                         ["B100", "b200", "P300", "B400", "B900"])
+
+    def test_dws_stats_follow_excel_over_200_rules(self) -> None:
+        window = ds.make_window(datetime(2026, 10, 18, 22), datetime(2026, 10, 19, 3))
+        values = {h: 0 for h in window.hours}
+        values.update({22: 300, 23: 150, 0: 500, 1: 250, 2: 4})
+        stats = ds.dws_row_stats(values, window)
+        self.assertEqual((stats["A"], stats["B"], stats["effective"], stats["peak"]), (800, 250, 3, 500))
+        self.assertAlmostEqual(stats["avg"], 350)
+        table = ds.DwsTable(window, [("DWS_01", "dws", values)])
+        summary = ds.dws_summary_rows(table)
+        self.assertEqual(summary["total"]["A"], 950)  # แถว 合计 รวมทุกค่า ไม่ตัด 200
+        self.assertEqual(summary["pcs"]["hours"][2], 4)
+
+    def test_autopack_counts_use_first_matching_throughput_row(self) -> None:
+        window = ds.make_window(datetime(2026, 10, 18, 22), datetime(2026, 10, 19, 3))
+        throughput = {22: [["58987-001", "1", "300"], ["58987-001", "1", "999"], ["58987-002", "2", "450"]],
+                      0: [["58987-001", 1.0, 250.0]]}
+        table = ds.autopack_feeder_counts(throughput, window)
+        ap1, ap2 = table.lines[0][1], table.lines[1][1]
+        self.assertEqual(ap1[0][1][22], 300)
+        self.assertEqual(ap1[0][1][0], 250)
+        self.assertEqual((ap2[1][0], ap2[1][1][22]), (14, 450))
+        summary = ds.autopack_summary(table)
+        self.assertEqual(summary["best"]["A"], (550, 1, 275))
+        self.assertTrue(os.path.isfile(ds.render_autopack_table(
+            table, os.path.join(tempfile.mkdtemp(), "ap.png"))))
+
+    def test_color_scale_matches_excel_three_colour_rule(self) -> None:
+        pick = ds.color_scale([0, 0, 5, 10])
+        self.assertEqual(pick(0), ds.SCALE_LOW)
+        self.assertEqual(pick(10), ds.SCALE_HIGH)
+        self.assertEqual(ds.color_scale([0, 0])(0), ds.SCALE_HIGH)
+
+
+class BuildTests(unittest.TestCase):
+    def test_build_uses_populated_autopacking_columns_in_post_titles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = configparser.RawConfigParser()
+            config["PATH"] = {"output_dir": tmp, "autopacking_dir": tmp}
+            config["DWS_JMS"] = {"raw_path": tmp}
+            ds.ensure_defaults(config)
+            config[ds.SECTION]["sections"] = "autopacking"
+            config[ds.SECTION]["send_raw_file"] = "false"
+            with mock.patch("core.dws_mirror.plan", return_value=[]):
+                settings = ds.settings_from_config(config)
+            window = ds.make_window(datetime(2026, 10, 18, 14), datetime(2026, 10, 19, 11))
+            throughput = {
+                14: [["58987-001", 1, 35]],
+                15: [["58987-001", 1, 1_000]],
+                9: [["58987-001", 1, 1_000]],
+                10: [["58987-001", 1, 99]],
+            }
+            with mock.patch.object(ds, "read_autopack_throughput", return_value=throughput), \
+                 mock.patch.object(ds, "render_autopack_table", return_value="autopack.png"):
+                result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None)
+
+            self.assertEqual(result["title"], "สรุปยอดประจำวันที่ 2026/10/18 เวลา 15.00-10.00")
+            self.assertIn("เวลา 15.00-10.00", result["sections"][0].title)
+
+    def test_build_renders_tables_and_raw_workbook_without_formulas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _scan_file(os.path.join(tmp, "DWSXAUTOPDA.xlsx"), [
+                ("=1+1", "B1", "2026-10-18 15:10:00", "Autopacking_pda01"),
+                ("X2", "B2", "2026-10-18 13:10:00", "Autopacking_pda01"),
+            ])
+            _scan_file(os.path.join(tmp, "DWSPDA.xlsx"), [
+                ("Y1", "", "2026-10-18 16:10:00", "Dws_pda01"),
+            ])
+            config = configparser.RawConfigParser()
+            config["PATH"] = {"output_dir": tmp, "autopacking_dir": os.path.join(tmp, "no-autopacking")}
+            config["DWS_JMS"] = {"raw_path": tmp}
+            ds.ensure_defaults(config)
+            config[ds.SECTION]["sections"] = "auto_pda,pda_bag,dws_pda,autopacking"
+            with mock.patch("core.dws_mirror.plan", return_value=[]):
+                settings = ds.settings_from_config(config)
+            window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
+            result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None)
+
+            by_key = {s.key: s for s in result["sections"]}
+            for key in ("auto_pda", "pda_bag", "dws_pda"):
+                self.assertTrue(os.path.isfile(by_key[key].image), key)
+            self.assertIsNone(by_key["autopacking"].image)
+            self.assertIn("autopacking", " ".join(result["warnings"]))
+
+            wb = openpyxl.load_workbook(result["raw_file"])
+            auto = wb["AUTO PDA DATA"]
+            self.assertEqual(auto.max_row, 2)  # แถว 13:10 อยู่นอกรอบ
+            self.assertEqual(auto["A2"].value, "=1+1")
+            self.assertEqual(auto["A2"].data_type, "s")
+            self.assertEqual(wb["PDA BAG DATA"].max_row, 2)
+            self.assertEqual(wb["DWS PDA DATA"].max_row, 2)
+
+    def test_abnormal_counts_distinct_billcodes_within_business_day(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "all error.xlsx")
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.append(["Billcode", "Pipeline", "Sort Time", "Sort Source"])
+            for bill, when, source in [
+                ("JT1", "2026/10/18 15:01:07", "No Plan"),
+                ("JT1", "2026/10/18 15:20:00", "No Plan"),      # วนซ้ำ นับครั้งเดียว
+                ("JT2", "2026/10/19 10:49:42", "Max Cycles"),   # หลังเวลาส่งรายงาน ยังอยู่ในรอบ
+                ("JT3", "2026/10/18 14:59:00", "Max Cycles"),   # ก่อนต้นรอบ
+                ("JT4", "2026/10/18 16:00:00", "Intercept"),
+            ]:
+                ws.append([bill, "58987-001", when, source])
+            wb.save(path)
+            window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
+            data = ds.read_abnormal(path, window)
+            self.assertEqual(data.counts, {"No Plan": 1, "Max Cycles": 1, "Intercept": 1})
+            self.assertEqual(len(data.rows), 3)  # ตัด Billcode ซ้ำเหมือนชีต DATA Abnormal
+            image = ds.render_abnormal_table(data.counts, window.business_date,
+                                             os.path.join(tmp, "abnormal.png"))
+            self.assertTrue(os.path.isfile(image))
+
+    def test_dws_pda_counts_only_rows_without_bag_like_power_query(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _scan_file(os.path.join(tmp, "DWSXAUTOPDA.xlsx"), [])
+            _scan_file(os.path.join(tmp, "DWSPDA.xlsx"), [
+                ("P1", "", "2026-10-18 16:10:00", "Dws_pda01"),
+                ("P2", "B55", "2026-10-18 16:20:00", "Dws_pda01"),  # สแกนกระสอบ ไม่นับ
+            ])
+            config = configparser.RawConfigParser()
+            config["PATH"] = {"output_dir": tmp, "autopacking_dir": os.path.join(tmp, "no-autopacking")}
+            config["DWS_JMS"] = {"raw_path": tmp}
+            ds.ensure_defaults(config)
+            config[ds.SECTION]["sections"] = "dws_pda"
+            with mock.patch("core.dws_mirror.plan", return_value=[]):
+                settings = ds.settings_from_config(config)
+            window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
+            result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None)
+            wb = openpyxl.load_workbook(result["raw_file"])
+            self.assertEqual(wb["DWS PDA DATA"].max_row, 2)
+
+    def test_custom_paths_apply_only_when_enabled_and_filled(self) -> None:
+        config = configparser.RawConfigParser()
+        config["PATH"] = {"autopacking_dir": "//share/report"}
+        config["DWS_JMS"] = {"raw_path": "C:/raw", "name_auto": "A.xlsx", "name_dwspda": "P.xlsx", "name_dws": "D.xlsx"}
+        ds.ensure_defaults(config)
+        config[ds.SECTION]["path_auto_pda"] = "D:/mine/auto.xlsx"
+        config[ds.SECTION]["path_dws3"] = "D:/mine/dws3.xlsx"
+        config[ds.SECTION]["path_autopacking_dir"] = "D:/ap"
+        with mock.patch("core.dws_mirror.plan", return_value=[]):
+            settings = ds.settings_from_config(config)
+        # ยังไม่ติ๊กใช้ path แยก -> ใช้ค่าจากหน้า ตั้งค่า ทั้งหมด
+        self.assertEqual(settings.auto_pda_file, os.path.join("C:/raw", "A.xlsx"))
+        self.assertEqual(settings.autopacking_folder, "//share/report")
+        settings.options["custom_paths"] = "true"
+        self.assertEqual(settings.auto_pda_file, "D:/mine/auto.xlsx")
+        self.assertEqual(settings.dws_pda_file, os.path.join("C:/raw", "P.xlsx"))  # ช่องว่าง = ค่าเดิม
+        self.assertEqual(settings.autopacking_folder, "D:/ap")
+        self.assertEqual(ds.dws_station_paths(settings)["DWS3"], "D:/mine/dws3.xlsx")
+
+    def test_post_content_keeps_section_order_and_marks_missing_images(self) -> None:
+        sections = [ds.Section("a", "หัวข้อ A", "a.png"), ds.Section("b", "หัวข้อ B", None, "ไม่พบรูป")]
+        content = ds.post_content(sections, {"a": "img_a"})
+        self.assertEqual(content[0][0]["text"], "หัวข้อ A")
+        self.assertEqual(content[1][0], {"tag": "img", "image_key": "img_a"})
+        self.assertEqual(content[2][0]["text"], " ")  # เว้นบรรทัดหลังรูป
+        self.assertIn("ไม่พบรูป", content[4][0]["text"])
+
+    def test_hourly_abnormal_rows_map_chinese_sort_source_and_dedupe(self) -> None:
+        window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
+        rows = [
+            ["ชั่วโมงข้อมูล", "ไฟล์", "Billcode", "Pipeline", "Sort Time", "Sort Source"],
+            ["15点-16点", "16.xlsx", "JT1", "58987-001", datetime(2026, 10, 18, 15, 5), "无分拣计划"],
+            ["15点-16点", "16.xlsx", "JT1", "58987-001", datetime(2026, 10, 18, 15, 9), "最大循环件"],
+            ["16点-17点", "17.xlsx", "JT2", "58987-002", datetime(2026, 10, 18, 16, 1), "最大循环件"],
+        ]
+        data = ds.abnormal_from_rows(rows, window)
+        self.assertEqual(data.counts, {"No Plan": 1, "Max Cycles": 1})
+        self.assertEqual(len(data.rows), 2)
+
+    def test_abnormal_percentages_follow_manual_workbook_formulas(self) -> None:
+        values = ds.abnormal_table_values({"No Plan": 604, "Max Cycles": 2892, "Intercept": 5})
+        self.assertEqual(values["total"], 3501)
+        self.assertEqual(f"{values['No Plan'][1] * 100:.2f}%", "17.40%")
+        self.assertEqual(f"{values['Max Cycles'][1] * 100:.2f}%", "82.75%")
+
+    def test_oversized_raw_file_is_zipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "raw.xlsx")
+            with open(path, "wb") as fh:
+                fh.write(b"0" * 200_000)
+            fitted = ds.fit_for_upload(path, 0.1, log=lambda *a, **k: None)
+            self.assertTrue(fitted.endswith(".zip"))
+
+
+if __name__ == "__main__":
+    unittest.main()

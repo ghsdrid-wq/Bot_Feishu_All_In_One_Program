@@ -917,11 +917,87 @@ class MetricsRegressionTests(unittest.TestCase):
         self.assertEqual(run_cycle.call_count, 2)
 
 
+class DailySummarySettingsPageTests(unittest.TestCase):
+    def test_page_fields_are_saved_to_daily_summary_section(self) -> None:
+        class Value:
+            def __init__(self, value):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        app = bot_main.App.__new__(bot_main.App)
+        app.config = configparser.RawConfigParser()
+        app.ds_entries = {"chat_id": Value(" oc_test 123 "), "title_dws": Value("DWS {date}"),
+                          "raw_file_max_mb": Value("25")}
+        app.ds_section_order = ["dws", "abnormal", "autopacking"]
+        app.ds_section_vars = {"dws": Value(True), "abnormal": Value(False), "autopacking": Value(True)}
+        app.ds_send_raw_var = Value(False)
+        app.save_daily_summary_fields()
+        section = app.config["DAILY_SUMMARY"]
+        self.assertEqual(section["chat_id"], "oc_test123")
+        self.assertEqual(section["title_dws"], "DWS {date}")
+        self.assertEqual(section["sections"], "dws,autopacking")  # คงลำดับเดิม ตัดที่ไม่ติ๊ก
+        self.assertEqual(section["send_raw_file"], "false")
+
+
+class DailySummaryTimerTests(unittest.TestCase):
+    def _app(self, last_sent=""):
+        app = bot_main.App.__new__(bot_main.App)
+        app.config = configparser.RawConfigParser()
+        app.config["DAILY_SUMMARY"] = {"auto_send": "true", "send_time": "12:20", "last_sent_date": last_sent}
+        app.scheduler_running = True
+        app.running = False
+        app.ds_busy = False
+        app.logs = []
+        app.write_log = lambda msg, level=None: app.logs.append(msg)
+        app.after = lambda *args: None
+        app.daily_summary_settings = lambda out="": "settings"
+        app.calls = []
+        app.run_daily_summary_in_background = lambda *args, **kwargs: app.calls.append((args, kwargs))
+        return app
+
+    def test_sends_once_after_minute_and_waits_for_running_pipeline(self) -> None:
+        app = self._app()
+        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:10:00")
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])  # ยังไม่ถึง 12:20
+        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:20:30")
+        app.running = True
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])  # รอบรายชั่วโมงยังรัน รอก่อน
+        app.running = False
+        app.daily_summary_tick()
+        self.assertEqual(len(app.calls), 1)
+        self.assertTrue(app.calls[0][1]["mark_sent"])
+        app.daily_summary_tick()
+        self.assertEqual(len(app.calls), 1)  # ครั้งต่อไปต้องรอ 10 นาที
+
+    def test_already_sent_or_auto_off_does_nothing(self) -> None:
+        app = self._app(last_sent="2026-10-18")
+        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:30:00")
+        app.daily_summary_tick()
+        app.config["DAILY_SUMMARY"]["last_sent_date"] = ""
+        app.config["DAILY_SUMMARY"]["auto_send"] = "false"
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])
+
+
 class ReportHourAlignmentTests(unittest.TestCase):
     def test_hour_header_parser_supports_report_formats(self) -> None:
         self.assertEqual(Createphoto.extract_hour_header("16点-17点"), 16)
         self.assertEqual(Createphoto.extract_hour_header("16:00-17:00"), 16)
         self.assertIsNone(Createphoto.extract_hour_header("合计"))
+
+    def test_hour_columns_are_read_from_each_sheet_layout(self) -> None:
+        # ไฟล์ bot เดิม: 12点 อยู่คอลัมน์ C / ไฟล์ 2_DWS ชีต DWSREALTIME: อยู่คอลัมน์ B
+        # Excel COM คืน Value2 เป็น tuple ของ tuple
+        legacy = ((None,) * 6, ("พนักงาน", None, "12点-13点", "13点-14点", "14点-15点", "合计"))
+        dws = (("供件台", "12点-13点", "13点-14点", "14点-15点", "15点-16点", "A"),)
+        self.assertEqual(Createphoto.hour_header_columns(legacy)[12], 3)
+        self.assertEqual(Createphoto.hour_header_columns(legacy)[14], 5)
+        self.assertEqual(Createphoto.hour_header_columns(dws)[12], 2)
+        self.assertEqual(Createphoto.hour_header_columns(dws)[14], 4)
 
     def test_formula_hour_parser_reads_literal_count_criteria(self) -> None:
         formula = '=COUNTIFS(raw!$A:$A,AI11&" 16*",raw!$B:$B,"ok")'

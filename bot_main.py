@@ -45,6 +45,7 @@ from Createphoto import (
 import Botmessage
 import feishu_client
 import realtime_report
+import daily_summary
 from Botmessage import run_send
 
 # Skip stale Feishu redelivery after the app comes back online.
@@ -166,11 +167,16 @@ class SmoothScrollableFrame(ctk.CTkScrollableFrame):
         self._smooth_scroll_target = None
         self._smooth_scroll_job = None
 
+    def _is_own_scroll_target(self, widget) -> bool:
+        # customtkinter รุ่นใหม่ใช้ _check_if_valid_scroll ส่วน 5.2.x ใช้ check_if_master_is_canvas
+        check = getattr(self, "_check_if_valid_scroll", None) or getattr(self, "check_if_master_is_canvas")
+        return bool(check(widget))
+
     def _mouse_wheel_all(self, event):
         if (
             sys.platform.startswith("win")
             and not self._shift_pressed
-            and self._check_if_valid_scroll(event.widget)
+            and self._is_own_scroll_target(event.widget)
             and self._parent_canvas.yview() != (0.0, 1.0)
         ):
             first, last = self._parent_canvas.yview()
@@ -243,7 +249,7 @@ DEFAULT_TIME = {
 }
 
 DEFAULT_UI = {
-    "nav_order": "home,workbooks,dws_plan,jms_user,code_policy,settings",
+    "nav_order": "home,workbooks,dws_plan,jms_user,code_policy,daily_summary,settings",
 }
 
 DEFAULT_DWS_JMS = {
@@ -1401,6 +1407,7 @@ class App(ctk.CTk):
         self.after(1000, self.update_clock)
         self.after(2500, self.refresh_status)
         self.after(60000, self.check_shift_date_roll)
+        self.after(30000, self.daily_summary_tick)
         # เปิดเว็บเองตอนโปรแกรมเริ่ม ปิดได้ที่ [DASHBOARD] web_autostart
         self.after(1500, self.dashboard_autostart_web)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -1428,6 +1435,7 @@ class App(ctk.CTk):
         if "EXPORTS" not in self.config:
             self.config["EXPORTS"] = {"items": ""}
         migrate_old_export_config(self.config)
+        daily_summary.ensure_defaults(self.config)
         self.normalize_export_names_to_numbers()
         self.save_config()
 
@@ -1562,6 +1570,7 @@ class App(ctk.CTk):
             if "EXPORTS" not in self.config:
                 self.config["EXPORTS"] = {}
             self.config["EXPORTS"]["send_as_card"] = str(self.send_as_card_var.get()).lower()
+        self.save_daily_summary_fields()
         save_config(self.config)
         try:
             from metrics import core as metrics_core
@@ -1822,6 +1831,7 @@ class App(ctk.CTk):
             "dws_plan": ("▦  BOT DWS PLAN", "nav_dws_plan"),
             "jms_user": ("👤  BOT JMS USER", "nav_jms_user"),
             "code_policy": ("🔐  สิทธิ์รหัส", "nav_code_policy"),
+            "daily_summary": ("📋  สรุปรายวัน", "nav_daily_summary"),
             "settings": ("⚙  ตั้งค่า", "nav_settings"),
         }
         self.render_nav_menu()
@@ -1845,6 +1855,7 @@ class App(ctk.CTk):
             "dws_plan": self.build_dws_plan_page(self.content),
             "jms_user": self.build_jms_user_page(self.content),
             "code_policy": self.build_code_policy_page(self.content),
+            "daily_summary": self.build_daily_summary_page(self.content),
             "settings": self.build_settings_page(self.content),
         }
         self.show_page("home")
@@ -2024,7 +2035,7 @@ class App(ctk.CTk):
         stages = PIPELINE_STEPS
         stage_wrap = ctk.CTkFrame(pipeline, fg_color="transparent")
         stage_wrap.grid(row=2, column=0, columnspan=8, padx=8, pady=(4, 10), sticky="ew")
-        for i in range(8):
+        for i in range(len(stages)):
             stage_wrap.grid_columnconfigure(i, weight=1)
         for col, (key, title, icon, default_on) in enumerate(stages):
             self.make_stage(stage_wrap, col, key, title, icon, default_on)
@@ -3191,6 +3202,362 @@ class App(ctk.CTk):
         self.render_controller_client_settings()
         return page
 
+    # ------------------------------------------------------------------
+    # หน้า "สรุปรายวัน" — ตั้งค่า [DAILY_SUMMARY] ของ daily_summary.py
+    # ------------------------------------------------------------------
+    DAILY_SUMMARY_SECTIONS = [
+        ("autopacking", "อัตราการปล่อยพัสดุ AutoPacking"),
+        ("auto_pda", "อัตราการยิงบรรจุ PDA 人工建包"),
+        ("pda_bag", "จำนวนกระสอบซิปแดง"),
+        ("dws_pda", "ยอดแสกนพัสดุลงรถ PDA"),
+        ("dws", "อัตราการปล่อยพัสดุ DWS"),
+        ("abnormal", "รายการความผิดปกติ (Error)"),
+    ]
+
+    def daily_summary_option(self, key: str) -> str:
+        section = self.config[daily_summary.SECTION] if daily_summary.SECTION in self.config else {}
+        value = section.get(key)
+        return daily_summary.DEFAULTS.get(key, "") if value is None else value
+
+    def ds_entry(self, parent, row, label, key, hint="", width=None, column_span=1):
+        ctk.CTkLabel(parent, text=label, text_color="#d8dee9", width=150, anchor="w").grid(
+            row=row, column=0, padx=(16, 8), pady=6, sticky="w")
+        ent = ctk.CTkEntry(parent, width=width or 140)
+        ent.grid(row=row, column=1, columnspan=column_span, padx=8, pady=6,
+                 sticky="ew" if width is None else "w")
+        ent.insert(0, self.daily_summary_option(key))
+        self.lockable_inputs.append(ent)
+        self.ds_entries[key] = ent
+        if hint:
+            ctk.CTkLabel(parent, text=hint, text_color="#7b8496", anchor="w").grid(
+                row=row, column=1 + column_span, padx=(4, 16), pady=6, sticky="w")
+        return ent
+
+    def build_daily_summary_page(self, master):
+        page = SmoothScrollableFrame(master, fg_color="#2e3440", corner_radius=0)
+        page.grid_columnconfigure(0, weight=1)
+        self.ds_entries: Dict[str, Any] = {}
+        self.ds_section_vars: Dict[str, Any] = {}
+        self.ds_busy = False
+        self.header(page, "สรุปรายวัน",
+                    "ข้อความสรุปยอดประจำวันแบบรายงาน manual + ไฟล์ข้อมูลดิบรวม — "
+                    "ส่งอัตโนมัติวันละครั้งตามเวลาที่ตั้ง ขณะเปิด Auto ในหน้า BOT REPORT").grid(
+            row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
+
+        actions = ctk.CTkFrame(page, fg_color="transparent")
+        actions.grid(row=1, column=0, padx=24, pady=(0, 8), sticky="ew")
+        actions.grid_columnconfigure(0, weight=1)
+        self.ds_status = ctk.CTkLabel(actions, text="", text_color="#aeb8cc", anchor="w")
+        self.ds_status.grid(row=0, column=0, sticky="w")
+        self.btn_ds_preview = ctk.CTkButton(
+            actions, text="👁 สร้างตัวอย่าง (ไม่ส่ง)", height=40, width=190,
+            fg_color="#5e81ac", hover_color="#4c6e93", command=lambda: self.start_daily_summary_now(False))
+        self.btn_ds_preview.grid(row=0, column=1, padx=(8, 0), sticky="e")
+        self.btn_ds_send = ctk.CTkButton(
+            actions, text="🚀 ส่งสรุปตอนนี้", height=40, width=150,
+            fg_color="#a3be8c", hover_color="#8ca876", text_color="#2e3440",
+            command=lambda: self.start_daily_summary_now(True))
+        self.btn_ds_send.grid(row=0, column=2, padx=(8, 0), sticky="e")
+        btn_save = ctk.CTkButton(actions, text="💾 บันทึก", height=40, width=110,
+                                 fg_color="#4c566a", hover_color="#5e6779", command=self.save_all)
+        btn_save.grid(row=0, column=3, padx=(8, 0), sticky="e")
+        self.lockable_buttons += [self.btn_ds_preview, self.btn_ds_send, btn_save]
+
+        # ---- การส่ง
+        send = self.make_card(page, "#3b4252", 22)
+        send.grid(row=2, column=0, padx=24, pady=8, sticky="ew")
+        send.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(send, text="การส่ง", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(
+            row=0, column=0, columnspan=3, padx=16, pady=(16, 2), sticky="w")
+        ctk.CTkLabel(send, text="ใช้ App ID / App Secret เดียวกับหน้า ตั้งค่า", text_color="#aeb8cc").grid(
+            row=1, column=0, columnspan=3, padx=16, pady=(0, 6), sticky="w")
+        chat = self.ds_entry(send, 2, "Chat ID", "chat_id", "ว่าง = ใช้ Chat ID ในหน้า ตั้งค่า")
+        self.bind_clean_entry(chat, collapse_internal_spaces=True)
+        self.ds_auto_send_var = ctk.BooleanVar(value=as_bool(self.daily_summary_option("auto_send"), True))
+        auto_chk = ctk.CTkCheckBox(send, text="ส่งอัตโนมัติทุกวัน (ทำงานขณะเปิด Auto ในหน้า BOT REPORT)",
+                                   variable=self.ds_auto_send_var, command=self.save_config)
+        auto_chk.grid(row=19, column=0, columnspan=3, padx=16, pady=(8, 2), sticky="w")
+        self.lockable_inputs.append(auto_chk)
+        ctk.CTkLabel(send, text="เวลาส่ง", text_color="#d8dee9", width=150, anchor="w").grid(
+            row=20, column=0, padx=(16, 8), pady=6, sticky="w")
+        time_row = ctk.CTkFrame(send, fg_color="transparent")
+        time_row.grid(row=20, column=1, padx=8, pady=6, sticky="w")
+        hour, minute = daily_summary.parse_send_time(self.daily_summary_option("send_time"))
+        self.ds_send_hour_var = ctk.StringVar(value=f"{hour:02d}")
+        self.ds_send_minute_var = ctk.StringVar(value=f"{minute:02d}")
+        hour_box = ctk.CTkComboBox(time_row, values=[f"{h:02d}" for h in range(24)], width=70,
+                                   variable=self.ds_send_hour_var, state="readonly",
+                                   command=lambda _value: self.save_config())
+        hour_box.grid(row=0, column=0)
+        ctk.CTkLabel(time_row, text=":", text_color="#d8dee9").grid(row=0, column=1, padx=4)
+        minute_box = ctk.CTkComboBox(time_row, values=[f"{m:02d}" for m in range(60)], width=70,
+                                     variable=self.ds_send_minute_var, state="readonly",
+                                     command=lambda _value: self.save_config())
+        minute_box.grid(row=0, column=2)
+        self.lockable_inputs += [hour_box, minute_box]
+        self.ds_last_sent_label = ctk.CTkLabel(send, text="", text_color="#7b8496", anchor="w")
+        self.ds_last_sent_label.grid(row=20, column=2, padx=(4, 16), pady=6, sticky="w")
+        ctk.CTkLabel(send, text="ส่งวันละครั้งเมื่อถึงเวลานี้ — ตั้งนาทีให้หลังรอบรายชั่วโมงดึงไฟล์ดิบเสร็จ "
+                                "(ถ้ารอบรายชั่วโมงยังรันอยู่ จะรอให้เสร็จก่อนค่อยส่ง)",
+                     text_color="#7b8496", anchor="w").grid(row=21, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="w")
+        self.refresh_daily_summary_last_sent()
+        self.ds_send_raw_var = ctk.BooleanVar(value=as_bool(self.daily_summary_option("send_raw_file"), True))
+        raw_chk = ctk.CTkCheckBox(send, text="ส่งไฟล์ข้อมูลดิบรวม (.xlsx แยก sheet) ตามหลังข้อความ",
+                                  variable=self.ds_send_raw_var, command=self.save_config)
+        raw_chk.grid(row=23, column=0, columnspan=3, padx=16, pady=(8, 4), sticky="w")
+        self.lockable_inputs.append(raw_chk)
+        self.ds_entry(send, 24, "ชื่อไฟล์ข้อมูลดิบ", "raw_file_name", "{date} = วันที่รอบงาน")
+        self.ds_entry(send, 25, "ขนาดไฟล์สูงสุด (MB)", "raw_file_max_mb", "เกิน = บีบ zip (Feishu รับไม่เกิน 30MB)",
+                      width=90)
+        ctk.CTkLabel(send, text="").grid(row=26, column=0, pady=2)
+
+        # ---- หัวข้อ
+        sections = self.make_card(page, "#3b4252", 22)
+        sections.grid(row=3, column=0, padx=24, pady=8, sticky="ew")
+        sections.grid_columnconfigure(2, weight=1)
+        ctk.CTkLabel(sections, text="หัวข้อในข้อความ", text_color="#eceff4",
+                     font=ctk.CTkFont(size=17, weight="bold")).grid(
+            row=0, column=0, columnspan=3, padx=16, pady=(16, 2), sticky="w")
+        ctk.CTkLabel(sections,
+                     text="ติ๊ก = ส่งหัวข้อนั้น | ในหัวข้อใช้ {date} {start} {end} ได้ และใช้ | เพื่อขึ้นบรรทัดใหม่",
+                     text_color="#aeb8cc").grid(row=1, column=0, columnspan=3, padx=16, pady=(0, 6), sticky="w")
+        ctk.CTkLabel(sections, text="หัวข้อความ", text_color="#d8dee9", width=200, anchor="w").grid(
+            row=2, column=0, columnspan=2, padx=(16, 8), pady=6, sticky="w")
+        title_post = ctk.CTkEntry(sections)
+        title_post.grid(row=2, column=2, padx=(8, 16), pady=6, sticky="ew")
+        title_post.insert(0, self.daily_summary_option("title_post"))
+        self.ds_entries["title_post"] = title_post
+        self.lockable_inputs.append(title_post)
+
+        labels = dict(self.DAILY_SUMMARY_SECTIONS)
+        configured = [k.strip() for k in self.daily_summary_option("sections").split(",") if k.strip() in labels]
+        order = configured + [k for k, _ in self.DAILY_SUMMARY_SECTIONS if k not in configured]
+        self.ds_section_order = order
+        for index, key in enumerate(order, start=3):
+            var = ctk.BooleanVar(value=key in configured)
+            chk = ctk.CTkCheckBox(sections, text="", width=24, variable=var, command=self.save_config)
+            chk.grid(row=index, column=0, padx=(16, 0), pady=6, sticky="w")
+            ctk.CTkLabel(sections, text=labels[key], text_color="#d8dee9", width=200, anchor="w").grid(
+                row=index, column=1, padx=(4, 8), pady=6, sticky="w")
+            ent = ctk.CTkEntry(sections)
+            ent.grid(row=index, column=2, padx=(8, 16), pady=6, sticky="ew")
+            ent.insert(0, self.daily_summary_option(f"title_{key}"))
+            self.ds_section_vars[key] = var
+            self.ds_entries[f"title_{key}"] = ent
+            self.lockable_inputs += [chk, ent]
+        ctk.CTkLabel(sections, text="").grid(row=len(order) + 3, column=0, pady=2)
+
+        # ---- แหล่งข้อมูล
+        sources = self.make_card(page, "#3b4252", 22)
+        sources.grid(row=4, column=0, padx=24, pady=8, sticky="ew")
+        sources.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(sources, text="แหล่งข้อมูล", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(
+            row=0, column=0, columnspan=3, padx=16, pady=(16, 2), sticky="w")
+        ctk.CTkLabel(sources,
+                     text="ตารางทุกอันบอทวาดเองจากไฟล์ดิบเป็นค่าเริ่มต้น",
+                     text_color="#aeb8cc").grid(row=1, column=0, columnspan=3, padx=16, pady=(0, 6), sticky="w")
+        self.ds_custom_paths_var = ctk.BooleanVar(value=as_bool(self.daily_summary_option("custom_paths"), False))
+        custom_chk = ctk.CTkCheckBox(
+            sources, text="ใช้ path ไฟล์ดิบแยกสำหรับสรุปรายวัน (ไม่ติ๊ก = ใช้ path เดียวกับหน้า ตั้งค่า)",
+            variable=self.ds_custom_paths_var, command=self.toggle_daily_summary_paths)
+        custom_chk.grid(row=1, column=0, columnspan=3, padx=16, pady=(28, 6), sticky="w")
+        self.lockable_inputs.append(custom_chk)
+        self.ds_paths_frame = ctk.CTkFrame(sources, fg_color="#252b36", corner_radius=12)
+        self.ds_paths_frame.grid(row=2, column=0, columnspan=3, padx=16, pady=(0, 10), sticky="ew")
+        self.ds_paths_frame.grid_columnconfigure(1, weight=1)
+        self.build_daily_summary_path_rows(self.ds_paths_frame)
+        self.toggle_daily_summary_paths(save=False)
+        abnormal = self.ds_entry(sources, 2 + 100, "ไฟล์ Abnormal Detail", "abnormal_file")
+        abnormal_btn = ctk.CTkButton(
+            sources, text="Browse", width=92, fg_color="#4c566a", hover_color="#5e6779",
+            command=lambda: self.set_path(abnormal, filedialog.askopenfilename(
+                filetypes=[("Excel files", "*.xls *.xlsx"), ("All files", "*.*")])))
+        abnormal_btn.grid(row=2 + 100, column=2, padx=(8, 16), pady=6)
+        self.lockable_buttons.append(abnormal_btn)
+        ctk.CTkLabel(sources, text="ว่าง = รวมชีต Abnormal จากไฟล์ AutoPacking รายชั่วโมง "
+                                   "(ไม่มีพัสดุ Intercept) / ใส่ไฟล์ = ใช้ไฟล์ export แยกแทน",
+                     text_color="#7b8496").grid(row=103, column=1, columnspan=2, padx=8, pady=(0, 6), sticky="w")
+        ctk.CTkLabel(sources, text="ใช้รูปจาก Excel แทน (ชื่อไฟล์ในโฟลเดอร์รูป — ว่าง = บอทวาดเอง)",
+                     text_color="#eceff4", font=ctk.CTkFont(size=14, weight="bold")).grid(
+            row=104, column=0, columnspan=3, padx=16, pady=(10, 2), sticky="w")
+        for row, (key, label) in enumerate(self.DAILY_SUMMARY_SECTIONS[:5], start=105):
+            self.ds_entry(sources, row, label, f"{key}_image", width=260)
+        self.ds_entry(sources, 110, "อายุรูปจาก Excel สูงสุด", "image_max_age_minutes", "นาที", width=90)
+        ctk.CTkLabel(sources, text="").grid(row=111, column=0, pady=2)
+
+        # ---- ขั้นสูง
+        advanced = self.make_card(page, "#3b4252", 22)
+        advanced.grid(row=5, column=0, padx=24, pady=(8, 24), sticky="ew")
+        ctk.CTkLabel(advanced, text="ขั้นสูง", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(
+            row=0, column=0, columnspan=3, padx=16, pady=(16, 6), sticky="w")
+        self.ds_entry(advanced, 1, "ชื่อเครื่อง PDA บรรจุ", "auto_pda_prefix", width=200)
+        self.ds_entry(advanced, 2, "จำนวนเครื่อง PDA บรรจุ", "auto_pda_count", width=90)
+        self.ds_entry(advanced, 3, "ชื่อเครื่อง PDA ลงรถ", "dws_pda_prefix", width=200)
+        self.ds_entry(advanced, 4, "จำนวนเครื่อง PDA ลงรถ", "dws_pda_count", width=90)
+        self.ds_entry(advanced, 5, "รอบงานจบกี่โมง", "day_end_hour", "ตารางรายชั่วโมงแสดงถึงก่อนชั่วโมงนี้", width=90)
+        self.ds_entry(advanced, 6, "กะ B เริ่มกี่โมง", "shift_b_start", width=90)
+        ctk.CTkLabel(advanced, text="").grid(row=7, column=0, pady=2)
+        return page
+
+    def daily_summary_shared_paths(self) -> Dict[str, str]:
+        """path ที่ใช้เมื่อไม่ได้ตั้ง path แยก — โชว์เป็นตัวอย่างในช่องว่าง
+        (ไม่เช็กว่ามีไฟล์จริงไหม เพราะ path บน network share ทำให้หน้าจอค้างตอนเปิดได้)"""
+        settings = daily_summary.settings_from_config(self.config)
+        shared = {
+            "autopacking_dir": settings.autopacking_dir,
+            "auto_pda": os.path.join(settings.raw_dir, settings.name_auto),
+            "dws_pda": os.path.join(settings.raw_dir, settings.name_dwspda),
+            "dws911": os.path.join(settings.raw_dir, settings.name_dws),
+        }
+        mirrored = dict(settings.dws_files)
+        for i in range(1, 9):
+            station = f"DWS{i}"
+            path = mirrored.get(station, "")
+            if not path:
+                try:
+                    from core import dws_mirror
+                    path = dws_mirror._yaml_source(station).get("path", "")
+                except Exception:
+                    path = ""
+            shared[f"dws{i}"] = path
+        return shared
+
+    def build_daily_summary_path_rows(self, frame):
+        shared = self.daily_summary_shared_paths()
+        rows = [("autopacking_dir", "โฟลเดอร์ AutoPacking (00-23.xlsx)", "dir"),
+                ("auto_pda", "PDA บรรจุมือ / กระสอบ (DWSXAUTOPDA)", "file"),
+                ("dws_pda", "PDA ลงรถ (DWSPDA)", "file"),
+                ("dws911", "DWS9-11", "file")]
+        rows += [(f"dws{i}", f"DWS{i} realtime", "file") for i in range(1, 9)]
+        ctk.CTkLabel(frame, text="ช่องที่ว่าง = ใช้ path ตามหน้า ตั้งค่า (ตัวอย่างสีจางในช่องคือ path ที่ใช้อยู่)",
+                     text_color="#7b8496").grid(row=0, column=0, columnspan=3, padx=12, pady=(10, 4), sticky="w")
+        for row, (key, label, kind) in enumerate(rows, start=1):
+            ctk.CTkLabel(frame, text=label, text_color="#d8dee9", width=230, anchor="w").grid(
+                row=row, column=0, padx=(12, 8), pady=4, sticky="w")
+            ent = ctk.CTkEntry(frame, placeholder_text=shared.get(key, "") or "(ไม่ได้ตั้งค่า)")
+            ent.grid(row=row, column=1, padx=8, pady=4, sticky="ew")
+            value = self.daily_summary_option(f"path_{key}")
+            if value:
+                ent.insert(0, value)
+            self.bind_clean_entry(ent)
+            self.ds_entries[f"path_{key}"] = ent
+            if kind == "dir":
+                pick = lambda e=ent: self.set_path(e, filedialog.askdirectory())
+            else:
+                pick = lambda e=ent: self.set_path(e, filedialog.askopenfilename(
+                    filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]))
+            btn = ctk.CTkButton(frame, text="Browse", width=82, fg_color="#4c566a",
+                                hover_color="#5e6779", command=pick)
+            btn.grid(row=row, column=2, padx=(8, 12), pady=4)
+            self.lockable_inputs.append(ent)
+            self.lockable_buttons.append(btn)
+        ctk.CTkLabel(frame, text="").grid(row=len(rows) + 1, column=0, pady=1)
+
+    def refresh_daily_summary_last_sent(self):
+        last = self.daily_summary_option("last_sent_date")
+        self.ds_last_sent_label.configure(
+            text=f"ส่งอัตโนมัติล่าสุด: รอบงานวันที่ {last}" if last else "ยังไม่เคยส่งอัตโนมัติ")
+
+    def toggle_daily_summary_paths(self, save: bool = True):
+        if self.ds_custom_paths_var.get():
+            self.ds_paths_frame.grid()
+        else:
+            self.ds_paths_frame.grid_remove()
+        if save:  # ตอนสร้างหน้า หน้าอื่นยังไม่ถูกสร้าง ห้ามบันทึก
+            self.save_config()
+
+    def save_daily_summary_fields(self):
+        if "ds_entries" not in self.__dict__:
+            return
+        if daily_summary.SECTION not in self.config:
+            self.config[daily_summary.SECTION] = {}
+        section = self.config[daily_summary.SECTION]
+        for key, widget in self.ds_entries.items():
+            value = widget.get().strip()
+            if key == "chat_id":
+                value = clean_input_value(value, collapse_internal_spaces=True)
+            section[key] = value
+        section["sections"] = ",".join(
+            key for key in self.ds_section_order if self.ds_section_vars[key].get())
+        section["send_raw_file"] = str(bool(self.ds_send_raw_var.get())).lower()
+        if "ds_custom_paths_var" in self.__dict__:
+            section["custom_paths"] = str(bool(self.ds_custom_paths_var.get())).lower()
+        if "ds_send_hour_var" in self.__dict__:
+            section["send_time"] = f"{self.ds_send_hour_var.get() or '12'}:{self.ds_send_minute_var.get() or '00'}"
+            section["auto_send"] = str(bool(self.ds_auto_send_var.get())).lower()
+
+    def daily_summary_settings(self, out: str = "") -> "daily_summary.Settings":
+        """ค่าที่ใช้รันสรุป: config.ini + ค่าที่ snapshot ไว้ของรอบที่กำลังรัน (ถ้ามี)"""
+        settings = daily_summary.settings_from_config(self.config)
+        active = getattr(self, "active_run_settings", None) or {}
+        # รูปจาก Excel อยู่ในโฟลเดอร์รูป ([PATH] output_dir) เสมอ — ตอนติ๊กแค่ขั้นนี้
+        # out ของรอบจะเป็นโฟลเดอร์ไฟล์ดิบแทน จึงใช้ out เฉพาะตอนไม่ได้ตั้งโฟลเดอร์รูป
+        settings.output_dir = settings.output_dir or out
+        settings.raw_dir = self.get_raw_export_folder() or settings.raw_dir
+        settings.name_auto = self.get_dws_export_filename("name_auto", settings.name_auto)
+        settings.name_dwspda = self.get_dws_export_filename("name_dwspda", settings.name_dwspda)
+        settings.name_dws = self.get_dws_export_filename("name_dws", settings.name_dws)
+        for key in ("app_id", "app_secret"):
+            if active.get(key):
+                setattr(settings, key, clean_input_value(active[key], collapse_internal_spaces=True))
+        if active.get("chat_id") and not settings.opt("chat_id"):
+            settings.chat_id = clean_input_value(active["chat_id"], collapse_internal_spaces=True)
+        return settings
+
+    def set_daily_summary_status(self, text, color="#aeb8cc"):
+        if not self.is_ui_thread():
+            self.run_on_ui_thread(self.set_daily_summary_status, text, color)
+            return
+        self.ds_status.configure(text=text, text_color=color)
+
+    def start_daily_summary_now(self, send: bool):
+        """ปุ่มในหน้าสรุปรายวัน: สร้างตัวอย่าง (ไม่ส่ง) หรือส่งทันที ด้วยช่วงเวลารายงานของตอนนี้"""
+        if self.running or self.ds_busy:
+            self.set_daily_summary_status("มีงานอื่นกำลังรันอยู่ รอให้เสร็จก่อน", "#ebcb8b")
+            return
+        self.save_all()
+        settings = self.daily_summary_settings(entry_value(self.out_entry))
+        start, end = self.get_report_time_range()
+        if send:
+            target = settings.chat_id or "(ไม่มี Chat ID)"
+            if not messagebox.askyesno(
+                    "ส่งสรุปตอนนี้",
+                    f"ส่งสรุปยอดช่วง {start} -> {end}\nเข้ากลุ่ม {target} ?"):
+                return
+        self.run_daily_summary_in_background(settings, start, end, send)
+
+    def run_daily_summary_in_background(self, settings, start: str, end: str, send: bool,
+                                        mark_sent: bool = False):
+        self.ds_busy = True
+        self.set_daily_summary_status("กำลังส่ง..." if send else "กำลังสร้างตัวอย่าง...", "#88c0d0")
+
+        def worker():
+            try:
+                result = daily_summary.run(
+                    settings, datetime.fromisoformat(start), datetime.fromisoformat(end),
+                    log=self.write_log, send_to_feishu=send)
+                if mark_sent:
+                    self.mark_daily_summary_sent(datetime.fromisoformat(start).date().isoformat())
+                folder = os.path.dirname(result["sections"][0].image or "") if result["sections"] else ""
+                warned = len(result.get("warnings") or [])
+                note = f" (มีคำเตือน {warned} รายการ ดูใน Live Log)" if warned else ""
+                if send:
+                    self.set_daily_summary_status("ส่งแล้ว" + note, "#a3be8c")
+                else:
+                    self.set_daily_summary_status("สร้างตัวอย่างแล้ว" + note, "#a3be8c")
+                    work_dir = os.path.join(settings.output_dir or settings.raw_dir or ".", "DailySummary")
+                    if os.path.isdir(work_dir):
+                        os.startfile(work_dir)
+                    elif folder and os.path.isdir(folder):
+                        os.startfile(folder)
+            except Exception as exc:
+                self.write_log(f"Daily summary failed — {exc}", level="ERROR")
+                self.set_daily_summary_status(f"ไม่สำเร็จ: {exc}", "#d3868e")
+            finally:
+                self.ds_busy = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def path_row(self, parent, row, label, browse_func):
         ctk.CTkLabel(parent, text=label, text_color="#d8dee9", width=130, anchor="w").grid(row=row, column=0, padx=(16, 8), pady=10, sticky="w")
         ent = ctk.CTkEntry(parent)
@@ -3338,7 +3705,7 @@ class App(ctk.CTk):
 
     def show_page(self, name):
         previous_page = getattr(self, "current_page", None)
-        if previous_page == "settings" and name != "settings":
+        if previous_page in ("settings", "daily_summary") and name != previous_page:
             self.save_all()
         for p in self.pages.values():
             p.grid_remove()
@@ -6119,6 +6486,49 @@ class App(ctk.CTk):
                 self.set_ui_running(False)
 
             self.schedule_pipeline_reset(run_generation)
+
+    def daily_summary_tick(self):
+        """ตัวตั้งเวลาของสรุปรายวัน — เช็กทุก 30 วินาที ส่งวันละครั้งเมื่อถึงเวลาที่ตั้ง
+
+        ทำงานเฉพาะตอนเปิด Auto และติ๊ก "ส่งอัตโนมัติทุกวัน" ไว้ ถ้ารอบรายชั่วโมงกำลังรัน
+        จะรอรอบหน้า (ไม่รันซ้อน เพราะรอบนั้นอาจกำลังเขียนไฟล์ดิบที่สรุปต้องอ่าน)
+        """
+        try:
+            if (getattr(self, "scheduler_running", False)
+                    and as_bool(self.daily_summary_option("auto_send"), True)
+                    and not self.running and not getattr(self, "ds_busy", False)):
+                start, end = self.get_report_time_range()
+                due, reason = daily_summary.due_to_send(
+                    datetime.fromisoformat(start), datetime.fromisoformat(end),
+                    self.daily_summary_option("send_time"), self.daily_summary_option("last_sent_date"))
+                business_date = datetime.fromisoformat(start).date().isoformat()
+                attempts = self.__dict__.setdefault("ds_auto_attempts", {})
+                count, last_try = attempts.get(business_date, (0, None))
+                # ส่งไม่สำเร็จ: ลองใหม่ได้อีก 2 ครั้ง ห่างกัน 10 นาที กันส่งข้อความซ้ำรัว ๆ
+                retry_ready = last_try is None or (datetime.now() - last_try).total_seconds() >= 600
+                if due and count < 3 and retry_ready:
+                    attempts[business_date] = (count + 1, datetime.now())
+                    self.write_log(f"Daily summary started — {reason} (ครั้งที่ {count + 1})", level="START")
+                    self.run_daily_summary_in_background(
+                        self.daily_summary_settings(self.daily_summary_option_path("output_dir")),
+                        start, end, send=True, mark_sent=True)
+        except Exception as exc:
+            self.write_log(f"Daily summary scheduler error — {exc}", level="ERROR")
+        finally:
+            self.after(30000, self.daily_summary_tick)
+
+    def daily_summary_option_path(self, key: str) -> str:
+        path_cfg = self.config["PATH"] if "PATH" in self.config else {}
+        return clean_input_value(path_cfg.get(key, ""))
+
+    def mark_daily_summary_sent(self, business_date: str):
+        """จำว่าส่งของวันนี้แล้ว — บันทึกลง config.ini ทันที กันรอบถัดไปส่งซ้ำ"""
+        if daily_summary.SECTION not in self.config:
+            self.config[daily_summary.SECTION] = {}
+        self.config[daily_summary.SECTION]["last_sent_date"] = business_date
+        save_config(self.config)
+        if "ds_last_sent_label" in self.__dict__:
+            self.run_on_ui_thread(self.refresh_daily_summary_last_sent)
 
     def run_once(self):
         if self.running:

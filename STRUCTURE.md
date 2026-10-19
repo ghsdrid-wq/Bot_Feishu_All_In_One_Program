@@ -26,6 +26,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 |------|---------|
 | `bot_main.py` | **หัวใจหลัก (~6000 บรรทัด)** — Flask `bot_app` (webhook) + คลาส `App(ctk.CTk)` รวมทุกหน้า/ทุกระบบ + Data Export (DWS DB + JMS API) + scheduler |
 | `Createphoto.py` | เปิด Excel ผ่าน win32com, จัดวันที่/คอลัมน์ตามเวลา, แคปภาพชีต → `run_create(...)` (เรียกจาก `App.run_process`) |
+| `daily_summary.py` | **Daily Summary** (ส่งวันละครั้งตามเวลา): คำนวณและวาดทุกตารางเองจากไฟล์ดิบ — AutoPacking (Autoformat A2:AK32), DWS (DWSREALTIME), AUTO PDA / กระสอบซิปแดง / DWS PDA จากไฟล์ JMS และตาราง Error จากชีต Abnormal ของไฟล์รายชั่วโมงที่รวมแล้ว (ตัด Billcode ซ้ำ, % ตามสูตรไฟล์ manual), วาด PNG (Pillow), รวมรูป Excel (AUTOPACKING/DWSREALTIME) เป็น Feishu post ข้อความเดียว แล้วส่งไฟล์ข้อมูลดิบรวมแยก sheet (`run`, `build`, `send`) |
 | `Botmessage.py` | อัปโหลดรูปเข้า Feishu แล้วส่งเข้า chat → `run_send(folder, ...)` (เรียกจาก `App.run_process`) |
 | `controller/controller_api.py` | Flask API พอร์ต **6100** (`/status`, `/switch_plan`, `/refresh`); endpoint ที่แก้สถานะต้องส่ง `VERIFY_TOKEN` |
 | `core/jms_api.py` | เรียก JMS J&T: `search_user`, `reset_app_password`, `reset_jms_password`, `enable_user` (BASE_URL `jmsgw.jtexpress.co.th`) |
@@ -54,6 +55,17 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 
 ### Workbook (แคปภาพ) + ส่ง
 - `run_process()` — เรียก `run_create(...)` (Createphoto) แคปภาพ แล้ว `run_send(...)` (Botmessage) ส่งรูป
+- `delete_columns_by_start` หาคอลัมน์ชั่วโมงแรกจากหัวตารางของแต่ละชีต (`hour_header_columns`) คืน `{ชีต: จำนวนคอลัมน์ที่ลบ}` แล้ว `shift_range_left` เลื่อนช่วงรูปตามชีตนั้น — ถ้าหาหัวตารางไม่เจอใช้ตำแหน่งเดิม (12点 = คอลัมน์ C)
+
+### Daily Summary (สรุปยอดประจำวัน)
+- หน้า **📋 สรุปรายวัน** (`build_daily_summary_page`) ตั้งค่า `[DAILY_SUMMARY]` ได้ทั้งหมด: Chat ID, ไฟล์ดิบ, เปิด/ปิดและแก้ชื่อหัวข้อ, path ไฟล์ดิบแยก (`custom_paths` + `path_*` ช่องว่าง = ใช้ค่าหน้า ตั้งค่า), รูปจาก Excel แทน และค่าขั้นสูง พร้อมปุ่ม สร้างตัวอย่าง (ไม่ส่ง) / ส่งสรุปตอนนี้ (`start_daily_summary_now`)
+- `daily_summary_tick` — ตัวตั้งเวลาแยกจาก pipeline เช็กทุก 30 วินาที ขณะเปิด Auto และติ๊ก `auto_send`: ส่งวันละครั้งเมื่อถึง `send_time` (ชั่วโมง:นาที ค่าเริ่มต้น 12:00) ของรอบงานนั้น (`daily_summary.due_to_send`) ถ้ารอบรายชั่วโมงกำลังรันจะรอ, ส่งไม่สำเร็จลองใหม่ได้ไม่เกิน 3 ครั้งห่างกัน 10 นาที, สำเร็จแล้วจำ `last_sent_date` กันส่งซ้ำ
+- ตั้งค่าใน `[DAILY_SUMMARY]` ของ `config.ini` (สร้างให้อัตโนมัติ): `sections`, ชื่อรูป Excel, จำนวนเครื่อง PDA, หัวข้อ (`{date}` `{start}` `{end}`), `abnormal_file` (ว่าง = ใช้ชีต Abnormal รายชั่วโมง; ใส่ไฟล์/โฟลเดอร์ Abnormal Detail = ใช้ไฟล์นั้นแทน ซึ่งมีพัสดุ Intercept ด้วย), `chat_id`, `send_raw_file`, `raw_file_max_mb`
+- ไฟล์ Excel หลักของสรุปคือ `2_DWS & PDA (Network Sharing) - เมนูสแกนเปรียบเทียบ.xlsx` — ช่วงรูปในหน้า Workbooks: DWSREALTIME `A1:AF26`, AUTO PDA `A1:AC50`, DWS PDA `A1:AC15`, PDA BAG `A1:B47`
+- ทุกตารางวาดเองจากไฟล์ดิบเป็นค่าเริ่มต้น ตรวจกับค่าที่ Excel คำนวณแล้ว: AutoPacking 918 ช่อง (2026-08-27), DWS 594 ช่อง และ AUTO PDA / DWS PDA / กระสอบแดง (ตรวจกับค่าที่ Excel คำนวณใน 2026-09-11 แล้วตรงทุกช่อง; กระสอบแดงตัดเลขกระสอบซ้ำทั้งไฟล์ก่อนนับ เหมือน PDA BAG DATA; DWS PDA นับเฉพาะแถวที่ไม่มีเลขกระสอบ เหมือน query DWS PDA DATA) ตั้ง `{key}_image` เพื่อใช้รูปจาก Excel แทนได้
+- ตารางกระสอบซิปแดงเป็นแถวยาวแบบ manual แต่เติมพื้นขาวด้านขวาให้รูปไม่สูงเกิน 1.2 เท่าของความกว้าง เพราะ Feishu ตัดท้ายรูปที่สูงยาวใน post
+- รูป Excel ต้องสร้างในรอบเดียวกันหรือไม่เก่ากว่า `image_max_age_minutes`; ส่วนที่ขาดจะขึ้นในข้อความว่าไม่มีข้อมูลและสถานะเป็น WARNING
+- ทดสอบนอกโปรแกรม: `python daily_summary.py --start "2026-10-18 15:00" --end "2026-10-19 10:00" --no-send`
 
 ### Scheduler / runtime
 - `start_scheduler` / `scheduler_loop` / `stop_scheduler` — Auto รันตามรอบ (`run_minute`, `start_hour`/`end_hour`) โดยเทียบเป็นช่องนาที จึงไม่พลาดรอบสุดท้ายจาก loop ที่ตื่นหลังวินาที 00

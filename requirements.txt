@@ -7,6 +7,7 @@ pywin32
 Pillow
 pymysql
 openpyxl
+xlsxwriter
 pyinstaller
 
 # --- โหมด Dashboard (ติ๊ก "Dashboard / เว็บ + ย้อนหลัง" ถึงจะใช้) ---

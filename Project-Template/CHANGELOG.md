@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Added Daily Summary (`daily_summary.py`): one Feishu post with the manual-report headings and tables (AutoPacking, PDA 人工建包, red zip bags, PDA unloading scans, DWS, AutoPacking abnormal report), followed by one raw-data workbook with a sheet per source.
+- PDA 人工建包, red zip bag, and PDA unloading tables are computed directly from the JMS raw files and rendered with the manual workbook's colour scale; red zip bags de-duplicate bag numbers across the whole file (first row kept, like the manual `PDA BAG DATA`) before counting `B…` bags per PDA. Verified cell-for-cell against the 2026-09-11 Excel results.
+- The AutoPacking abnormal table reads the auto-exported `all error.xls` (Abnormal Detail) and counts distinct billcodes per Sort Source within the business day, matching the manual 2026-10-18 report (604 / 2,892 / 3,501).
+- The abnormal source may be a folder; the Auto export folder is scanned for the Abnormal Detail file with the most rows in the business day, warning when its data ends more than 2 hours before report time.
+- The red zip bag table keeps the manual single-list layout (yellow header/total) on a widened canvas so Feishu posts do not crop the tall image.
+- PDA unloading counts keep only rows without a bag number, matching the manual `DWS PDA DATA` Power Query filter.
+- Excel start-hour trimming now locates the first hour column from each sheet's own header row, so sheets whose 12点 column is B (the `2_DWS & PDA` DWSREALTIME layout) are trimmed correctly; duplicate sheet entries are trimmed once.
+- The AutoPacking (Autoformat A2:AK32) and DWS (DWSREALTIME) tables are now computed and drawn from raw files too, so the summary no longer depends on Excel; verified against cached Excel results (918 and 594 cells, no differences). Excel images remain available through `autopacking_image` / `dws_image`.
+- AutoPacking falls back to the share's root folder only for the newest, not-yet-archived business day.
+- The abnormal table now aggregates the hourly AutoPacking `Abnormal` sheets (Chinese Sort Source names mapped) instead of a separate Abnormal Detail export, so the raw workbook no longer duplicates it as `AUTOPACKING Error`. Hourly data lacks Intercept parcels, so 2026-10-18 gives 604 / 2,891 / 3,495 versus the manual 604 / 2,892 / 3,501; `abnormal_file` still selects the Abnormal Detail export.
+- Raw PDA sheets keep only the machines shown in the tables (Autopacking_pda01–45, Dws_pda01–10); the 2026-09-16 raw workbook shrinks from 25.7MB to 5.7MB.
+- Added the **สรุปรายวัน** page for every `[DAILY_SUMMARY]` option, a preview (no send) and a confirmed send-now button, and an optional per-source raw path override (`custom_paths`, `path_*`) that falls back to the shared Settings paths for blank fields.
+- Daily Summary runs on its own once-a-day timer instead of a pipeline step: while Auto is on and `auto_send` is ticked it sends at the selected hour and minute (default 12:00), waits for a running hourly pipeline to finish, retries at most three times ten minutes apart, and records `last_sent_date`. The page's send-now button ignores the schedule.
+- Raw-data workbooks keep formula-like text as text and are zipped when larger than Feishu's 30MB attachment limit.
+- Added `feishu_client.send_post` and an optional `file_type` for `upload_file`.
+
 ## 2.1.8
 
 - Preserved formula-like JMS raw values such as text beginning with `=` as plain text in the RealtimeDB `DATA` sheet, preventing Excel from repairing `sheet2.xml`.

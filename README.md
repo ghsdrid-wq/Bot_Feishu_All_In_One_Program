@@ -95,6 +95,7 @@ python tools/bump_version.py patch
 |------|---------|
 | `bot_main.py` | ตัวหลัก — UI ทุกหน้า + Feishu webhook + Data Export + scheduler |
 | `Createphoto.py` | เปิด Excel แคปภาพชีต (`run_create`) |
+| `daily_summary.py` | Daily Summary — สรุปยอดข้อความเดียว + ไฟล์ข้อมูลดิบรวม ส่งวันละครั้งตามเวลาที่ตั้ง (หน้า สรุปรายวัน) |
 | `Botmessage.py` | อัปโหลด + ส่งรูปเข้า Feishu (`run_send`) |
 | `controller/controller_api.py` | Flask API พอร์ต 6100 (`/status`, `/switch_plan`, `/refresh`) |
 | `core/jms_api.py` | เรียก JMS J&T (search / reset / enable user) |
