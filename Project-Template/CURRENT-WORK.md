@@ -1,5 +1,6 @@
 # Current Work
 
+- Version 2.1.11 colours the summary table sheet tabs in the raw workbook and saves only the Excel file sent to the group into the chosen folder.
 - Version 2.1.10 puts the summary tables (AUTO, DWS, DWS+DWSPDA, AUTOPDA, กระสอบ, ERROR) and every data sheet, including DWS1-8, into the Daily Summary raw workbook, leaving sheets without current data empty, and adds a daily backup folder for each send.
 - Version 2.1.9 adds Daily Summary: one Feishu post with the manual-report tables (AutoPacking, PDA 人工建包, red zip bags, PDA unloading, DWS, abnormal) drawn from raw files and verified against Excel, a combined raw-data workbook, a dedicated settings page, and a once-a-day send timer (default 12:00). It also fixes start-hour column trimming for sheets whose 12点 column is B.
 - Version 2.1.8 prevents formula-like JMS text from becoming invalid formulas in RealtimeDB `sheet2.xml`, and retries transient Excel `Workbooks.Open` failures within a 60-second boundary.
@@ -35,7 +36,7 @@
 - Historical date selections and attachment-only Feishu delivery are preserved.
 - Configured round/shift times render consistently on desktop and mobile without changing the approved chart layout.
 - Automated regression suite passes 50 tests, covering RealtimeDB formula-like text preservation, runtime error logging, mixed multi-code policy decisions, offline/fallback replies, missing metrics config recovery, packaged schema fallback, read-only log relocking, inbound-token rejection, exact-user matching, partial reset replies, final-minute scheduling, cancellation isolation, atomic download replacement, policy handling, and backend preservation.
-- Application version is `2.1.10`; the release folder is derived automatically as `dist/AutoReportFeishuV2-1-10`.
+- Application version is `2.1.11`; the release folder is derived automatically as `dist/AutoReportFeishuV2-1-11`.
 - Future releases use `python tools/bump_version.py patch` before building; both UI and release folder update from the same source.
 - The complete `AutoReportFeishuV2-1-0` onedir release passed a 12-second launch smoke test with the v2.1.0 title, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.
 - The complete `AutoReportFeishuV2-1-1` onedir release passed a 12-second launch smoke test with the v2.1.1 title, a responsive window, ports 6100/6200, config, metrics config, `_internal`, and bundled Playwright present.

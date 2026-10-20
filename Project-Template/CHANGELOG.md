@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.11
 
 - Table sheets in the raw-data workbook get an orange tab colour so they stand apart from data sheets.
 - The daily backup now saves only the Excel file sent to the group, directly into the chosen folder (no per-day subfolder, no images); preview builds still save nothing.
