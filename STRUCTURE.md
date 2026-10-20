@@ -70,7 +70,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - ทดสอบนอกโปรแกรม: `python daily_summary.py --start "2026-10-18 15:00" --end "2026-10-19 10:00" --no-send`
 
 ### Scheduler / runtime
-- `start_scheduler` / `scheduler_loop` / `stop_scheduler` — Auto รันตามรอบ (`run_minute`, `start_hour`/`end_hour`) โดยเทียบเป็นช่องนาที จึงไม่พลาดรอบสุดท้ายจาก loop ที่ตื่นหลังวินาที 00
+- `start_scheduler` / `scheduler_loop` / `stop_scheduler` — Auto รันตามรอบ (`run_minute`, `start_hour`/`end_hour`) โดยเทียบเป็นช่องนาที จึงไม่พลาดรอบสุดท้ายจาก loop ที่ตื่นหลังวินาที 00; ถ้าวันที่ตั้งตามรอบงานอัตโนมัติ (`scheduler_follows_shift_dates`) เลยเวลาสิ้นสุดแล้ว Auto **ไม่หยุด** แต่รอวันที่เลื่อน (`date_roll_hour` 13:00) แล้วเริ่มรอบใหม่เอง ช่วงวันที่ที่ผู้ใช้เลือกเองยังจบตามเดิม; เหตุการณ์ Auto บันทึกลง runtime log ระดับ NOTICE (`log_scheduler_event`); `set_locked_date` เลื่อนวันที่ได้แม้ช่องถูกล็อกระหว่าง Auto
 - `run_once` / `run_process` / `worker_loop` / `watchdog` — คุมการรัน manual + กันค้าง; `run_generation` กันงานเก่ากลับมาเขียนผลหลังผู้ใช้หยุดแล้วเริ่มรอบใหม่
 - `run_token_healthcheck` / `notify_it_alert` / `notify_export_token_error` — ตรวจ token เชิงรุกแล้วแจ้ง Feishu
 - กล่อง `Live Log`, `Controller Logs` และ `JMS Logs` เป็น read-only: โปรแกรมปลดล็อกเฉพาะตอนเติม/ล้างข้อความแล้วล็อกกลับทันที ผู้ใช้ยังถมดำ เลื่อน และคัดลอกได้ แต่พิมพ์ทับ วาง หรือลบข้อความไม่ได้

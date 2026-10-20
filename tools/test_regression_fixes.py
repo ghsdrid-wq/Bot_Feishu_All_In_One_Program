@@ -941,6 +941,55 @@ class DailySummarySettingsPageTests(unittest.TestCase):
         self.assertEqual(section["send_raw_file"], "false")
 
 
+class SchedulerShiftRolloverTests(unittest.TestCase):
+    def _run_one_tick(self, follows_shift_dates: bool, now: datetime):
+        from datetime import date as _date
+        app = bot_main.App.__new__(bot_main.App)
+        app.config = configparser.RawConfigParser()
+        app.config["DWS_JMS"] = {"start_date": "2026-10-19", "end_date": "2026-10-20"}
+        app._auto_dates = (_date(2026, 10, 19), _date(2026, 10, 20))
+        app._dates_user_selected = not follows_shift_dates
+        app.scheduler_running = True
+        app.scheduler_run_minute = 0
+        app.last_run_minute = None
+        app.running = False
+        app.statuses, app.events, app.logs = [], [], []
+        app.get_scheduler_time_range = lambda: (datetime(2026, 10, 19, 15), datetime(2026, 10, 20, 12))
+        app.scheduler_slot_in_range = lambda moment: False
+        app.set_next_run_display = lambda *a, **k: None
+        app.set_ui_running = lambda active: None
+        app.set_status = lambda text, *a: app.statuses.append(text)
+        app.write_log = lambda msg, level=None: app.logs.append(msg)
+        app.log_scheduler_event = app.events.append
+
+        class FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now
+
+        def stop_after_one_tick(_seconds):
+            # หยุดลูปหลังรอบแรก (App ยังไม่ได้สร้าง Tk จึงห้ามเรียก getattr ที่ไม่มีอยู่)
+            app.__dict__["still_running_before_stop"] = app.scheduler_running
+            app.scheduler_running = False
+
+        with mock.patch.object(bot_main, "datetime", FrozenDatetime), \
+                mock.patch.object(bot_main.time, "sleep", side_effect=stop_after_one_tick):
+            app.scheduler_loop()
+        return app
+
+    def test_auto_waits_for_next_shift_when_dates_follow_the_shift(self) -> None:
+        app = self._run_one_tick(True, datetime(2026, 10, 20, 12, 20))
+        self.assertEqual(app.statuses, ["Auto Waiting"])
+        self.assertTrue(app.__dict__["still_running_before_stop"])  # ไม่หยุดเอง
+        self.assertTrue(any("Auto รอรอบงานใหม่" in e for e in app.events))
+
+    def test_auto_still_finishes_for_a_manually_selected_range(self) -> None:
+        app = self._run_one_tick(False, datetime(2026, 10, 20, 12, 20))
+        self.assertEqual(app.statuses, ["Auto Finished"])
+        self.assertNotIn("still_running_before_stop", app.__dict__)  # จบลูปเองก่อนถึง sleep
+        self.assertTrue(any("Auto finished" in e for e in app.events))
+
+
 class DailySummaryTimerTests(unittest.TestCase):
     def _app(self, last_sent=""):
         app = bot_main.App.__new__(bot_main.App)

@@ -62,9 +62,13 @@ def mask_sensitive(value):
     return text
 
 def write_runtime_log(level, message, source="APPLICATION", traceback_text=""):
-    """Persist operational warnings and errors without employee audit data."""
+    """Persist operational warnings and errors without employee audit data.
+
+    NOTICE is used for scheduler lifecycle events (Auto start/stop/finish) so a
+    stopped Auto can be explained afterwards; it never carries employee data.
+    """
     normalized_level = str(level or "ERROR").strip().upper()
-    if normalized_level not in {"WARNING", "WARN", "ERROR", "CRITICAL"}:
+    if normalized_level not in {"NOTICE", "WARNING", "WARN", "ERROR", "CRITICAL"}:
         return None
     if normalized_level == "WARN":
         normalized_level = "WARNING"

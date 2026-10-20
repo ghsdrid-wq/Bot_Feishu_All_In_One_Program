@@ -3883,8 +3883,8 @@ class App(ctk.CTk):
             return
 
         try:
-            self.start_date.set_date(want_start)
-            self.end_date.set_date(want_end)
+            self.set_locked_date(self.start_date, want_start)
+            self.set_locked_date(self.end_date, want_end)
         except Exception:
             return
         self._auto_dates = (want_start, want_end)
@@ -3893,6 +3893,18 @@ class App(ctk.CTk):
             self.write_log(
                 f"ตั้งช่วงวันที่ตามรอบงาน: {want_start} -> {want_end} ({reason})")
         self.save_config()
+
+    @staticmethod
+    def set_locked_date(widget, value):
+        """DateEntry เขียนค่าไม่ได้ตอนถูกล็อก (disabled ระหว่าง Auto) — ปลดชั่วคราวแล้วล็อกคืน"""
+        previous = str(widget.cget("state"))
+        if previous == "disabled":
+            widget.configure(state="readonly")
+        try:
+            widget.set_date(value)
+        finally:
+            if previous == "disabled":
+                widget.configure(state="disabled")
 
     def check_shift_date_roll(self):
         """เช็คทุกนาทีว่าข้ามจุดตัดวันหรือยัง — โปรแกรมเปิดค้างข้ามวันได้"""
@@ -6586,7 +6598,27 @@ class App(ctk.CTk):
             "JMS exports start at run time so report data reaches the configured cutoff",
             level="INFO")
         self.write_log(f"Next auto run: {self.format_next_scheduler_run(next_run)}")
+        start_dt, end_dt = self.get_scheduler_time_range()
+        self.log_scheduler_event(f"Auto started | run_range={start_dt:%Y-%m-%d %H:%M} -> {end_dt:%Y-%m-%d %H:%M}")
         threading.Thread(target=self.scheduler_loop, daemon=True).start()
+
+    def log_scheduler_event(self, message: str):
+        """เก็บเหตุการณ์ Auto ลงไฟล์ logs/<วันที่>-runtime.log — ดูย้อนหลังได้ว่าหยุดเพราะอะไร"""
+        try:
+            write_runtime_log("NOTICE", message, "SCHEDULER")
+        except Exception:
+            pass
+
+    def scheduler_follows_shift_dates(self) -> bool:
+        """วันที่เริ่ม/สิ้นสุดเป็นค่าที่โปรแกรมเลื่อนให้เองตามรอบงาน (ไม่ใช่ผู้ใช้เลือกเอง) ใช่ไหม"""
+        if getattr(self, "_dates_user_selected", False):
+            return False
+        auto = getattr(self, "_auto_dates", None)
+        if not auto:
+            return False
+        dws = self.config["DWS_JMS"] if "DWS_JMS" in self.config else {}
+        return (str(dws.get("start_date", "")).strip() == auto[0].isoformat()
+                and str(dws.get("end_date", "")).strip() == auto[1].isoformat())
 
     def scheduler_loop(self):
         while self.scheduler_running:
@@ -6601,6 +6633,20 @@ class App(ctk.CTk):
                     and self.scheduler_slot_in_range(now)
                 )
                 if now > range_end and not due_in_final_minute:
+                    if self.scheduler_follows_shift_dates():
+                        # วันที่ตั้งตามรอบงานอัตโนมัติ: ไม่หยุด รอให้วันที่เลื่อนเป็นรอบใหม่
+                        # (date_roll_hour, ค่าเริ่มต้น 13:00) แล้วรันต่อเองตามเวลาเริ่ม
+                        # ช่วงรอนี้ตัวตั้งเวลาสรุปรายวันยังทำงาน เพราะ Auto ยังเปิดอยู่
+                        if self.__dict__.get("_waiting_after_end") != range_end:
+                            self._waiting_after_end = range_end
+                            self.set_next_run_display(clear=True)
+                            self.set_status("Auto Waiting", "#88c0d0", "#3b4252")
+                            message = (f"รอบงานจบ {range_end:%Y-%m-%d %H:%M} — Auto รอรอบงานใหม่ "
+                                       "(วันที่จะเลื่อนให้เองแล้วเริ่มตามเวลาเริ่ม)")
+                            self.write_log(message)
+                            self.log_scheduler_event(message)
+                        time.sleep(1)
+                        continue
                     self.scheduler_running = False
                     self.set_next_run_display(clear=True)
                     self.set_ui_running(False)
@@ -6608,7 +6654,19 @@ class App(ctk.CTk):
                     self.write_log(
                         f"Auto scheduler finished at {range_end:%Y-%m-%d %H:%M}",
                         level="SUCCESS")
+                    self.log_scheduler_event(
+                        f"Auto finished at end of selected range {range_end:%Y-%m-%d %H:%M} "
+                        "(ช่วงวันที่ถูกเลือกเอง จึงไม่รอรอบใหม่)")
                     break
+                if self.__dict__.get("_waiting_after_end") is not None:
+                    # วันที่เลื่อนเป็นรอบใหม่แล้ว — กลับมารันตามปกติ
+                    self._waiting_after_end = None
+                    self.set_status("Auto Running", "#88c0d0", "#3b4252")
+                    self.set_next_run_display(self.get_next_scheduler_run_time(now))
+                    message = (f"Auto continues with new run_range {_range_start:%Y-%m-%d %H:%M} -> "
+                               f"{range_end:%Y-%m-%d %H:%M}")
+                    self.write_log(message)
+                    self.log_scheduler_event(message)
                 if now.minute == minute and self.last_run_minute != now_key:
                     if not self.scheduler_slot_in_range(now):
                         self.last_run_minute = now_key
@@ -6661,6 +6719,7 @@ class App(ctk.CTk):
             self.set_ui_running(False)
 
         self.write_log("Auto scheduler stopped", level="SUCCESS")
+        self.log_scheduler_event("Auto stopped by user (กดปุ่มหยุด Auto)")
 
         if self.running:
             self.set_status("Processing", "#ebcb8b", "#4a4433")
@@ -7162,6 +7221,9 @@ class App(ctk.CTk):
         return True
 
     def on_close(self):
+        self.log_scheduler_event(
+            "Program closed while Auto was running" if getattr(self, "scheduler_running", False)
+            else "Program closed")
         self.stop_all()
         self.worker_running = False
         self.destroy()

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Auto no longer stops after the final 12:00 run when the Start/End dates follow the shift automatically: it waits, the dates roll at `date_roll_hour` (13:00), and the next shift starts on its own at the start hour. A manually selected date range still finishes at its end. This keeps the Daily Summary timer (12:20) alive.
+- Fixed the shift date roll silently failing while Auto runs: the locked DateEntry ignored `set_date`, after which the program treated the dates as user-chosen and never rolled them again.
+- Auto start, user stop, finish, wait, continue, and program close are written to `logs/<date>-runtime.log` as NOTICE events so a stopped Auto can be explained afterwards.
+
 ## 2.1.11
 
 - Table sheets in the raw-data workbook get an orange tab colour so they stand apart from data sheets.
