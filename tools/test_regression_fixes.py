@@ -201,13 +201,23 @@ class SchedulerRegressionTests(unittest.TestCase):
             "run_minute": "1", "start_hour": "16", "end_hour": "23",
             "prefire_enabled": "true", "prefire_lead": "5",
         }
-        cfg["DWS_JMS"] = {
-            "start_date": "2026-09-27", "end_date": "2026-09-28",
-        }
         app.config = cfg
         app.ui_thread_id = -1
         app.last_run_minute = None
+        # วันที่ไม่ได้บันทึกใน config แล้ว — ช่วงวันที่ทดสอบคือช่วงที่เลือกเองในรอบเปิดโปรแกรมนี้
+        from datetime import date as _date
+        app._dates_user_selected = True
+        app._manual_dates = (_date(2026, 9, 27), _date(2026, 9, 28))
         return app
+
+    def test_scheduler_dates_follow_the_shift_and_are_not_saved(self) -> None:
+        from datetime import date as _date
+        app = self.make_app()
+        app._dates_user_selected = False
+        app.shift_date_range = lambda: (_date(2026, 10, 20), _date(2026, 10, 21))
+        start, end = app.get_scheduler_time_range()
+        self.assertEqual((start, end), (datetime(2026, 10, 20, 16), datetime(2026, 10, 21, 23)))
+        self.assertTrue(app.scheduler_follows_shift_dates())
 
     def test_scheduler_uses_full_datetime_range_across_midnight(self) -> None:
         app = self.make_app()

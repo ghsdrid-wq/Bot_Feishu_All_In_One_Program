@@ -1,11 +1,9 @@
 # Changelog
 
-## Unreleased
-
-- Added a "send late if the send time was missed" checkbox with a minutes field (`send_catch_up`, `send_late_minutes`, defaults on / 30). Unticked sends only on time, allowing a 5-minute grace for the 30-second timer and a finishing hourly run.
-
 ## 2.1.11
 
+- Scheduler Start/End dates are no longer saved to `config.ini`; only the hours are. Each launch starts from the current shift dates and keeps rolling them at `date_roll_hour`. A manually picked date range applies only until the program closes.
+- Added a "send late if the send time was missed" checkbox with a minutes field (`send_catch_up`, `send_late_minutes`, defaults on / 30). Unticked sends only on time, allowing a 5-minute grace for the 30-second timer and a finishing hourly run.
 - Automatic Daily Summary catch-up is limited to 30 minutes after the send time (`send_late_minutes`). Starting Auto later than that skips the automatic send, logs one warning, and asks the operator to press send-now.
 - Auto no longer stops after the final 12:00 run when the Start/End dates follow the shift automatically: it waits, the dates roll at `date_roll_hour` (13:00), and the next shift starts on its own at the start hour. A manually selected date range still finishes at its end. This keeps the Daily Summary timer (12:20) alive.
 - Fixed the shift date roll silently failing while Auto runs: the locked DateEntry ignored `set_date`, after which the program treated the dates as user-chosen and never rolled them again.

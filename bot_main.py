@@ -1562,8 +1562,10 @@ class App(ctk.CTk):
             ]:
                 if hasattr(self, _attr):
                     self.config["DWS_JMS"][_key] = str(getattr(self, _attr).get()).lower()
-            self.config["DWS_JMS"]["start_date"] = self.start_date.get()
-            self.config["DWS_JMS"]["end_date"] = self.end_date.get()
+            # วันที่ไม่บันทึก: ให้ตามรอบงานเองทุกครั้งที่เปิดโปรแกรม (บันทึกแค่เวลา)
+            # วันที่ที่เลือกเองในหน้าจอใช้ได้เฉพาะตอนโปรแกรมเปิดอยู่
+            self.config["DWS_JMS"]["start_date"] = ""
+            self.config["DWS_JMS"]["end_date"] = ""
             self.config["DWS_JMS"]["start_hour"] = self.start_hour.get()
             self.config["DWS_JMS"]["end_hour"] = self.end_hour.get()
         if hasattr(self, "send_as_card_var"):
@@ -1936,10 +1938,12 @@ class App(ctk.CTk):
             except Exception:
                 pass
 
-        dws = self.config["DWS_JMS"] if "DWS_JMS" in self.config else {}
         try:
-            start_date = datetime.strptime(dws.get("start_date", ""), "%Y-%m-%d").date()
-            end_date = datetime.strptime(dws.get("end_date", ""), "%Y-%m-%d").date()
+            manual = getattr(self, "_manual_dates", None)
+            if getattr(self, "_dates_user_selected", False) and manual:
+                start_date, end_date = manual
+            else:
+                start_date, end_date = self.shift_date_range()
             start_dt = datetime.combine(start_date, datetime.min.time()).replace(hour=start_hour)
             end_dt = datetime.combine(end_date, datetime.min.time()).replace(hour=end_hour)
             if start_dt > end_dt:
@@ -3828,20 +3832,9 @@ class App(ctk.CTk):
             exports = self.config["EXPORTS"] if "EXPORTS" in self.config else {}
             self.summary_header_var.set(as_bool(exports.get("add_summary_header", "false"), False))
 
-        saved_dates = False
-        try:
-            raw_start = dws.get("start_date", "").strip()
-            raw_end = dws.get("end_date", "").strip()
-            if raw_start and raw_end:
-                self.start_date.set_date(datetime.strptime(raw_start, "%Y-%m-%d").date())
-                self.end_date.set_date(datetime.strptime(raw_end, "%Y-%m-%d").date())
-                saved_dates = True
-        except (TypeError, ValueError):
-            saved_dates = False
-        want_start, want_end = self.shift_date_range()
-        self._dates_user_selected = bool(
-            saved_dates and (self.start_date.get_date(), self.end_date.get_date())
-            != (want_start, want_end))
+        # วันที่ไม่ได้บันทึกไว้ (บันทึกแค่เวลา) — เปิดโปรแกรมเมื่อไรก็เริ่มจากรอบงานปัจจุบัน
+        self._dates_user_selected = False
+        self._manual_dates = None
 
         # ตั้งวันตามรอบงานจริง ไม่ใช่ "วันนี้" เฉยๆ
         # (เปิดโปรแกรมตอนตี 3 รอบงานคือของเมื่อวาน ไม่ใช่ของวันนี้)
@@ -3851,8 +3844,15 @@ class App(ctk.CTk):
         self.reload_workbook_cards()
 
     def on_date_selected(self, _event=None):
-        """Remember that the operator deliberately selected a historical range."""
+        """Remember that the operator deliberately selected a historical range.
+
+        ใช้ได้เฉพาะตอนโปรแกรมเปิดอยู่ (ไม่บันทึกลง config) — เก็บไว้ให้ thread ตัวตั้งเวลาอ่านได้
+        """
         self._dates_user_selected = True
+        try:
+            self._manual_dates = (self.start_date.get_date(), self.end_date.get_date())
+        except Exception:
+            self._manual_dates = None
         self.save_config()
 
     def shift_date_range(self):
@@ -6645,15 +6645,8 @@ class App(ctk.CTk):
             pass
 
     def scheduler_follows_shift_dates(self) -> bool:
-        """วันที่เริ่ม/สิ้นสุดเป็นค่าที่โปรแกรมเลื่อนให้เองตามรอบงาน (ไม่ใช่ผู้ใช้เลือกเอง) ใช่ไหม"""
-        if getattr(self, "_dates_user_selected", False):
-            return False
-        auto = getattr(self, "_auto_dates", None)
-        if not auto:
-            return False
-        dws = self.config["DWS_JMS"] if "DWS_JMS" in self.config else {}
-        return (str(dws.get("start_date", "")).strip() == auto[0].isoformat()
-                and str(dws.get("end_date", "")).strip() == auto[1].isoformat())
+        """วันที่เริ่ม/สิ้นสุดตามรอบงานอัตโนมัติ (ไม่ได้เลือกช่วงวันที่เองในรอบเปิดโปรแกรมนี้) ใช่ไหม"""
+        return not getattr(self, "_dates_user_selected", False)
 
     def scheduler_loop(self):
         while self.scheduler_running:

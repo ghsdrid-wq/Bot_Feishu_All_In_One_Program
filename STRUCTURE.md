@@ -96,7 +96,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - `[PATH]`: `output_dir`
 - `[FEISHU]`: `app_id`, `app_secret`, `chat_id`, `verify_token`, `bot_port` (7000), `ngrok_url`, `auth_token` (JMS), `bot_name` (default `BOT_JMSKKN`)
 - `[TIME]`: `run_minute` (5), `start_hour` (15), `end_hour` (12)
-- `[DWS_JMS]`: `dws_url`, `dws_token`, `jms_token`, ชื่อไฟล์ export (`name_dws`, `name_auto`, `name_dwspda`, `name_realtime_db`), ช่วงวัน/เวลา (`start_date`, `end_date`, `start_hour`, `end_hour`), `raw_path`, `download_size`, flags `enabled` / `send_*_file`
+- `[DWS_JMS]`: `dws_url`, `dws_token`, `jms_token`, ชื่อไฟล์ export (`name_dws`, `name_auto`, `name_dwspda`, `name_realtime_db`), ช่วงเวลา (`start_hour`, `end_hour`; `start_date` / `end_date` ไม่บันทึกแล้ว — วันที่ตามรอบงานเสมอ เลือกเองได้เฉพาะตอนโปรแกรมเปิดอยู่), `raw_path`, `download_size`, flags `enabled` / `send_*_file`
 - `[DWS1]..[DWS9-11]`: `ip`, `port` ของเครื่อง agent (default subnet `10.30.32.x`, พอร์ต 4000/4001)
 - `[WORKBOOKS]` / `[EXPORTS]`: `items` — รายการไฟล์ Excel/ชีต ที่จัดการในหน้า Workbooks
 - หมายเหตุ: `core/config.ini` เป็นไฟล์แยกของ `core/*` (มี `[FEISHU]`, `[NGROK]`)
