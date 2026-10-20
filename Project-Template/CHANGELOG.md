@@ -1,11 +1,8 @@
 # Changelog
 
-## Unreleased
-
-- Automatic Daily Summary catch-up is limited to 30 minutes after the send time (`send_late_minutes`). Starting Auto later than that skips the automatic send, logs one warning, and asks the operator to press send-now.
-
 ## 2.1.11
 
+- Automatic Daily Summary catch-up is limited to 30 minutes after the send time (`send_late_minutes`). Starting Auto later than that skips the automatic send, logs one warning, and asks the operator to press send-now.
 - Auto no longer stops after the final 12:00 run when the Start/End dates follow the shift automatically: it waits, the dates roll at `date_roll_hour` (13:00), and the next shift starts on its own at the start hour. A manually selected date range still finishes at its end. This keeps the Daily Summary timer (12:20) alive.
 - Fixed the shift date roll silently failing while Auto runs: the locked DateEntry ignored `set_date`, after which the program treated the dates as user-chosen and never rolled them again.
 - Auto start, user stop, finish, wait, continue, and program close are written to `logs/<date>-runtime.log` as NOTICE events so a stopped Auto can be explained afterwards.
