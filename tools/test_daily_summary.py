@@ -164,7 +164,9 @@ class BuildTests(unittest.TestCase):
             }
             with mock.patch.object(ds, "read_autopack_throughput", return_value=throughput), \
                  mock.patch.object(ds, "render_autopack_table", return_value="autopack.png"):
-                result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None)
+                # ไม่ให้เทสต์ไปเปิดไฟล์ DWS1-8 บน network share จริง
+                with mock.patch.object(ds, "dws_station_paths", return_value={}):
+                    result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None)
 
             self.assertEqual(result["title"], "สรุปยอดประจำวันที่ 2026/10/18 เวลา 15.00-10.00")
             self.assertIn("เวลา 15.00-10.00", result["sections"][0].title)
@@ -186,7 +188,9 @@ class BuildTests(unittest.TestCase):
             with mock.patch("core.dws_mirror.plan", return_value=[]):
                 settings = ds.settings_from_config(config)
             window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
-            result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None)
+            # ไม่ให้เทสต์ไปเปิดไฟล์ DWS1-8 บน network share จริง
+            with mock.patch.object(ds, "dws_station_paths", return_value={}):
+                result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None)
 
             by_key = {s.key: s for s in result["sections"]}
             for key in ("auto_pda", "pda_bag", "dws_pda"):
@@ -240,7 +244,9 @@ class BuildTests(unittest.TestCase):
             with mock.patch("core.dws_mirror.plan", return_value=[]):
                 settings = ds.settings_from_config(config)
             window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
-            result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None)
+            # ไม่ให้เทสต์ไปเปิดไฟล์ DWS1-8 บน network share จริง
+            with mock.patch.object(ds, "dws_station_paths", return_value={}):
+                result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None)
             wb = openpyxl.load_workbook(result["raw_file"])
             self.assertEqual(wb["DWS PDA DATA"].max_row, 2)
 
@@ -262,6 +268,39 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(settings.dws_pda_file, os.path.join("C:/raw", "P.xlsx"))  # ช่องว่าง = ค่าเดิม
         self.assertEqual(settings.autopacking_folder, "D:/ap")
         self.assertEqual(ds.dws_station_paths(settings)["DWS3"], "D:/mine/dws3.xlsx")
+
+    def test_raw_workbook_has_tables_then_every_data_sheet_and_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _scan_file(os.path.join(tmp, "DWSXAUTOPDA.xlsx"), [
+                ("A1", "B1", "2026-10-18 15:10:00", "Autopacking_pda01"),
+                ("A2", "B2", "2026-10-18 15:20:00", "Someone Else"),  # ไม่ใช่เครื่องในตาราง
+            ])
+            _scan_file(os.path.join(tmp, "DWSPDA.xlsx"), [])
+            config = configparser.RawConfigParser()
+            config["PATH"] = {"output_dir": tmp, "autopacking_dir": os.path.join(tmp, "no-autopacking")}
+            config["DWS_JMS"] = {"raw_path": tmp}
+            ds.ensure_defaults(config)
+            config[ds.SECTION]["sections"] = "auto_pda,pda_bag"
+            config[ds.SECTION]["send_raw_file"] = "false"
+            config[ds.SECTION]["backup_dir"] = os.path.join(tmp, "backup")
+            with mock.patch("core.dws_mirror.plan", return_value=[]):
+                settings = ds.settings_from_config(config)
+            window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
+            with mock.patch.object(ds, "dws_station_paths", return_value={}):
+                result = ds.run(settings, window.start, window.end, log=lambda *a, **k: None,
+                                send_to_feishu=False, work_dir=os.path.join(tmp, "out"))
+            wb = openpyxl.load_workbook(result["raw_file"])
+            self.assertEqual(wb.sheetnames, [name for name, _ in ds.TABLE_SHEETS] + ds.DATA_SHEETS)
+            self.assertEqual(wb["AUTOPDA"]["A4"].value, "Autopacking_pda01")
+            self.assertEqual(wb["AUTO PDA DATA"].max_row, 2)    # เก็บเฉพาะเครื่องในตาราง
+            self.assertIsNone(wb["DWS PDA DATA"]["A1"].value)   # ไม่มีข้อมูล = ชีตว่าง
+            self.assertIsNone(wb["DWS3"]["A1"].value)
+            # ปุ่มสร้างตัวอย่าง (ไม่ส่ง) ไม่ backup
+            self.assertFalse(os.path.isdir(os.path.join(tmp, "backup")))
+            target = ds.backup_outputs(result, os.path.join(tmp, "backup"), window.business_date,
+                                       log=lambda *a, **k: None)
+            self.assertTrue(target.endswith("2026-10-18"))
+            self.assertIn(os.path.basename(result["raw_file"]), os.listdir(target))
 
     def test_post_content_keeps_section_order_and_marks_missing_images(self) -> None:
         sections = [ds.Section("a", "หัวข้อ A", "a.png"), ds.Section("b", "หัวข้อ B", None, "ไม่พบรูป")]

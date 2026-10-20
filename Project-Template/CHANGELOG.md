@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The raw-data workbook starts with the summary tables as sheets — AUTO (AutoPacking), DWS (DWSREALTIME), DWS+DWSPDA (DWSREALTIME followed by the PDA unloading table), AUTOPDA, กระสอบ, ERROR — using the same colours and numeric cells as the posted images, followed by every data sheet in a fixed order including DWS1–8 and DWS9-11. Data with no rows for the business day (missing or stale files) leaves its sheet empty, and DWS realtime sheets keep only rows inside the report window.
+- Added a daily backup folder: each send first copies the raw workbook and table images to `<backup_dir>/<business date>/`, so files survive a failed Feishu delivery. Preview builds are not backed up.
+
 ## 2.1.9
 
 - Added Daily Summary (`daily_summary.py`): one Feishu post with the manual-report headings and tables (AutoPacking, PDA 人工建包, red zip bags, PDA unloading scans, DWS, AutoPacking abnormal report), followed by one raw-data workbook with a sheet per source.

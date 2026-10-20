@@ -26,6 +26,8 @@ from __future__ import annotations
 import argparse
 import configparser
 import os
+import re
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -88,6 +90,8 @@ DEFAULTS: Dict[str, str] = {
     # Feishu รับไฟล์แนบไม่เกิน 30MB — เกินจะบีบ zip, zip ยังเกินจะไม่ส่งไฟล์
     "raw_file_max_mb": "30",
     "raw_file_name": "ข้อมูลดิบ สรุปยอด {date}.xlsx",
+    # ว่าง = ไม่ backup / ใส่โฟลเดอร์ = ทุกครั้งที่ส่งจะเก็บไฟล์ดิบ + รูปตารางไว้ที่ <โฟลเดอร์>/<วันที่รอบงาน>/
+    "backup_dir": "",
     # true = ใช้ path ไฟล์ดิบแยกจากหน้า ตั้งค่า (ช่องที่ว่างยังใช้ค่าจากหน้า ตั้งค่า)
     "custom_paths": "false",
     "path_autopacking_dir": "",
@@ -483,13 +487,16 @@ class Grid:
 
 
 def render_grid(grid: Grid, out_path: str, font_size: int = 14, scale: int = 2,
-                max_tall_ratio: Optional[float] = None, margin: int = 6) -> str:
+                max_tall_ratio: Optional[float] = None, margin: int = 6,
+                capture: Optional[list] = None) -> str:
     """max_tall_ratio: ถ้ารูปสูงเกิน (สูง/กว้าง) เท่านี้ จะเติมพื้นขาวด้านขวาให้กว้างขึ้น
     เพราะ Feishu ตัดรูปที่สูงยาวทิ้งตอนแสดงใน post — ตารางยังอยู่ชิดซ้ายเหมือนเดิม
 
     เส้นตารางเป็นเส้นเดียวสีเข้มหนา 1 พิกเซลแบบเส้น thin ของ Excel — วาดสีพื้นทุกช่องก่อน
     แล้วค่อยวาดเส้น จะได้ไม่มีเส้นของสองช่องซ้อนกันจนหนา และเว้นขอบขาวรอบรูป
     """
+    if capture is not None:
+        capture.append(grid)
     f = fonts()
     size = font_size * scale
     edge = margin * scale
@@ -557,7 +564,7 @@ def _num(value: int, dash_zero: bool = False) -> str:
 
 def render_hourly_table(counts: Dict[str, Dict[int, int]], window: Window,
                         out_path: str, name_header: str = "พนักงานสแกน",
-                        bold_values: bool = False) -> str:
+                        bold_values: bool = False, capture: Optional[list] = None) -> str:
     """ตารางรายชั่วโมงแบบหน้า AUTO PDA / DWS PDA ในไฟล์ manual
 
     ฟอนต์ Microsoft JhengHei เหมือนชีตต้นฉบับ (AUTO PDA ตัวเลขตัวหนา, DWS PDA ตัวปกติ)
@@ -625,10 +632,10 @@ def render_hourly_table(counts: Dict[str, Dict[int, int]], window: Window,
     for idx in range(1, len(columns)):
         total_row.append(Cell(_num(column_totals[idx], True), FILL_TOTAL_ROW, True))
     grid.add_row(20, total_row)
-    return render_grid(grid, out_path, font_size=14)
+    return render_grid(grid, out_path, font_size=14, capture=capture)
 
 
-def render_bag_table(counts: Dict[str, int], out_path: str) -> str:
+def render_bag_table(counts: Dict[str, int], out_path: str, capture: Optional[list] = None) -> str:
     """ตารางกระสอบซิปแดงแบบหน้า PDA BAG ในไฟล์ manual (แถวยาวเรียงลงมา หัว/ผลรวมสีเหลือง)
 
     ขนาดเท่ารูปต้นฉบับ (~530 x 1,410 px, สูง:กว้าง ~2.7) — Feishu ตัดท้ายรูปใน post
@@ -640,7 +647,7 @@ def render_bag_table(counts: Dict[str, int], out_path: str) -> str:
         grid.add_row(30, [Cell(name, WHITE, False, "left"), Cell(str(value), WHITE, False, "right")])
     grid.add_row(30, [Cell("ผลรวมทั้งหมด", FILL_YELLOW, False, "left"),
                       Cell(str(sum(counts.values())), FILL_YELLOW, False, "right")])
-    return render_grid(grid, out_path, font_size=20, scale=1, margin=2)
+    return render_grid(grid, out_path, font_size=20, scale=1, margin=2, capture=capture)
 
 
 # =====================================================================
@@ -736,7 +743,7 @@ def dws_summary_rows(table: DwsTable) -> Dict[str, Dict[str, Any]]:
     return {"total": total_row, "pcs": pcs_row}
 
 
-def render_dws_table(table: DwsTable, out_path: str) -> str:
+def render_dws_table(table: DwsTable, out_path: str, capture: Optional[list] = None) -> str:
     window = table.window
     hours_a, hours_b = _shift_hours(window, "A"), _shift_hours(window, "B")
     columns: List[Tuple[str, Any]] = [("name", None)] + [("hour", h) for h in hours_a] + [("A", None)]
@@ -796,7 +803,7 @@ def render_dws_table(table: DwsTable, out_path: str) -> str:
         else:
             row.append(Cell("", WHITE))
     grid.add_row(20, row)
-    return render_grid(grid, out_path, font_size=13)
+    return render_grid(grid, out_path, font_size=13, capture=capture)
 
 
 def dws_station_paths(settings: "Settings") -> Dict[str, str]:
@@ -985,7 +992,7 @@ def autopack_summary(table: AutopackTable) -> Dict[str, Any]:
     return out
 
 
-def render_autopack_table(table: AutopackTable, out_path: str) -> str:
+def render_autopack_table(table: AutopackTable, out_path: str, capture: Optional[list] = None) -> str:
     window = table.window
     summary = autopack_summary(table)
     hours = window.hours
@@ -1118,7 +1125,7 @@ def render_autopack_table(table: AutopackTable, out_path: str) -> str:
     row[c_b_avg] = Cell(_num(round(b_avg)), FILL_AP_B, align="right")
     r = grid.add_row(32, row)
     grid.merges.append((r, 0, r, 1))
-    return render_grid(grid, out_path, font_size=13)
+    return render_grid(grid, out_path, font_size=13, capture=capture)
 
 
 # Sort Source ในไฟล์รายชั่วโมงเป็นภาษาจีน ส่วน Abnormal Detail เป็นภาษาอังกฤษ
@@ -1226,7 +1233,8 @@ def abnormal_table_values(counts: Dict[str, int]) -> Dict[str, Any]:
             "total": total, "total_pct": pct_no_plan + pct_max}
 
 
-def render_abnormal_table(counts: Dict[str, int], business_date: date, out_path: str) -> str:
+def render_abnormal_table(counts: Dict[str, int], business_date: date, out_path: str,
+                          capture: Optional[list] = None) -> str:
     """ตารางแบบในไฟล์ "รายการความผิดปกติ Autopacking KKN" (O5:Q11)"""
     stamp = business_date.isoformat()
     values = abnormal_table_values(counts)
@@ -1244,7 +1252,7 @@ def render_abnormal_table(counts: Dict[str, int], business_date: date, out_path:
                       Cell(_num(values["total"]), FILL_YELLOW, True),
                       Cell(f"{values['total_pct'] * 100:.0f}%" if values["total"] else "-",
                            FILL_YELLOW, color=TEXT_RED, size=19)])
-    return render_grid(grid, out_path, font_size=15)
+    return render_grid(grid, out_path, font_size=15, capture=capture)
 
 
 # =====================================================================
@@ -1256,6 +1264,122 @@ class RawSheet:
     name: str
     header: List[Any]
     rows: List[list]
+    grids: List["Grid"] = field(default_factory=list)  # มีค่า = ชีตตารางสรุป (สี/ตัวเลขเหมือนรูปที่ส่ง)
+
+
+# ลำดับชีตในไฟล์ดิบ: ตารางสรุปก่อน แล้วตามด้วย data ทุกไฟล์ (ไม่มีข้อมูล = ชีตว่าง)
+# (ชื่อชีต, หัวข้อที่เอาตารางมาวางเรียงลงมาในชีตนั้น)
+TABLE_SHEETS = [("AUTO", ["autopacking"]), ("DWS", ["dws"]), ("DWS+DWSPDA", ["dws", "dws_pda"]),
+                ("AUTOPDA", ["auto_pda"]), ("กระสอบ", ["pda_bag"]), ("ERROR", ["abnormal"])]
+TABLE_GAP_ROWS = 2  # แถวว่างคั่นระหว่างตารางที่อยู่ชีตเดียวกัน
+DATA_SHEETS = (["AUTOPACKING Throughput", "AUTOPACKING Abnormal", "AUTO PDA DATA", "DWS PDA DATA",
+                "PDA BAG DATA"] + [f"DWS{i}" for i in range(1, 9)] + ["DWS9-11"])
+FONT_NAMES = {"yahei": "Microsoft YaHei", "jhenghei": "Microsoft JhengHei", "tahoma": "Tahoma"}
+
+
+def window_file_sheet(name: str, path: str, time_column: str, window: "Window",
+                      log: LogFunc = _noop) -> RawSheet:
+    """ชีต data ของไฟล์ทั้งไฟล์ แต่เก็บเฉพาะแถวที่อยู่ในรอบ — ไฟล์ไม่มี/ข้อมูลเก่า = ชีตว่าง"""
+    if not path or not os.path.isfile(path):
+        return RawSheet(name, [], [])
+    try:
+        rows = read_sheet(path)
+    except Exception as exc:
+        _say(log, f"Daily summary: อ่าน {name} ไม่ได้ — {exc}", "WARN")
+        return RawSheet(name, [], [])
+    if not rows:
+        return RawSheet(name, [], [])
+    header = list(rows[0])
+    try:
+        i_time = _find_column(header, (time_column,), path)
+    except ValueError:
+        return RawSheet(name, header, [])
+    kept = []
+    for row in rows[1:]:
+        moment = parse_dt(row[i_time]) if i_time < len(row) else None
+        if moment is not None and window.slot_of(moment) is not None:
+            kept.append(list(row))
+    return RawSheet(name, header, kept)
+
+
+def _excel_cell_value(text: str) -> Tuple[Any, Optional[str]]:
+    """ข้อความในตาราง -> ค่าที่ Excel คำนวณต่อได้ ("1,234" -> 1234, "17.40%" -> 0.174)"""
+    value = text.strip()
+    if re.fullmatch(r"-?\d[\d,]*", value):
+        return int(value.replace(",", "")), ("#,##0" if "," in value else "0")
+    match = re.fullmatch(r"(-?\d+(?:\.(\d+))?)%", value)
+    if match:
+        decimals = len(match.group(2) or "")
+        return float(match.group(1)) / 100, ("0." + "0" * decimals + "%") if decimals else "0%"
+    return text, None
+
+
+def write_grid_sheets(workbook, ws, grids: Sequence["Grid"]) -> None:
+    """วางหลายตารางเรียงลงมาในชีตเดียว (เว้น TABLE_GAP_ROWS แถว) ความกว้างคอลัมน์ใช้ค่ามากสุด"""
+    widths: Dict[int, int] = {}
+    for grid in grids:
+        for c, width in enumerate(grid.col_widths):
+            widths[c] = max(widths.get(c, 0), width)
+    for c, width in widths.items():
+        ws.set_column(c, c, max(4, width / 7))
+    formats: Dict[Tuple, Any] = {}
+    row = 0
+    for grid in grids:
+        write_grid_sheet(workbook, ws, grid, row, formats)
+        row += len(grid.rows) + TABLE_GAP_ROWS
+
+
+def write_grid_sheet(workbook, ws, grid: "Grid", row_offset: int = 0,
+                     formats: Optional[Dict[Tuple, Any]] = None) -> None:
+    """เขียนตารางสรุปลงชีตตามลำดับแถว (ต้องเรียงแถวเพราะใช้ constant_memory)
+
+    เซลล์ที่ผสานข้ามแถวทำแบบผสานจริงไม่ได้ในโหมดนี้ จึงลงสีเดียวกันทั้งช่วง
+    ใส่ข้อความแถวกลาง และไม่ตีเส้นคั่นภายในช่วง ให้หน้าตาเหมือนผสาน
+    """
+    formats = {} if formats is None else formats
+
+    def fmt(cell: "Cell", num: Optional[str], top: int = 1, bottom: int = 1):
+        key = (cell.fill, cell.bold, cell.color, cell.align, num, "\n" in cell.text,
+               cell.size, cell.family or grid.family, top, bottom)
+        if key not in formats:
+            spec = {
+                "bg_color": "#%02X%02X%02X" % cell.fill, "bold": cell.bold,
+                "font_color": "#%02X%02X%02X" % cell.color, "align": cell.align, "valign": "vcenter",
+                "font_name": FONT_NAMES.get(cell.family or grid.family, "Microsoft YaHei"),
+                "font_size": round(cell.size * 0.75) if cell.size else 11,
+                "left": 1, "right": 1, "top": top, "bottom": bottom, "text_wrap": "\n" in cell.text,
+            }
+            if num:
+                spec["num_format"] = num
+            formats[key] = workbook.add_format(spec)
+        return formats[key]
+
+    covered: Dict[Tuple[int, int], Tuple[int, int, int, int]] = {}
+    for r1, c1, r2, c2 in grid.merges:
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                covered[(r, c)] = (r1, c1, r2, c2)
+    for r, (height, cells) in enumerate(grid.rows):
+        ws.set_row(row_offset + r, height * 0.75 * 1.2)
+        for c in range(len(grid.col_widths)):
+            area = covered.get((r, c))
+            if area and area[1] != c:
+                continue  # เขียนพร้อมช่องซ้ายสุดของช่วงแล้ว
+            r1, c1, r2, c2 = area if area else (r, c, r, c)
+            cell = grid.rows[r1][1][c1] if c1 < len(grid.rows[r1][1]) else None
+            cell = cell or Cell()
+            show = r == r1 + (r2 - r1) // 2  # ข้อความอยู่แถวกลางของช่วง
+            value, num = _excel_cell_value(cell.text) if show and cell.text else ("", None)
+            style = fmt(cell, num, top=1 if r == r1 else 0, bottom=1 if r == r2 else 0)
+            out_row = row_offset + r
+            if c2 > c1:
+                ws.merge_range(out_row, c1, out_row, c2, value, style)
+            elif isinstance(value, (int, float)):
+                ws.write_number(out_row, c, value, style)
+            elif value != "":
+                ws.write_string(out_row, c, str(value), style)
+            else:
+                ws.write_blank(out_row, c, None, style)
 
 
 def autopacking_folder(raw_dir: str, business_date: date) -> Optional[str]:
@@ -1322,20 +1446,6 @@ def autopacking_sheets(raw_dir: str, window: Window, file_hour_offset: int = -1,
     return [sheet for sheet in (throughput, abnormal) if sheet.header]
 
 
-def whole_file_sheet(name: str, path: str, log: LogFunc = _noop) -> Optional[RawSheet]:
-    if not path or not os.path.isfile(path):
-        _say(log, f"Daily summary: ไม่พบไฟล์ {name} ({path}) — ข้าม sheet นี้", "WARN")
-        return None
-    try:
-        rows = read_sheet(path)
-    except Exception as exc:
-        _say(log, f"Daily summary: อ่าน {name} ไม่ได้ — {exc}", "WARN")
-        return None
-    if not rows:
-        return RawSheet(name, [], [])
-    return RawSheet(name, list(rows[0]), [list(r) for r in rows[1:]])
-
-
 def _cell_value(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M:%S")
@@ -1366,6 +1476,11 @@ def write_raw_workbook(path: str, sheets: Sequence[RawSheet]) -> str:
                 title = title[:28] + f"_{len(used)}"
             used.add(title)
             ws = workbook.add_worksheet(title)
+            if sheet.grids:
+                write_grid_sheets(workbook, ws, sheet.grids)
+                continue
+            if not sheet.header or not sheet.rows:
+                continue  # ไม่มีไฟล์/ไม่มีข้อมูลของรอบนี้ (ข้อมูลไม่อัปเดต) = ชีตว่าง
             ws.write_row(0, 0, [_cell_value(v) for v in sheet.header], bold)
             ws.freeze_panes(1, 0)
             for i, row in enumerate(sheet.rows, start=1):
@@ -1518,6 +1633,7 @@ class Section:
     title: str
     image: Optional[str] = None
     note: str = ""
+    grid: Optional["Grid"] = None  # ตารางที่วาดรูปนี้ — เขียนลงไฟล์ดิบเป็นชีตตารางด้วย
 
 
 def _fresh_image(path: str, max_age_minutes: int, run_started: Optional[datetime]) -> Tuple[bool, str]:
@@ -1605,6 +1721,7 @@ def build(settings: Settings, window: Window, work_dir: str,
         if not is_running():
             break
         section = Section(key, title(key) if f"title_{key}" in DEFAULTS else key)
+        captured: list = []
         try:
             if settings.opt(f"{key}_image"):
                 path = os.path.join(settings.output_dir, settings.opt(f"{key}_image"))
@@ -1620,21 +1737,22 @@ def build(settings: Settings, window: Window, work_dir: str,
                 else:
                     section.image = render_autopack_table(
                         autopack_feeder_counts(throughput, window),
-                        os.path.join(work_dir, f"AUTOPACKING_{stamp}.png"))
+                        os.path.join(work_dir, f"AUTOPACKING_{stamp}.png"), capture=captured)
             elif key == "dws":
                 table, dws_warnings = build_dws_table(settings, window, load_dws_pda(), log)
                 warnings.extend(f"dws: {w}" for w in dws_warnings)
-                section.image = render_dws_table(table, os.path.join(work_dir, f"DWS_{stamp}.png"))
+                section.image = render_dws_table(table, os.path.join(work_dir, f"DWS_{stamp}.png"),
+                                                 capture=captured)
             elif key == "auto_pda":
                 names = machine_names(settings.opt("auto_pda_prefix"), settings.opt_int("auto_pda_count"))
                 section.image = render_hourly_table(
                     hourly_counts(load_auto(), names, window), window,
-                    os.path.join(work_dir, f"AUTO_PDA_{stamp}.png"), bold_values=True)
+                    os.path.join(work_dir, f"AUTO_PDA_{stamp}.png"), bold_values=True, capture=captured)
             elif key == "pda_bag":
                 names = machine_names(settings.opt("auto_pda_prefix"), settings.opt_int("auto_pda_count"))
                 section.image = render_bag_table(
                     bag_counts(load_auto(), names),
-                    os.path.join(work_dir, f"PDA_BAG_{stamp}.png"))
+                    os.path.join(work_dir, f"PDA_BAG_{stamp}.png"), capture=captured)
             elif key == "abnormal":
                 if settings.abnormal_file:
                     abnormal_from_detail = True
@@ -1658,12 +1776,12 @@ def build(settings: Settings, window: Window, work_dir: str,
                         _say(log, f"Daily summary: {warnings[-1]}", "WARN")
                     section.image = render_abnormal_table(
                         abnormal.counts, window.business_date,
-                        os.path.join(work_dir, f"ABNORMAL_{stamp}.png"))
+                        os.path.join(work_dir, f"ABNORMAL_{stamp}.png"), capture=captured)
             elif key == "dws_pda":
                 names = machine_names(settings.opt("dws_pda_prefix"), settings.opt_int("dws_pda_count"))
                 section.image = render_hourly_table(
                     hourly_counts(load_dws_pda(), names, window), window,
-                    os.path.join(work_dir, f"DWS_PDA_{stamp}.png"))
+                    os.path.join(work_dir, f"DWS_PDA_{stamp}.png"), capture=captured)
             else:
                 section.note = f"ไม่รู้จักหัวข้อ '{key}'"
         except Exception as exc:
@@ -1671,45 +1789,52 @@ def build(settings: Settings, window: Window, work_dir: str,
         if section.note:
             warnings.append(f"{key}: {section.note}")
             _say(log, f"Daily summary: {key} — {section.note}", "WARN")
+        section.grid = captured[-1] if captured else None
         sections.append(section)
 
     raw_file: Optional[str] = None
-    if settings.opt_bool("send_raw_file") and is_running():
+    want_raw = settings.opt_bool("send_raw_file") or bool(settings.opt("backup_dir"))
+    if want_raw and is_running():
         _say(log, "Daily summary: รวมไฟล์ข้อมูลดิบ", "START")
-        if "autopacking" in wanted or ("abnormal" in wanted and not abnormal_from_detail):
-            raw_sheets += load_ap_sheets()
+        by_key = {sec.key: sec for sec in sections}
+        for name, keys in TABLE_SHEETS:
+            grids = [by_key[key].grid for key in keys if key in by_key and by_key[key].grid is not None]
+            raw_sheets.append(RawSheet(name, [], [], grids=grids))
+
+        data: Dict[str, RawSheet] = {}
+        try:
+            for sheet in load_ap_sheets():
+                data[sheet.name] = sheet
+        except Exception as exc:
+            _say(log, f"Daily summary: อ่านไฟล์ AutoPacking ไม่ได้ — {exc}", "WARN")
         # ชีต PDA เก็บเฉพาะเครื่องที่แสดงในตาราง (ตัดพนักงาน/WCS ที่ไม่เกี่ยวออก ไฟล์เล็กลงมาก)
         auto_names = {n.lower() for n in machine_names(settings.opt("auto_pda_prefix"),
                                                        settings.opt_int("auto_pda_count"))}
         dws_names = {n.lower() for n in machine_names(settings.opt("dws_pda_prefix"),
                                                       settings.opt_int("dws_pda_count"))}
-        if "auto_pda" in wanted or "pda_bag" in wanted:
-            try:
-                rows = load_auto()
-                raw_sheets.append(RawSheet("AUTO PDA DATA", RAW_SCAN_HEADER,
-                                           [r.as_list() for r in rows if r.scanner.lower() in auto_names]))
-                # ตัดกระสอบซ้ำทั้งไฟล์ก่อน (เหมือน query) แล้วค่อยกรองเครื่อง ยอดจึงตรงกับตาราง
-                raw_sheets.append(RawSheet("PDA BAG DATA", RAW_SCAN_HEADER,
-                                           [r.as_list() for r in unique_bag_rows(rows)
-                                            if r.scanner.lower() in auto_names]))
-            except Exception as exc:
-                warnings.append(f"raw AUTO PDA: {exc}")
-        if "dws_pda" in wanted:
-            try:
-                raw_sheets.append(RawSheet("DWS PDA DATA", RAW_SCAN_HEADER,
-                                           [r.as_list() for r in load_dws_pda() if r.scanner.lower() in dws_names]))
-            except Exception as exc:
-                warnings.append(f"raw DWS PDA: {exc}")
-        if "dws" in wanted:
-            for station, path in dws_station_paths(settings).items():
-                sheet = whole_file_sheet(station, path, log)
-                if sheet is not None:
-                    raw_sheets.append(sheet)
-            sheet = whole_file_sheet("DWS9-11", settings.dws911_file, log)
-            if sheet is not None:
-                raw_sheets.append(sheet)
-        if abnormal_from_detail and abnormal is not None and abnormal.header:
-            raw_sheets.append(RawSheet("AUTOPACKING Error", abnormal.header, abnormal.rows))
+        try:
+            rows = load_auto()
+            data["AUTO PDA DATA"] = RawSheet("AUTO PDA DATA", RAW_SCAN_HEADER,
+                                             [r.as_list() for r in rows if r.scanner.lower() in auto_names])
+            # ตัดกระสอบซ้ำทั้งไฟล์ก่อน (เหมือน query) แล้วค่อยกรองเครื่อง ยอดจึงตรงกับตาราง
+            data["PDA BAG DATA"] = RawSheet("PDA BAG DATA", RAW_SCAN_HEADER,
+                                            [r.as_list() for r in unique_bag_rows(rows)
+                                             if r.scanner.lower() in auto_names])
+        except Exception as exc:
+            _say(log, f"Daily summary: ไม่มีข้อมูล AUTO PDA — {exc}", "WARN")
+        try:
+            data["DWS PDA DATA"] = RawSheet("DWS PDA DATA", RAW_SCAN_HEADER,
+                                            [r.as_list() for r in load_dws_pda() if r.scanner.lower() in dws_names])
+        except Exception as exc:
+            _say(log, f"Daily summary: ไม่มีข้อมูล DWS PDA — {exc}", "WARN")
+        for station, path in dws_station_paths(settings).items():
+            data[station] = window_file_sheet(station, path, "出秤时间", window, log)
+        data["DWS9-11"] = window_file_sheet("DWS9-11", settings.dws911_file, "扫描时间", window, log)
+        for name in DATA_SHEETS:
+            sheet = data.get(name) or RawSheet(name, [], [])
+            raw_sheets.append(sheet)
+            if name == "AUTOPACKING Abnormal" and abnormal_from_detail and abnormal is not None:
+                raw_sheets.append(RawSheet("AUTOPACKING Error", abnormal.header, abnormal.rows))
         if raw_sheets and is_running():
             name = settings.opt("raw_file_name").format(date=stamp)
             raw_file = write_raw_workbook(os.path.join(work_dir, name), raw_sheets)
@@ -1788,7 +1913,7 @@ def send(settings: Settings, result: Dict[str, Any], log: LogFunc = _noop,
     _say(log, "Daily summary: ส่งข้อความสรุปแล้ว", "SUCCESS")
 
     raw_file = result.get("raw_file")
-    if raw_file and is_running():
+    if raw_file and settings.opt_bool("send_raw_file") and is_running():
         upload_path = fit_for_upload(raw_file, float(settings.opt("raw_file_max_mb") or 30), log)
         if upload_path:
             file_type = "xls" if upload_path.lower().endswith(".xlsx") else "stream"
@@ -1798,6 +1923,21 @@ def send(settings: Settings, result: Dict[str, Any], log: LogFunc = _noop,
             _say(log, "Daily summary: ส่งไฟล์ข้อมูลดิบแล้ว", "SUCCESS")
 
 
+def backup_outputs(result: Dict[str, Any], backup_dir: str, business_date: date,
+                   log: LogFunc = _noop) -> str:
+    """เก็บไฟล์ดิบกับรูปตารางของรอบนี้ไว้ที่ <backup_dir>/<YYYY-MM-DD>/ (ทับไฟล์ชื่อเดิมของวันเดียวกัน)"""
+    target = os.path.join(backup_dir, business_date.isoformat())
+    os.makedirs(target, exist_ok=True)
+    files = [result.get("raw_file")] + [sec.image for sec in result.get("sections", [])]
+    copied = 0
+    for path in files:
+        if path and os.path.isfile(path):
+            shutil.copy2(path, os.path.join(target, os.path.basename(path)))
+            copied += 1
+    _say(log, f"Daily summary: backup {copied} ไฟล์ไว้ที่ {target}", "SUCCESS")
+    return target
+
+
 def run(settings: Settings, start: datetime, end: datetime, log: LogFunc = _noop,
         is_running: RunFunc = _always, run_started: Optional[datetime] = None,
         send_to_feishu: bool = True, work_dir: Optional[str] = None) -> Dict[str, Any]:
@@ -1805,6 +1945,13 @@ def run(settings: Settings, start: datetime, end: datetime, log: LogFunc = _noop
     work_dir = work_dir or os.path.join(settings.output_dir or settings.raw_dir or ".", "DailySummary")
     _say(log, f"Daily summary: รอบ {window.start:%Y-%m-%d %H:%M} -> {window.end:%Y-%m-%d %H:%M}", "START")
     result = build(settings, window, work_dir, log=log, is_running=is_running, run_started=run_started)
+    # backup ก่อนส่ง — ส่ง Feishu ไม่สำเร็จไฟล์ก็ยังเก็บไว้ (ปุ่มสร้างตัวอย่างไม่ backup)
+    if send_to_feishu and settings.opt("backup_dir") and is_running():
+        try:
+            result["backup_dir"] = backup_outputs(result, settings.opt("backup_dir"), window.business_date, log)
+        except Exception as exc:
+            result["warnings"].append(f"backup: {exc}")
+            _say(log, f"Daily summary: backup ไม่สำเร็จ — {exc}", "WARN")
     if send_to_feishu and is_running():
         if not any(s.image for s in result["sections"]):
             raise Exception("Daily summary: ไม่มีตารางให้ส่งเลย — " + "; ".join(result["warnings"]))
