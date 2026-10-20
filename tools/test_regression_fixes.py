@@ -1022,6 +1022,20 @@ class DailySummaryTimerTests(unittest.TestCase):
         app.daily_summary_tick()
         self.assertEqual(len(app.calls), 1)  # ครั้งต่อไปต้องรอ 10 นาที
 
+    def test_started_too_late_skips_and_notifies_once(self) -> None:
+        app = self._app()
+        app.events, app.statuses = [], []
+        app.log_scheduler_event = app.events.append
+        app.ds_status = object()
+        app.set_daily_summary_status = lambda text, color=None: app.statuses.append(text)
+        # เปิด Auto ตอน 12:59 แต่ตั้งส่ง 12:20 -> เกิน 30 นาที ไม่ส่งเอง
+        app.get_report_time_range = lambda: ("2026-10-19 16:00:00", "2026-10-20 12:59:00")
+        app.daily_summary_tick()
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])
+        self.assertEqual(len(app.events), 1)  # แจ้งครั้งเดียว
+        self.assertEqual(len(app.statuses), 1)
+
     def test_already_sent_or_auto_off_does_nothing(self) -> None:
         app = self._app(last_sent="2026-10-18")
         app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:30:00")

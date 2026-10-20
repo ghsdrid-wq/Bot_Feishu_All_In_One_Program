@@ -84,6 +84,8 @@ DEFAULTS: Dict[str, str] = {
     # (ปุ่ม "ส่งสรุปตอนนี้" ไม่สนเวลานี้)
     "auto_send": "true",
     "send_time": "12:00",
+    # ส่งตามได้ไม่เกินกี่นาทีหลังเวลาส่ง (เช่น เปิด Auto ช้า) — เกินนี้ต้องกด "ส่งสรุปตอนนี้" เอง
+    "send_late_minutes": "30",
     # วันที่รอบงาน (YYYY-MM-DD) ที่ส่งสำเร็จล่าสุด — บอทเขียนเอง กันส่งซ้ำ
     "last_sent_date": "",
     "send_raw_file": "true",
@@ -1871,15 +1873,24 @@ def scheduled_send_at(report_start: datetime, send_time: str) -> datetime:
     return send_at
 
 
+LATE_REASON = "เลยเวลาส่ง"
+
+
 def due_to_send(report_start: datetime, report_end: datetime, send_time: str,
-                last_sent_date: str) -> Tuple[bool, str]:
-    """รอบนี้ต้องส่งสรุปไหม คืน (ส่งไหม, เหตุผล)"""
+                last_sent_date: str, max_late_minutes: Optional[int] = None) -> Tuple[bool, str]:
+    """รอบนี้ต้องส่งสรุปไหม คืน (ส่งไหม, เหตุผล)
+
+    max_late_minutes: ส่งตามได้ไม่เกินกี่นาทีหลังเวลาส่ง (None = ส่งตามได้ทั้งรอบงาน)
+    """
     business_date = report_start.date().isoformat()
     send_at = scheduled_send_at(report_start, send_time)
     if str(last_sent_date or "").strip() == business_date:
         return False, f"ส่งสรุปของวันที่ {business_date} ไปแล้ว"
     if report_end < send_at:
         return False, f"ยังไม่ถึงเวลาส่ง ({send_at:%Y-%m-%d %H:%M})"
+    if max_late_minutes is not None and report_end > send_at + timedelta(minutes=max_late_minutes):
+        return False, (f"{LATE_REASON} {send_at:%H:%M} เกิน {max_late_minutes} นาที "
+                       f"— สรุปของวันที่ {business_date} ต้องกด \"ส่งสรุปตอนนี้\" เอง")
     return True, f"ถึงเวลาส่ง ({send_at:%Y-%m-%d %H:%M})"
 
 

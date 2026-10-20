@@ -3298,7 +3298,7 @@ class App(ctk.CTk):
         self.ds_last_sent_label = ctk.CTkLabel(send, text="", text_color="#7b8496", anchor="w")
         self.ds_last_sent_label.grid(row=20, column=2, padx=(4, 16), pady=6, sticky="w")
         ctk.CTkLabel(send, text="ส่งวันละครั้งเมื่อถึงเวลานี้ — ตั้งนาทีให้หลังรอบรายชั่วโมงดึงไฟล์ดิบเสร็จ "
-                                "(ถ้ารอบรายชั่วโมงยังรันอยู่ จะรอให้เสร็จก่อนค่อยส่ง)",
+                                "(รอบรายชั่วโมงยังรันอยู่จะรอให้เสร็จก่อน) เลยเวลาเกิน 30 นาทีจะไม่ส่งเอง ให้กดส่งสรุปตอนนี้",
                      text_color="#7b8496", anchor="w").grid(row=21, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="w")
         self.refresh_daily_summary_last_sent()
         self.ds_send_raw_var = ctk.BooleanVar(value=as_bool(self.daily_summary_option("send_raw_file"), True))
@@ -6520,10 +6520,26 @@ class App(ctk.CTk):
                     and as_bool(self.daily_summary_option("auto_send"), True)
                     and not self.running and not getattr(self, "ds_busy", False)):
                 start, end = self.get_report_time_range()
+                try:
+                    late_limit = int(float(self.daily_summary_option("send_late_minutes")))
+                except ValueError:
+                    late_limit = 30
                 due, reason = daily_summary.due_to_send(
                     datetime.fromisoformat(start), datetime.fromisoformat(end),
-                    self.daily_summary_option("send_time"), self.daily_summary_option("last_sent_date"))
+                    self.daily_summary_option("send_time"), self.daily_summary_option("last_sent_date"),
+                    max_late_minutes=late_limit)
                 business_date = datetime.fromisoformat(start).date().isoformat()
+                if reason.startswith(daily_summary.LATE_REASON):
+                    # แจ้งครั้งเดียวต่อรอบงาน ไม่ต้องขึ้นซ้ำทุก 30 วินาที
+                    notified = self.__dict__.setdefault("ds_late_notified", set())
+                    if business_date not in notified:
+                        notified.add(business_date)
+                        self.write_log(f"Daily summary skipped — {reason}", level="WARN")
+                        self.log_scheduler_event(f"Daily summary skipped — {reason}")
+                        if "ds_status" in self.__dict__:
+                            self.set_daily_summary_status(
+                                f"ไม่ได้ส่งอัตโนมัติ (เลยเวลาเกิน {late_limit} นาที) — กด \"ส่งสรุปตอนนี้\" เอง",
+                                "#ebcb8b")
                 attempts = self.__dict__.setdefault("ds_auto_attempts", {})
                 count, last_try = attempts.get(business_date, (0, None))
                 # ส่งไม่สำเร็จ: ลองใหม่ได้อีก 2 ครั้ง ห่างกัน 10 นาที กันส่งข้อความซ้ำรัว ๆ

@@ -72,6 +72,14 @@ class SendTimeTests(unittest.TestCase):
         # ส่งแล้ว ไม่ส่งซ้ำ
         self.assertFalse(ds.due_to_send(start, datetime(2026, 10, 19, 12, 5), "12:00", "2026-10-18")[0])
 
+    def test_late_limit_stops_catch_up_after_30_minutes(self) -> None:
+        start = datetime(2026, 10, 19, 16)
+        self.assertTrue(ds.due_to_send(start, datetime(2026, 10, 20, 12, 50), "12:20", "", 30)[0])
+        due, reason = ds.due_to_send(start, datetime(2026, 10, 20, 12, 59), "12:20", "", 30)
+        self.assertFalse(due)
+        self.assertTrue(reason.startswith(ds.LATE_REASON))
+        self.assertIn("ส่งสรุปตอนนี้", reason)
+
     def test_new_business_day_waits_for_its_own_send_time(self) -> None:
         start = datetime(2026, 10, 19, 14)  # รอบงานใหม่เริ่มแล้ว ต้องรอถึง 12:00 ของวันถัดไป
         self.assertFalse(ds.due_to_send(start, datetime(2026, 10, 19, 14, 5), "12:00", "2026-10-18")[0])
