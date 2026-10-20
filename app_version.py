@@ -1,6 +1,6 @@
 """Single source of truth for application and release versioning."""
 
-APP_VERSION = "2.1.9"
+APP_VERSION = "2.1.10"
 
 
 def release_tag() -> str:
