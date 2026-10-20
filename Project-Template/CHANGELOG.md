@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Table sheets in the raw-data workbook get an orange tab colour so they stand apart from data sheets.
+- The daily backup now saves only the Excel file sent to the group, directly into the chosen folder (no per-day subfolder, no images); preview builds still save nothing.
+
 ## 2.1.10
 
 - The raw-data workbook starts with the summary tables as sheets — AUTO (AutoPacking), DWS (DWSREALTIME), DWS+DWSPDA (DWSREALTIME followed by the PDA unloading table), AUTOPDA, กระสอบ, ERROR — using the same colours and numeric cells as the posted images, followed by every data sheet in a fixed order including DWS1–8 and DWS9-11. Data with no rows for the business day (missing or stale files) leaves its sheet empty, and DWS realtime sheets keep only rows inside the report window.

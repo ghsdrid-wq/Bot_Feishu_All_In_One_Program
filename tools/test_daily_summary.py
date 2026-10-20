@@ -267,7 +267,9 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(settings.auto_pda_file, "D:/mine/auto.xlsx")
         self.assertEqual(settings.dws_pda_file, os.path.join("C:/raw", "P.xlsx"))  # ช่องว่าง = ค่าเดิม
         self.assertEqual(settings.autopacking_folder, "D:/ap")
-        self.assertEqual(ds.dws_station_paths(settings)["DWS3"], "D:/mine/dws3.xlsx")
+        # เครื่องอื่นจะไปเช็ก path บน share จริง (ช้ามากตอนต่อเครือข่ายไม่ได้) จึงจำลองไว้
+        with mock.patch("core.dws_mirror._source_file", return_value=None):
+            self.assertEqual(ds.dws_station_paths(settings)["DWS3"], "D:/mine/dws3.xlsx")
 
     def test_raw_workbook_has_tables_then_every_data_sheet_and_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -295,12 +297,14 @@ class BuildTests(unittest.TestCase):
             self.assertEqual(wb["AUTO PDA DATA"].max_row, 2)    # เก็บเฉพาะเครื่องในตาราง
             self.assertIsNone(wb["DWS PDA DATA"]["A1"].value)   # ไม่มีข้อมูล = ชีตว่าง
             self.assertIsNone(wb["DWS3"]["A1"].value)
-            # ปุ่มสร้างตัวอย่าง (ไม่ส่ง) ไม่ backup
+            self.assertEqual(wb["AUTO"].sheet_properties.tabColor.rgb, "FFED7D31")  # แท็บตารางมีสี
+            self.assertIsNone(wb["AUTO PDA DATA"].sheet_properties.tabColor)
+            # ปุ่มสร้างตัวอย่าง (ไม่ส่ง) ไม่บันทึก
             self.assertFalse(os.path.isdir(os.path.join(tmp, "backup")))
-            target = ds.backup_outputs(result, os.path.join(tmp, "backup"), window.business_date,
-                                       log=lambda *a, **k: None)
-            self.assertTrue(target.endswith("2026-10-18"))
-            self.assertIn(os.path.basename(result["raw_file"]), os.listdir(target))
+            target = ds.save_excel_copy(result, os.path.join(tmp, "backup"), log=lambda *a, **k: None)
+            # บันทึกเฉพาะไฟล์ Excel ลงโฟลเดอร์ตรง ๆ ไม่มีโฟลเดอร์ย่อยรายวัน ไม่มีรูป
+            self.assertEqual(os.listdir(os.path.join(tmp, "backup")), [os.path.basename(result["raw_file"])])
+            self.assertEqual(os.path.dirname(target), os.path.join(tmp, "backup"))
 
     def test_post_content_keeps_section_order_and_marks_missing_images(self) -> None:
         sections = [ds.Section("a", "หัวข้อ A", "a.png"), ds.Section("b", "หัวข้อ B", None, "ไม่พบรูป")]

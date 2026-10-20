@@ -90,7 +90,8 @@ DEFAULTS: Dict[str, str] = {
     # Feishu รับไฟล์แนบไม่เกิน 30MB — เกินจะบีบ zip, zip ยังเกินจะไม่ส่งไฟล์
     "raw_file_max_mb": "30",
     "raw_file_name": "ข้อมูลดิบ สรุปยอด {date}.xlsx",
-    # ว่าง = ไม่ backup / ใส่โฟลเดอร์ = ทุกครั้งที่ส่งจะเก็บไฟล์ดิบ + รูปตารางไว้ที่ <โฟลเดอร์>/<วันที่รอบงาน>/
+    # โฟลเดอร์บันทึกไฟล์ Excel: ว่าง = ไม่บันทึก / ใส่โฟลเดอร์ = ทุกครั้งที่ส่ง จะบันทึกไฟล์ Excel
+    # ที่ใช้ส่งเข้ากลุ่มไว้ในโฟลเดอร์นี้ตรง ๆ (ชื่อไฟล์มี {date} จึงแยกรายวันอยู่แล้ว)
     "backup_dir": "",
     # true = ใช้ path ไฟล์ดิบแยกจากหน้า ตั้งค่า (ช่องที่ว่างยังใช้ค่าจากหน้า ตั้งค่า)
     "custom_paths": "false",
@@ -1272,9 +1273,11 @@ class RawSheet:
 TABLE_SHEETS = [("AUTO", ["autopacking"]), ("DWS", ["dws"]), ("DWS+DWSPDA", ["dws", "dws_pda"]),
                 ("AUTOPDA", ["auto_pda"]), ("กระสอบ", ["pda_bag"]), ("ERROR", ["abnormal"])]
 TABLE_GAP_ROWS = 2  # แถวว่างคั่นระหว่างตารางที่อยู่ชีตเดียวกัน
+TABLE_SHEET_NAMES = {name for name, _ in TABLE_SHEETS}
 DATA_SHEETS = (["AUTOPACKING Throughput", "AUTOPACKING Abnormal", "AUTO PDA DATA", "DWS PDA DATA",
                 "PDA BAG DATA"] + [f"DWS{i}" for i in range(1, 9)] + ["DWS9-11"])
 FONT_NAMES = {"yahei": "Microsoft YaHei", "jhenghei": "Microsoft JhengHei", "tahoma": "Tahoma"}
+TABLE_TAB_COLOR = "#ED7D31"  # สีแท็บของชีตตาราง ให้แยกจากชีต data ได้ทันที
 
 
 def window_file_sheet(name: str, path: str, time_column: str, window: "Window",
@@ -1476,8 +1479,10 @@ def write_raw_workbook(path: str, sheets: Sequence[RawSheet]) -> str:
                 title = title[:28] + f"_{len(used)}"
             used.add(title)
             ws = workbook.add_worksheet(title)
-            if sheet.grids:
-                write_grid_sheets(workbook, ws, sheet.grids)
+            if sheet.name in TABLE_SHEET_NAMES:
+                ws.set_tab_color(TABLE_TAB_COLOR)  # ชีตตารางมีสีแท็บเสมอ แม้หัวข้อนั้นจะไม่มีตาราง
+                if sheet.grids:
+                    write_grid_sheets(workbook, ws, sheet.grids)
                 continue
             if not sheet.header or not sheet.rows:
                 continue  # ไม่มีไฟล์/ไม่มีข้อมูลของรอบนี้ (ข้อมูลไม่อัปเดต) = ชีตว่าง
@@ -1923,18 +1928,15 @@ def send(settings: Settings, result: Dict[str, Any], log: LogFunc = _noop,
             _say(log, "Daily summary: ส่งไฟล์ข้อมูลดิบแล้ว", "SUCCESS")
 
 
-def backup_outputs(result: Dict[str, Any], backup_dir: str, business_date: date,
-                   log: LogFunc = _noop) -> str:
-    """เก็บไฟล์ดิบกับรูปตารางของรอบนี้ไว้ที่ <backup_dir>/<YYYY-MM-DD>/ (ทับไฟล์ชื่อเดิมของวันเดียวกัน)"""
-    target = os.path.join(backup_dir, business_date.isoformat())
-    os.makedirs(target, exist_ok=True)
-    files = [result.get("raw_file")] + [sec.image for sec in result.get("sections", [])]
-    copied = 0
-    for path in files:
-        if path and os.path.isfile(path):
-            shutil.copy2(path, os.path.join(target, os.path.basename(path)))
-            copied += 1
-    _say(log, f"Daily summary: backup {copied} ไฟล์ไว้ที่ {target}", "SUCCESS")
+def save_excel_copy(result: Dict[str, Any], folder: str, log: LogFunc = _noop) -> Optional[str]:
+    """บันทึกไฟล์ Excel ที่ใช้ส่งเข้ากลุ่มไว้ในโฟลเดอร์ที่เลือก (ไม่สร้างโฟลเดอร์ย่อย ไม่เก็บรูป)"""
+    raw_file = result.get("raw_file")
+    if not raw_file or not os.path.isfile(raw_file):
+        return None
+    os.makedirs(folder, exist_ok=True)
+    target = os.path.join(folder, os.path.basename(raw_file))
+    shutil.copy2(raw_file, target)
+    _say(log, f"Daily summary: บันทึกไฟล์ Excel ไว้ที่ {target}", "SUCCESS")
     return target
 
 
@@ -1945,13 +1947,13 @@ def run(settings: Settings, start: datetime, end: datetime, log: LogFunc = _noop
     work_dir = work_dir or os.path.join(settings.output_dir or settings.raw_dir or ".", "DailySummary")
     _say(log, f"Daily summary: รอบ {window.start:%Y-%m-%d %H:%M} -> {window.end:%Y-%m-%d %H:%M}", "START")
     result = build(settings, window, work_dir, log=log, is_running=is_running, run_started=run_started)
-    # backup ก่อนส่ง — ส่ง Feishu ไม่สำเร็จไฟล์ก็ยังเก็บไว้ (ปุ่มสร้างตัวอย่างไม่ backup)
+    # บันทึกไฟล์ Excel ก่อนส่ง — ส่ง Feishu ไม่สำเร็จไฟล์ก็ยังอยู่ (ปุ่มสร้างตัวอย่างไม่บันทึก)
     if send_to_feishu and settings.opt("backup_dir") and is_running():
         try:
-            result["backup_dir"] = backup_outputs(result, settings.opt("backup_dir"), window.business_date, log)
+            result["saved_excel"] = save_excel_copy(result, settings.opt("backup_dir"), log)
         except Exception as exc:
-            result["warnings"].append(f"backup: {exc}")
-            _say(log, f"Daily summary: backup ไม่สำเร็จ — {exc}", "WARN")
+            result["warnings"].append(f"บันทึกไฟล์ Excel: {exc}")
+            _say(log, f"Daily summary: บันทึกไฟล์ Excel ไม่สำเร็จ — {exc}", "WARN")
     if send_to_feishu and is_running():
         if not any(s.image for s in result["sections"]):
             raise Exception("Daily summary: ไม่มีตารางให้ส่งเลย — " + "; ".join(result["warnings"]))

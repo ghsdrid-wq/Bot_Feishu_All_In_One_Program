@@ -3309,15 +3309,15 @@ class App(ctk.CTk):
         self.ds_entry(send, 24, "ชื่อไฟล์ข้อมูลดิบ", "raw_file_name", "{date} = วันที่รอบงาน")
         self.ds_entry(send, 25, "ขนาดไฟล์สูงสุด (MB)", "raw_file_max_mb", "เกิน = บีบ zip (Feishu รับไม่เกิน 30MB)",
                       width=90)
-        backup = self.ds_entry(send, 26, "โฟลเดอร์ Backup รายวัน", "backup_dir")
+        backup = self.ds_entry(send, 26, "โฟลเดอร์บันทึกไฟล์ Excel", "backup_dir")
         self.bind_clean_entry(backup)
         backup_btn = ctk.CTkButton(
             send, text="Browse", width=92, fg_color="#4c566a", hover_color="#5e6779",
             command=lambda: self.set_path(backup, filedialog.askdirectory()))
         backup_btn.grid(row=26, column=2, padx=(8, 16), pady=6, sticky="w")
         self.lockable_buttons.append(backup_btn)
-        ctk.CTkLabel(send, text="ว่าง = ไม่ backup / ทุกครั้งที่ส่ง จะเก็บไฟล์ดิบ + รูปตารางไว้ที่ "
-                                "<โฟลเดอร์นี้>\\<วันที่รอบงาน>\\ (เก็บก่อนส่ง ส่งไม่สำเร็จไฟล์ก็ยังอยู่)",
+        ctk.CTkLabel(send, text="ว่าง = ไม่บันทึก / ทุกครั้งที่ส่ง จะบันทึกไฟล์ Excel ที่ส่งเข้ากลุ่มไว้ในโฟลเดอร์นี้ "
+                                "(บันทึกก่อนส่ง ส่งไม่สำเร็จไฟล์ก็ยังอยู่)",
                      text_color="#7b8496", anchor="w").grid(row=27, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="w")
         ctk.CTkLabel(send, text="").grid(row=28, column=0, pady=2)
 
