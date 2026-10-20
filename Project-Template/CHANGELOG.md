@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Added a "send late if the send time was missed" checkbox with a minutes field (`send_catch_up`, `send_late_minutes`, defaults on / 30). Unticked sends only on time, allowing a 5-minute grace for the 30-second timer and a finishing hourly run.
+
 ## 2.1.11
 
 - Automatic Daily Summary catch-up is limited to 30 minutes after the send time (`send_late_minutes`). Starting Auto later than that skips the automatic send, logs one warning, and asks the operator to press send-now.

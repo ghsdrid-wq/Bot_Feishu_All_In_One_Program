@@ -80,6 +80,12 @@ class SendTimeTests(unittest.TestCase):
         self.assertTrue(reason.startswith(ds.LATE_REASON))
         self.assertIn("ส่งสรุปตอนนี้", reason)
 
+    def test_catch_up_checkbox_controls_late_limit(self) -> None:
+        self.assertEqual(ds.late_limit_minutes("true", "45"), 45)
+        self.assertEqual(ds.late_limit_minutes("true", "2"), ds.ON_TIME_GRACE_MINUTES)  # ไม่ต่ำกว่าช่วงเผื่อ
+        self.assertEqual(ds.late_limit_minutes("false", "45"), ds.ON_TIME_GRACE_MINUTES)
+        self.assertEqual(ds.late_limit_minutes("true", ""), 30)
+
     def test_new_business_day_waits_for_its_own_send_time(self) -> None:
         start = datetime(2026, 10, 19, 14)  # รอบงานใหม่เริ่มแล้ว ต้องรอถึง 12:00 ของวันถัดไป
         self.assertFalse(ds.due_to_send(start, datetime(2026, 10, 19, 14, 5), "12:00", "2026-10-18")[0])

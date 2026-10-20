@@ -1036,6 +1036,19 @@ class DailySummaryTimerTests(unittest.TestCase):
         self.assertEqual(len(app.events), 1)  # แจ้งครั้งเดียว
         self.assertEqual(len(app.statuses), 1)
 
+    def test_catch_up_off_sends_only_near_the_send_time(self) -> None:
+        app = self._app()
+        app.config["DAILY_SUMMARY"]["send_catch_up"] = "false"
+        app.events, app.statuses = [], []
+        app.log_scheduler_event = app.events.append
+        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:35:00")
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])  # เลย 12:20 ไป 15 นาที ไม่ติ๊กส่งย้อนหลัง -> ไม่ส่ง
+        app.ds_late_notified = set()
+        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:23:00")
+        app.daily_summary_tick()
+        self.assertEqual(len(app.calls), 1)  # ยังอยู่ในช่วงเผื่อ 5 นาที -> ส่งตามเวลา
+
     def test_already_sent_or_auto_off_does_nothing(self) -> None:
         app = self._app(last_sent="2026-10-18")
         app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:30:00")

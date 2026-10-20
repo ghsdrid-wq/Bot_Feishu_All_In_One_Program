@@ -84,7 +84,9 @@ DEFAULTS: Dict[str, str] = {
     # (ปุ่ม "ส่งสรุปตอนนี้" ไม่สนเวลานี้)
     "auto_send": "true",
     "send_time": "12:00",
-    # ส่งตามได้ไม่เกินกี่นาทีหลังเวลาส่ง (เช่น เปิด Auto ช้า) — เกินนี้ต้องกด "ส่งสรุปตอนนี้" เอง
+    # ส่งย้อนหลังเมื่อพลาดเวลาส่ง (เช่น เปิด Auto ช้า): true = ส่งตามได้ภายใน send_late_minutes นาที
+    # false = ส่งเฉพาะตรงเวลา (เผื่อ ON_TIME_GRACE_MINUTES) — เกินนั้นต้องกด "ส่งสรุปตอนนี้" เอง
+    "send_catch_up": "true",
     "send_late_minutes": "30",
     # วันที่รอบงาน (YYYY-MM-DD) ที่ส่งสำเร็จล่าสุด — บอทเขียนเอง กันส่งซ้ำ
     "last_sent_date": "",
@@ -1874,6 +1876,18 @@ def scheduled_send_at(report_start: datetime, send_time: str) -> datetime:
 
 
 LATE_REASON = "เลยเวลาส่ง"
+# ไม่ติ๊กส่งย้อนหลัง ก็ยังเผื่อไว้ไม่กี่นาที: ตัวตั้งเวลาเช็กทุก 30 วินาที และอาจต้องรอรอบรายชั่วโมงให้เสร็จ
+ON_TIME_GRACE_MINUTES = 5
+
+
+def late_limit_minutes(catch_up: Any, minutes: Any) -> int:
+    """นาทีที่ยังส่งอัตโนมัติได้หลังเวลาส่ง ตามติ๊ก "ส่งย้อนหลัง" และจำนวนนาทีที่ตั้ง"""
+    if str(catch_up).strip().lower() not in ("1", "true", "yes", "on"):
+        return ON_TIME_GRACE_MINUTES
+    try:
+        return max(ON_TIME_GRACE_MINUTES, int(float(minutes)))
+    except (TypeError, ValueError):
+        return int(DEFAULTS["send_late_minutes"])
 
 
 def due_to_send(report_start: datetime, report_end: datetime, send_time: str,

@@ -3298,28 +3298,45 @@ class App(ctk.CTk):
         self.ds_last_sent_label = ctk.CTkLabel(send, text="", text_color="#7b8496", anchor="w")
         self.ds_last_sent_label.grid(row=20, column=2, padx=(4, 16), pady=6, sticky="w")
         ctk.CTkLabel(send, text="ส่งวันละครั้งเมื่อถึงเวลานี้ — ตั้งนาทีให้หลังรอบรายชั่วโมงดึงไฟล์ดิบเสร็จ "
-                                "(รอบรายชั่วโมงยังรันอยู่จะรอให้เสร็จก่อน) เลยเวลาเกิน 30 นาทีจะไม่ส่งเอง ให้กดส่งสรุปตอนนี้",
+                                "(รอบรายชั่วโมงยังรันอยู่จะรอให้เสร็จก่อน)",
                      text_color="#7b8496", anchor="w").grid(row=21, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="w")
+        catch_row = ctk.CTkFrame(send, fg_color="transparent")
+        catch_row.grid(row=22, column=0, columnspan=3, padx=16, pady=(4, 2), sticky="w")
+        self.ds_catch_up_var = ctk.BooleanVar(value=as_bool(self.daily_summary_option("send_catch_up"), True))
+        catch_chk = ctk.CTkCheckBox(catch_row, text="ส่งย้อนหลังถ้าพลาดเวลาส่ง ภายใน",
+                                    variable=self.ds_catch_up_var, command=self.save_config)
+        catch_chk.grid(row=0, column=0, sticky="w")
+        late_entry = ctk.CTkEntry(catch_row, width=60)
+        late_entry.grid(row=0, column=1, padx=(8, 4))
+        late_entry.insert(0, self.daily_summary_option("send_late_minutes"))
+        self.bind_clean_entry(late_entry, digits_only=True)
+        self.ds_entries["send_late_minutes"] = late_entry
+        ctk.CTkLabel(catch_row, text="นาที", text_color="#d8dee9").grid(row=0, column=2, sticky="w")
+        self.lockable_inputs += [catch_chk, late_entry]
+        ctk.CTkLabel(send, text=f"เช่น โปรแกรมปิดอยู่ตอนถึงเวลาส่ง แล้วเปิด Auto ภายในเวลานี้ จะส่งตามให้ 1 ครั้ง "
+                                f"(ส่งแล้วไม่ส่งซ้ำ) / ไม่ติ๊ก = ส่งเฉพาะตรงเวลา "
+                                f"(เผื่อ {daily_summary.ON_TIME_GRACE_MINUTES} นาที) เลยจากนั้นกดส่งสรุปตอนนี้เอง",
+                     text_color="#7b8496", anchor="w").grid(row=23, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="w")
         self.refresh_daily_summary_last_sent()
         self.ds_send_raw_var = ctk.BooleanVar(value=as_bool(self.daily_summary_option("send_raw_file"), True))
         raw_chk = ctk.CTkCheckBox(send, text="ส่งไฟล์ข้อมูลดิบรวม (.xlsx แยก sheet) ตามหลังข้อความ",
                                   variable=self.ds_send_raw_var, command=self.save_config)
-        raw_chk.grid(row=23, column=0, columnspan=3, padx=16, pady=(8, 4), sticky="w")
+        raw_chk.grid(row=24, column=0, columnspan=3, padx=16, pady=(8, 4), sticky="w")
         self.lockable_inputs.append(raw_chk)
-        self.ds_entry(send, 24, "ชื่อไฟล์ข้อมูลดิบ", "raw_file_name", "{date} = วันที่รอบงาน")
-        self.ds_entry(send, 25, "ขนาดไฟล์สูงสุด (MB)", "raw_file_max_mb", "เกิน = บีบ zip (Feishu รับไม่เกิน 30MB)",
+        self.ds_entry(send, 25, "ชื่อไฟล์ข้อมูลดิบ", "raw_file_name", "{date} = วันที่รอบงาน")
+        self.ds_entry(send, 26, "ขนาดไฟล์สูงสุด (MB)", "raw_file_max_mb", "เกิน = บีบ zip (Feishu รับไม่เกิน 30MB)",
                       width=90)
-        backup = self.ds_entry(send, 26, "โฟลเดอร์บันทึกไฟล์ Excel", "backup_dir")
+        backup = self.ds_entry(send, 27, "โฟลเดอร์บันทึกไฟล์ Excel", "backup_dir")
         self.bind_clean_entry(backup)
         backup_btn = ctk.CTkButton(
             send, text="Browse", width=92, fg_color="#4c566a", hover_color="#5e6779",
             command=lambda: self.set_path(backup, filedialog.askdirectory()))
-        backup_btn.grid(row=26, column=2, padx=(8, 16), pady=6, sticky="w")
+        backup_btn.grid(row=27, column=2, padx=(8, 16), pady=6, sticky="w")
         self.lockable_buttons.append(backup_btn)
         ctk.CTkLabel(send, text="ว่าง = ไม่บันทึก / ทุกครั้งที่ส่ง จะบันทึกไฟล์ Excel ที่ส่งเข้ากลุ่มไว้ในโฟลเดอร์นี้ "
                                 "(บันทึกก่อนส่ง ส่งไม่สำเร็จไฟล์ก็ยังอยู่)",
-                     text_color="#7b8496", anchor="w").grid(row=27, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="w")
-        ctk.CTkLabel(send, text="").grid(row=28, column=0, pady=2)
+                     text_color="#7b8496", anchor="w").grid(row=28, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="w")
+        ctk.CTkLabel(send, text="").grid(row=29, column=0, pady=2)
 
         # ---- หัวข้อ
         sections = self.make_card(page, "#3b4252", 22)
@@ -3495,6 +3512,10 @@ class App(ctk.CTk):
         if "ds_send_hour_var" in self.__dict__:
             section["send_time"] = f"{self.ds_send_hour_var.get() or '12'}:{self.ds_send_minute_var.get() or '00'}"
             section["auto_send"] = str(bool(self.ds_auto_send_var.get())).lower()
+        if "ds_catch_up_var" in self.__dict__:
+            section["send_catch_up"] = str(bool(self.ds_catch_up_var.get())).lower()
+            if not section.get("send_late_minutes", "").strip():
+                section["send_late_minutes"] = daily_summary.DEFAULTS["send_late_minutes"]
 
     def daily_summary_settings(self, out: str = "") -> "daily_summary.Settings":
         """ค่าที่ใช้รันสรุป: config.ini + ค่าที่ snapshot ไว้ของรอบที่กำลังรัน (ถ้ามี)"""
@@ -6520,10 +6541,8 @@ class App(ctk.CTk):
                     and as_bool(self.daily_summary_option("auto_send"), True)
                     and not self.running and not getattr(self, "ds_busy", False)):
                 start, end = self.get_report_time_range()
-                try:
-                    late_limit = int(float(self.daily_summary_option("send_late_minutes")))
-                except ValueError:
-                    late_limit = 30
+                late_limit = daily_summary.late_limit_minutes(
+                    self.daily_summary_option("send_catch_up"), self.daily_summary_option("send_late_minutes"))
                 due, reason = daily_summary.due_to_send(
                     datetime.fromisoformat(start), datetime.fromisoformat(end),
                     self.daily_summary_option("send_time"), self.daily_summary_option("last_sent_date"),
