@@ -108,6 +108,39 @@ class SendTimeTests(unittest.TestCase):
 
 
 class CountTests(unittest.TestCase):
+    def test_chinese_headers_match_thai_counts_with_reordered_columns(self) -> None:
+        window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
+        with tempfile.TemporaryDirectory() as tmp:
+            thai = _scan_file(os.path.join(tmp, "thai.xlsx"), [
+                ("A1", "B100", "2026-10-18 15:01:00", "Autopacking_pda01"),
+                ("A2", "B100", "2026-10-19 01:00:00", "Autopacking_pda01"),
+                ("A3", "B200", "2026-10-18 14:00:00", "Autopacking_pda02"),
+            ])
+            expected = ds.read_scan_file(thai, window)
+            book = openpyxl.load_workbook(thai)
+            sheet = book.active
+            rows = list(sheet.values)
+            book.close()
+            order = [5, 3, 1, 0, 6, 2, 4]
+            book = openpyxl.Workbook()
+            sheet = book.active
+            sheet.append(["扫描员", "扫描时间", "所属包号", "运单号", "上传时间", "扫描类型", "扫描网点"])
+            for row in rows[1:]:
+                sheet.append([row[i] for i in order])
+            chinese = os.path.join(tmp, "chinese.xlsx")
+            book.save(chinese)
+            book.close()
+            actual = ds.read_scan_file(chinese, window)
+            self.assertEqual(actual, expected)
+            names = ds.machine_names("Autopacking_pda", 2)
+            self.assertEqual(ds.hourly_counts(actual, names, window), ds.hourly_counts(expected, names, window))
+            self.assertEqual(ds.bag_counts(actual, names), ds.bag_counts(expected, names))
+
+    def test_chinese_headers_take_priority_over_changed_thai_labels(self) -> None:
+        header = ["เวลาที่สแกน", "扫描时间", "พนักงานสแกน", "扫描员"]
+        self.assertEqual(ds._find_column(header, ds.COL_TIME, "scan.xlsx"), 1)
+        self.assertEqual(ds._find_column(header, ds.COL_SCANNER, "scan.xlsx"), 3)
+
     def setUp(self) -> None:
         self.window = ds.make_window(datetime(2026, 10, 18, 15), datetime(2026, 10, 19, 10))
         self.rows = [

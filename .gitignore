@@ -18,6 +18,8 @@ Backup/
 Handoff/
 0Excel-Report/
 _analysis_v7_extract/
+# Operator workbooks contain local source data; version query logic separately.
+Excel/
 
 # ผลลัพธ์และข้อมูลของโหมด Dashboard
 out/

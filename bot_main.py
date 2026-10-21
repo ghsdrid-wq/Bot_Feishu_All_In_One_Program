@@ -5468,8 +5468,8 @@ class App(ctk.CTk):
             "origin": "https://jms.jtexpress.co.th",
             "referer": "https://jms.jtexpress.co.th/",
             "routename": "scanComparisonNew",
-            "lang": "TH",
-            "langtype": "TH",
+            "lang": "CN",
+            "langtype": "CN",
         }
         return base, headers
 
@@ -5546,8 +5546,8 @@ class App(ctk.CTk):
             "origin": "https://jms.jtexpress.co.th",
             "referer": "https://jms.jtexpress.co.th/",
             "routename": "TrackRealTimeMonitoringDB",
-            "lang": "TH",
-            "langtype": "TH",
+            "lang": "CN",
+            "langtype": "CN",
             "timezone": "GMT+0700",
             "Cache-Control": "max-age=2, must-revalidate",
         }
@@ -5617,7 +5617,8 @@ class App(ctk.CTk):
 
         if (
             export_data.get("code") == 0
-            and "กำลังยุ่ง" in str(export_data.get("msg", ""))
+            and any(text in str(export_data.get("msg", "")).lower()
+                    for text in ("กำลังยุ่ง", "繁忙", "正在", "busy", "in progress"))
         ):
             reuse_existing = True
             self.log(
@@ -5714,8 +5715,7 @@ class App(ctk.CTk):
                     == "trail_monitor_detail_doris"
                     and (
                         str(row.get("status")) == "2"
-                        or row.get("statusText")
-                        == "เสร็จสิ้นแล้ว"
+                        or row.get("statusText") in ("เสร็จสิ้นแล้ว", "已完成", "完成")
                     )
                 ):
 

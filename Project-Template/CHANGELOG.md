@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.12
+
+- Built and smoke-tested the onedir release with a responsive v2.1.12 window and healthy controller/Dashboard endpoints. Added resolved-path checks to release cleanup and move operations. Keep operator Excel source data local and preserve reusable query logic in Git as the baseline before the planned full workbook-calculation migration.
+
+- Request Chinese column headers for JMS AUTO/PDA exports (`DWSXAUTOPDA.xlsx` and `DWSPDA.xlsx`) using `lang=CN` / `langtype=CN`.
+- Read Chinese scan headers first in Daily Summary while preserving legacy Thai files and the existing report presentation.
+- Request Chinese Realtime DB headers and accept verified `最新操作类型` / `超时类型` with Thai fallback; live JMS keeps the operation/overtime category values in English.
+- Add bilingual REALTIME_DB Power Query to the operator DWS/PDA workbook, selecting columns by name and preserving the Thai output names expected by existing formulas. Preserve all other workbook parts and provide a backup plus reusable M query and patch tool.
+- Keep employee-account requests in their original language.
+- Verified 92 automated tests, four bilingual/layout native Excel fixtures, and live Chinese Realtime raw/report Power Query parity across 11,829 rows. Reopened the patched operator workbook and verified its other 11 queries and all XLSX parts outside DataMashup are unchanged.
+
 ## 2.1.11
 
 - The end time in Daily Summary titles drops trailing AutoPacking hours whose combined total is at most `title_end_trim_total` (default 1000). For example, 2026-10-20 had 9点-10点 = 25,609 and 10点-11点 = 334, so the title now ends at 10.00 instead of 11.00. Set 0 to turn the rule off.

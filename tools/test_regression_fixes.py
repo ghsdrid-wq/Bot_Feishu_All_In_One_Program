@@ -36,6 +36,44 @@ from controller import controller_api  # noqa: E402
 
 
 class SchedulerRegressionTests(unittest.TestCase):
+    def test_realtime_requests_chinese_without_changing_filters(self) -> None:
+        app = bot_main.App.__new__(bot_main.App)
+        app.log = mock.Mock()
+        app.get_jms_auth_token = mock.Mock(return_value="test-token")
+        session = mock.Mock()
+        session.post.side_effect = RuntimeError("stop after request capture")
+        with self.assertRaisesRegex(RuntimeError, "request capture"):
+            app._run_realtime_db(session)
+        kwargs = session.post.call_args.kwargs
+        self.assertEqual(kwargs["headers"]["lang"], "CN")
+        self.assertEqual(kwargs["headers"]["langtype"], "CN")
+        self.assertEqual(kwargs["json"]["operateTypeCode"][0], "Arrive scan")
+        self.assertEqual(len(kwargs["json"]["overTimeType"]), 7)
+
+    def test_realtime_chinese_headers_match_legacy_with_reordered_columns(self) -> None:
+        rows = [("Arrive scan", "Exceed 4 hours with no track"),
+                ("Packing scan", "Exceed 12 hours with no track"),
+                ("Return Item Registration", "Exceed 48 hours with no track")]
+        expected = realtime_report.build_matrix(
+            [realtime_report.COL_OPERATE, realtime_report.COL_OVERTIME], rows)
+        actual = realtime_report.build_matrix(
+            ["超时类型", "ignored", "最新操作类型"], [(r[1], None, r[0]) for r in rows])
+        self.assertEqual(actual, expected)
+        self.assertEqual(sum(sum(v.values()) for v in actual.values()), 3)
+
+    def test_realtime_missing_required_header_fails_instead_of_zero_report(self) -> None:
+        with self.assertRaisesRegex(Exception, "ไฟล์ดิบไม่มีคอลัมน์"):
+            realtime_report.build_matrix(["unexpected"], [("Arrive scan",)])
+
+    def test_jms_scan_exports_request_chinese_headers(self) -> None:
+        app = bot_main.App.__new__(bot_main.App)
+        app.get_jms_auth_token = mock.Mock(return_value="test-token")
+        base, headers = app._jms_base_headers()
+        self.assertTrue(base.endswith("/operatingplatform"))
+        self.assertEqual(headers["lang"], "CN")
+        self.assertEqual(headers["langtype"], "CN")
+        self.assertEqual(headers["authtoken"], "test-token")
+
     def test_realtime_raw_formula_like_text_remains_plain_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "RealtimeDB.xlsx"

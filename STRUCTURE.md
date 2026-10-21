@@ -48,6 +48,9 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - `WorkbookCard`, `SheetRow` (คลาสแยก) — การ์ดตั้งค่าไฟล์ Excel / ชีตในหน้า Workbooks
 
 ### Data Export pipeline (DWS DB + JMS API)
+- `_jms_base_headers` and `_run_realtime_db` request `lang=CN` and `langtype=CN` for JMS AUTO/PDA and Realtime exports. Daily Summary and Realtime resolve Chinese headers first and accept legacy Thai files. Employee-account APIs retain their original language.
+- `realtime_report.build_matrix` accepts `最新操作类型` / `超时类型` while preserving the existing English category values and Thai summary labels. `Project-Template/modules/realtime_db_bilingual.pq` provides the equivalent bilingual Excel query, selects the DATA sheet when present, and preserves the Thai output column names used by existing formulas.
+- `tools/update_realtime_query.py` backs up the workbook, changes only REALTIME_DB inside DataMashup, and regenerates its DPAPI permission binding per MS-QDEFF 2.6. Other XLSX parts stay byte-identical. `tools/test_realtime_power_query.py` tests four native Excel language/layout combinations; `tools/probe_realtime_chinese.py` and `tools/verify_realtime_live.py` verify a live export without Feishu delivery.
 - `run_dws_jms_task` / `run_dws_jms_process` — orchestrate การดึงยอด
 - `run_dws()` — query MySQL DB (`get_dws_db_config`, `_probe_dws_db` ผ่าน pymysql) แปลงเป็น Excel (`_dws_row_from_record`, `autofit_excel_file`)
 - `run_jms_auto` / `run_jms_pda` / `run_realtime_db` / `_export_jms` / `_jms_fire_export` / `_jms_collect_export` — ยิง JMS export API, ตรวจว่าไฟล์เป็น XLSX จริง, เขียนไฟล์ชั่วคราวที่ยังมีนามสกุล `.xlsx` แล้วแทนไฟล์หลักแบบ atomic เมื่อจบครบเท่านั้น
@@ -103,6 +106,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - Build เก็บ `metrics_config.yaml` สองตำแหน่ง: สำเนาที่ผู้ใช้แก้ได้ข้าง EXE และสำเนากู้คืน read-only ใน `_internal`; ไฟล์เดิมของผู้ใช้มีสิทธิ์สูงสุดและไม่ถูกเขียนทับ
 
 ## Dependencies / บริการภายนอก
+- `build_onedir.ps1` validates resolved release/move paths under `dist/` and temporary cleanup under the OS temp directory before filesystem operations. `Excel/` is local-only because operator workbooks contain source data; version the reusable M query and patch tools instead.
 - Python libs (ดู `requirements.txt`): `customtkinter`, `tkcalendar`, `requests`, `flask`, `waitress`, `pywin32`, `Pillow`, `pymysql`, `openpyxl`, `pyinstaller`
 - Feishu OpenAPI (`open.feishu.cn`), JMS J&T (`jmsgw.jtexpress.co.th`)
 - MySQL DB ของ DWS (ต่อผ่าน pymysql — ตั้งค่าใน `[DWS_JMS]`)
