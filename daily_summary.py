@@ -64,6 +64,9 @@ DEFAULTS: Dict[str, str] = {
     # รอบงานจบกี่โมง (ตารางรายชั่วโมงแสดงถึงก่อนชั่วโมงนี้) / กะ B เริ่มกี่โมง
     "day_end_hour": "12",
     "shift_b_start": "1",
+    # เวลาสิ้นสุดในหัวข้อ: ชั่วโมงท้าย ๆ ที่ยอด AutoPacking รวมกันไม่เกินนี้ถือเป็นยอดเกินมา
+    # ตัดไปจบที่ชั่วโมงก่อนหน้า (0 = ไม่ตัด ใช้แค่ชั่วโมงที่มียอดตั้งแต่ 100)
+    "title_end_trim_total": "1000",
     # หัวข้อ — ใช้ {date} {start} {end} ได้
     "title_post": "สรุปยอดประจำวันที่ {date} เวลา {start}-{end}",
     "title_autopacking": "อัตราการปล่อยพัสดุ AutoPacking KKN 供包台 日期 ประจำวันที่ {date} เวลา {start}-{end}",
@@ -169,17 +172,28 @@ class Window:
             "end": f"{self.end.hour}.00",
         }
 
-    def labels_for_hourly_totals(self, totals: Dict[int, int], minimum: int = 100) -> Dict[str, str]:
+    def labels_for_hourly_totals(self, totals: Dict[int, int], minimum: int = 100,
+                                 trailing_total: int = 0) -> Dict[str, str]:
         """Return title labels trimmed to complete, populated hourly columns.
 
         The first and last partial hours of an AutoPacking report frequently
         contain only a small amount of data.  They remain visible in the table,
         but must not make the Feishu title imply a full reporting hour.  A
         total of ``minimum`` or more is considered a populated hour.
+
+        ``trailing_total``: ชั่วโมงท้ายรอบที่ยอดรวมกันไม่เกินค่านี้ = ยอดเกินมาหลังหน้างานจบ
+        ตัดออกจากหัวข้อ ให้เวลาสิ้นสุดเป็นชั่วโมงก่อนหน้า (0 = ไม่ใช้กฎนี้)
         """
         populated = [hour for hour in self.hours if totals.get(hour, 0) >= minimum]
         if not populated:
             return self.labels()
+        if trailing_total > 0:
+            kept = populated[:]
+            leftover = sum(totals.get(h, 0) for h in self.hours[self.hours.index(kept[-1]) + 1:])
+            while len(kept) > 1 and leftover + totals.get(kept[-1], 0) <= trailing_total:
+                leftover += totals.get(kept[-1], 0)
+                kept.pop()
+            populated = kept
         start = populated[0]
         # The label at the right edge is the beginning of the hour after the
         # final populated column; modulo keeps a 23:00-00:00 boundary correct.
@@ -1695,7 +1709,8 @@ def build(settings: Settings, window: Window, work_dir: str,
         throughput = load_autopack_throughput()
         if throughput:
             table = autopack_feeder_counts(throughput, window)
-            labels = window.labels_for_hourly_totals(autopack_summary(table)["grand"]["hours"])
+            labels = window.labels_for_hourly_totals(autopack_summary(table)["grand"]["hours"],
+                                                     trailing_total=settings.opt_int("title_end_trim_total"))
 
     def title(key: str) -> str:
         return settings.opt(f"title_{key}").format(**labels)

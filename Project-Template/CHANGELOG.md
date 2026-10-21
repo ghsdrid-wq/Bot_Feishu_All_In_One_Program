@@ -2,6 +2,7 @@
 
 ## 2.1.11
 
+- The end time in Daily Summary titles drops trailing AutoPacking hours whose combined total is at most `title_end_trim_total` (default 1000). For example, 2026-10-20 had 9点-10点 = 25,609 and 10点-11点 = 334, so the title now ends at 10.00 instead of 11.00. Set 0 to turn the rule off.
 - Scheduler Start/End dates are no longer saved to `config.ini`; only the hours are. Each launch starts from the current shift dates and keeps rolling them at `date_roll_hour`. A manually picked date range applies only until the program closes.
 - Added a "send late if the send time was missed" checkbox with a minutes field (`send_catch_up`, `send_late_minutes`, defaults on / 30). Unticked sends only on time, allowing a 5-minute grace for the 30-second timer and a finishing hourly run.
 - Automatic Daily Summary catch-up is limited to 30 minutes after the send time (`send_late_minutes`). Starting Auto later than that skips the automatic send, logs one warning, and asks the operator to press send-now.

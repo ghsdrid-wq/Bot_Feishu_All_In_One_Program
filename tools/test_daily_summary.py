@@ -55,6 +55,21 @@ class WindowTests(unittest.TestCase):
             "date": "2026/10/18", "start": "15.00", "end": "10.00",
         })
 
+    def test_title_end_drops_trailing_hours_totalling_at_most_1000(self) -> None:
+        # 2026-10-20: 9点-10点 = 25,609 ปล่อยเต็ม, 10点-11点 = 334 เป็นยอดเกินมา -> จบ 10.00
+        window = ds.make_window(datetime(2026, 10, 20, 13), datetime(2026, 10, 21, 12, 20))
+        totals = {hour: 20_000 for hour in window.hours}
+        totals[10], totals[11] = 334, 0
+        self.assertEqual(window.labels_for_hourly_totals(totals, trailing_total=1000)["end"], "10.00")
+        # ชั่วโมงท้ายหลายชั่วโมงรวมกันเกิน 1000 = ยังทำงานอยู่ ไม่ตัด
+        totals[9], totals[10] = 600, 600
+        self.assertEqual(window.labels_for_hourly_totals(totals, trailing_total=1000)["end"], "10.00")
+        totals[9], totals[10] = 400, 500
+        self.assertEqual(window.labels_for_hourly_totals(totals, trailing_total=1000)["end"], "9.00")
+        totals[10] = 1_200
+        self.assertEqual(window.labels_for_hourly_totals(totals, trailing_total=1000)["end"], "11.00")
+        self.assertEqual(window.labels_for_hourly_totals(totals, trailing_total=0)["end"], "11.00")
+
     def test_title_labels_keep_configured_range_when_no_hour_reaches_100(self) -> None:
         window = ds.make_window(datetime(2026, 10, 18, 14), datetime(2026, 10, 19, 11))
         self.assertEqual(window.labels_for_hourly_totals({hour: 99 for hour in window.hours}),
