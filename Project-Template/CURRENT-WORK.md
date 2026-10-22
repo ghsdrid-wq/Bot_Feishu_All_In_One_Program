@@ -1,5 +1,6 @@
 # Current Work
 
+- Version 2.1.13 makes Daily Summary match JMS scan headers loosely as a fallback and list the headers found when a column is missing.
 - Added English maintenance comments beside the runtime Chinese/Thai header aliases in `daily_summary.py` and `realtime_report.py`, including the exact bilingual names, priority and separation from display labels. No runtime behavior changed.
 
 - Release checkpoint on 2026-10-22: built `dist/AutoReportFeishuV2-1-12/AutoReportFeishu.exe` using Python 3.12 and PyInstaller 6.22.3. Required metrics recovery files and matching schemas passed validation; Playwright headless Chromium 1248 is bundled. A 15-second launch smoke test confirmed the v2.1.12 title, responsive window, and HTTP 200 from controller port 6100 and Dashboard port 6200. The test process closed and operator runtime files were restored after the test. Local JMS token was carried forward without committing it.

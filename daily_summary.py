@@ -276,7 +276,16 @@ def _find_column(header: Sequence[Any], names: Sequence[str], path: str) -> int:
     for name in names:
         if name in cleaned:
             return cleaned.index(name)
-    raise ValueError(f"{os.path.basename(path)}: ไม่พบคอลัมน์ {' / '.join(names)}")
+    # JMS เปลี่ยนชื่อหัวคอลัมน์เป็นระยะ — ลองเทียบแบบไม่สนช่องว่าง/คำว่า "ที่" ก่อนยอมแพ้
+    def loose(text: str) -> str:
+        return text.replace(" ", "").replace("ที่ทำการ", "").replace("ที่", "")
+    loose_cols = [loose(h) for h in cleaned]
+    for name in names:
+        if loose(name) in loose_cols:
+            return loose_cols.index(loose(name))
+    found = ", ".join(h for h in cleaned if h)
+    raise ValueError(f"{os.path.basename(path)}: ไม่พบคอลัมน์ {' / '.join(names)} "
+                     f"(หัวคอลัมน์ในไฟล์: {found})")
 
 
 @dataclass

@@ -29,6 +29,29 @@ def _scan_file(path: str, rows: list) -> str:
     return path
 
 
+class ScanFileTests(unittest.TestCase):
+    def test_reads_thai_headers_renamed_in_october_2026(self) -> None:
+        window = ds.make_window(datetime(2026, 10, 21, 15), datetime(2026, 10, 22, 10))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "DWSPDA.xlsx")
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.append(["เลขพัสดุ", "หมายเลขกระสอบ", "ประเภทสแกน", "เวลาสแกน",
+                       "สาขาที่สแกน", "จำนวนชิ้น", "ผู้สแกน", "เวลาอัปโหลด"])
+            ws.append(["TH0001", "B1", "สแกนสร้างถุง", "2026-10-21 15:08:02",
+                       "KKN_GW", 1, "PDA01", "2026-10-21 15:09:00"])
+            wb.save(path)
+            rows = ds.read_scan_file(path, window)
+        self.assertEqual([(r.awb, r.bag, r.scanner) for r in rows], [("TH0001", "B1", "PDA01")])
+
+    def test_header_match_ignores_spaces_and_the_word_thee(self) -> None:
+        self.assertEqual(ds._find_column(["หมายเลข", "เวลา ที่ สแกน"], ds.COL_TIME, "x.xlsx"), 1)
+
+    def test_missing_column_error_lists_headers_found(self) -> None:
+        with self.assertRaisesRegex(ValueError, "หัวคอลัมน์ในไฟล์: ก, ข"):
+            ds._find_column(["ก", "ข"], ds.COL_TIME, "x.xlsx")
+
+
 class WindowTests(unittest.TestCase):
     def test_hours_run_from_start_until_day_end_and_split_shifts(self) -> None:
         window = ds.make_window(datetime(2026, 10, 18, 15, 0), datetime(2026, 10, 19, 10, 5))

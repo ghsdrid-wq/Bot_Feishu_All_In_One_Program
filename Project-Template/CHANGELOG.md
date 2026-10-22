@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.13
+
+- Daily Summary header matching falls back to ignoring spaces and the word "ที่" when no listed header matches exactly, and a missing-column error now lists the headers found in the file, so the next JMS rename shows up in the Feishu report. Fixes the 2026-10-22 report where DWSXAUTOPDA.xlsx and DWSPDA.xlsx came with the renamed Thai headers (`เวลาสแกน`, `ผู้สแกน`) on a bot still running 2.1.11.
+
 ## 2.1.12
 
 - Built and smoke-tested the onedir release with a responsive v2.1.12 window and healthy controller/Dashboard endpoints. Added resolved-path checks to release cleanup and move operations. Keep operator Excel source data local and preserve reusable query logic in Git as the baseline before the planned full workbook-calculation migration.
