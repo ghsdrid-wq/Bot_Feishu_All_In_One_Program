@@ -287,6 +287,31 @@ class SchedulerRegressionTests(unittest.TestCase):
         app.last_run_minute = "2026-09-28 23:01"
         self.assertIsNone(app.get_next_scheduler_run_time(datetime(2026, 9, 28, 23, 1, 30)))
 
+    def test_run_now_during_auto_restores_auto_buttons(self) -> None:
+        app = self.make_app()
+        calls = []
+        app.set_ui_running = calls.append
+        app.scheduler_running, app.mode = True, "manual"
+        app.restore_ui_after_run()
+        self.assertEqual((app.mode, calls), ("auto", [True]))
+        app.scheduler_running = False
+        app.restore_ui_after_run()
+        self.assertEqual(calls, [True, False])
+
+    def test_bots_start_on_launch_unless_disabled(self) -> None:
+        app = self.make_app()
+        started = []
+        app.bot_running = app.jms_running = False
+        app.start_feishu_bot = lambda: started.append("feishu")
+        app.start_jms_placeholder = lambda auto=False: started.append(("jms", auto))
+        app.add_log = app.jms_log = lambda *_: None
+        app.bots_autostart()
+        self.assertEqual(started, ["feishu", ("jms", True)])
+        started.clear()
+        app.config["FEISHU"] = {"bot_autostart": "false", "jms_autostart": "false"}
+        app.bots_autostart()
+        self.assertEqual(started, [])
+
     def test_scheduler_first_run_is_the_hour_after_start(self) -> None:
         # เริ่ม 16:00 รันนาที 1 -> ไม่รัน 16:01 (มีข้อมูลรอบใหม่นาทีเดียว) รอบแรกคือ 17:01
         app = self.make_app()

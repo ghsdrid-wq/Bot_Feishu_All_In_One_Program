@@ -1719,6 +1719,10 @@ def _fresh_image(path: str, max_age_minutes: int, run_started: Optional[datetime
     return False, f"รูปเก่า {age:.0f} นาที (เกิน {max_age_minutes} นาที)"
 
 
+# หัวข้อของหน้างาน DWS — เวลาเริ่ม/จบตามตาราง DWS ไม่ใช่ AutoPacking
+DWS_SITE_SECTIONS = ("dws", "dws_pda")
+
+
 def build(settings: Settings, window: Window, work_dir: str,
           log: LogFunc = _noop, is_running: RunFunc = _always,
           run_started: Optional[datetime] = None) -> Dict[str, Any]:
@@ -1760,8 +1764,35 @@ def build(settings: Settings, window: Window, work_dir: str,
             labels = window.labels_for_hourly_totals(autopack_summary(table)["grand"]["hours"],
                                                      trailing_total=settings.opt_int("title_end_trim_total"))
 
+    # หน้างาน DWS (เครื่อง DWS + DWS PDA) จบไม่พร้อม AutoPacking — หัวข้อ DWS / PDA ลงรถ
+    # ใช้เวลาจากแถว 合计 ของตาราง DWS เอง (กฎเดียวกัน: ชั่วโมงที่มียอด >= 100 / ตัดยอดเกินท้ายรอบ)
+    dws_table: Optional[DwsTable] = None
+    dws_table_warnings: List[str] = []
+    dws_labels: Optional[Dict[str, str]] = None
+
+    def load_dws_table() -> DwsTable:
+        nonlocal dws_table, dws_table_warnings
+        if dws_table is None:
+            dws_table, dws_table_warnings = build_dws_table(settings, window, load_dws_pda(), log)
+        return dws_table
+
+    def dws_site_labels() -> Dict[str, str]:
+        nonlocal dws_labels
+        if dws_labels is None:
+            dws_labels = labels
+            try:
+                table = load_dws_table()
+                totals = {h: sum(values[h] for _, _, values in table.rows) for h in window.hours}
+                if any(totals.values()):
+                    dws_labels = window.labels_for_hourly_totals(
+                        totals, trailing_total=settings.opt_int("title_end_trim_total"))
+            except Exception as exc:
+                _say(log, f"Daily summary: เวลาหัวข้อ DWS ใช้ของ AutoPacking แทน — {exc}", "WARN")
+        return dws_labels
+
     def title(key: str) -> str:
-        return settings.opt(f"title_{key}").format(**labels)
+        site = dws_site_labels() if key in DWS_SITE_SECTIONS else labels
+        return settings.opt(f"title_{key}").format(**site)
 
     def load_auto() -> List[ScanRow]:
         nonlocal auto_rows
@@ -1811,8 +1842,8 @@ def build(settings: Settings, window: Window, work_dir: str,
                         autopack_feeder_counts(throughput, window),
                         os.path.join(work_dir, f"AUTOPACKING_{stamp}.png"), capture=captured)
             elif key == "dws":
-                table, dws_warnings = build_dws_table(settings, window, load_dws_pda(), log)
-                warnings.extend(f"dws: {w}" for w in dws_warnings)
+                table = load_dws_table()
+                warnings.extend(f"dws: {w}" for w in dws_table_warnings)
                 section.image = render_dws_table(table, os.path.join(work_dir, f"DWS_{stamp}.png"),
                                                  capture=captured)
             elif key == "auto_pda":

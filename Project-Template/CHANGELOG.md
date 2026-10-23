@@ -2,6 +2,10 @@
 
 ## 2.1.13
 
+- Daily Summary titles follow each site's own working hours. AutoPacking, PDA 人工建包 and red zip bags still use the AutoPacking totals. The DWS and PDA unloading titles now use the DWS table's hourly 合计 (DWS machines + DWS PDA) with the same rules: populated hours from 100, trailing hours totalling at most 1000 trimmed. On 2026-10-22 the DWS site ended at 9.00 while AutoPacking ran until 12.00.
+- Fixed the BOT REPORT buttons after Run Now while Auto is on. When the manual run finished, Stop Run stayed in place of Run Now because the mode stayed "manual". `restore_ui_after_run` now returns to Auto mode (Stop Auto + Run Now).
+- BOT DWS PLAN (Feishu bot) and BOT JMS USER start automatically 2 seconds after launch (`[FEISHU] bot_autostart` / `jms_autostart`, default true). A missing JMS_TOKEN at launch is logged and sent as an IT alert instead of opening a dialog.
+- The Realtime DB download now streams to disk instead of reading the whole file in one call. It logs progress (MB and seconds) every 15 seconds and can be stopped with Stop Run. It fails after 120 seconds with no data, or after 15 minutes in total. Before this, a slow JMS download sat silently on "Downloading JMS realtime file...".
 - Auto's first run is the hour after the start hour. A 15:00 start with run minute 1 now runs first at 16:01. The 15:01 run had only one minute of the new round, so it posted a `15:00 - 15:00` card with empty JMS tables and stale AutoPacking numbers.
 - Daily Summary accepts the waybill header `运单编号` used by JMS Chinese exports since 2026-10-23. Before this, the PDA 人工建包, red zip bag, PDA unloading and DWS tables failed with "ไม่พบคอลัมน์ 运单号".
 - Auto now runs the end hour at its run minute: an end of 12:00 with run minute 5 makes 12:05 the final hourly run. Before this, 12:05 counted as past the end, so the last report went out at 11:05.

@@ -236,6 +236,9 @@ DEFAULT_FEISHU = {
     "BOT_NAME": "BOT_JMSKKN",
     "PLAN_DAY_NAME": "DWSA",
     "PLAN_NIGHT_NAME": "DWSB",
+    # START BOT ของ BOT DWS PLAN / BOT JMS USER เองตอนเปิดโปรแกรม
+    "bot_autostart": "true",
+    "jms_autostart": "true",
 }
 
 DEFAULT_PATH = {
@@ -831,6 +834,11 @@ def feishu_event():
     return jsonify({"success": True, "message": "ignored"})
 
 
+# Realtime DB: ไม่มีข้อมูลเข้ามาเลยนานเท่านี้ = ค้าง / ดาวน์โหลดทั้งไฟล์ได้ไม่เกินเท่านี้
+REALTIME_DOWNLOAD_STALL_SECONDS = 120
+REALTIME_DOWNLOAD_MAX_SECONDS = 900
+
+
 def as_bool(value: str, default: bool = False) -> bool:
     if value is None:
         return default
@@ -1410,6 +1418,8 @@ class App(ctk.CTk):
         self.after(30000, self.daily_summary_tick)
         # เปิดเว็บเองตอนโปรแกรมเริ่ม ปิดได้ที่ [DASHBOARD] web_autostart
         self.after(1500, self.dashboard_autostart_web)
+        # START BOT ของ BOT DWS PLAN / BOT JMS USER เองตอนเปิดโปรแกรม ปิดได้ที่ [FEISHU] bot_autostart / jms_autostart
+        self.after(2000, self.bots_autostart)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def ensure_config(self):
@@ -5022,8 +5032,8 @@ class App(ctk.CTk):
             self.raw_time_source = "manual"
             if is_current:
                 self.current_run_source = None
-            if is_current and not self.scheduler_running:
-                self.set_ui_running(False)
+            if is_current:
+                self.restore_ui_after_run()
             self.schedule_pipeline_reset(run_generation)
 
     def warn_if_range_misses_dashboard(self, steps):
@@ -5803,13 +5813,6 @@ class App(ctk.CTk):
             "REALTIME"
         )
 
-        file_resp = session.get(
-            download_url,
-            timeout=(30, 300)
-        )
-
-        file_resp.raise_for_status()
-
         raw_dir = self.get_raw_export_folder()
 
         os.makedirs(
@@ -5825,8 +5828,35 @@ class App(ctk.CTk):
         temp_path = self._download_temp_path(save_path)
         self._remove_partial_download(temp_path)
         try:
-            with open(temp_path, "wb") as f:
-                f.write(file_resp.content)
+            # stream ลงดิสก์ + log ทุก ~15 วินาที: ถ้าค้างจะเห็นว่า JMS ส่งมากี่ MB แล้ว
+            # (0 MB นาน ๆ = ฝั่ง JMS ไม่ส่งไฟล์) กด Stop Run หยุดได้ และตัดจบเมื่อเกินเวลา
+            written = 0
+            started = time.monotonic()
+            last_note = started
+            with session.get(download_url, timeout=(30, REALTIME_DOWNLOAD_STALL_SECONDS),
+                             stream=True) as file_resp:
+                file_resp.raise_for_status()
+                total = int(file_resp.headers.get("Content-Length") or 0)
+                with open(temp_path, "wb") as f:
+                    for chunk in file_resp.iter_content(chunk_size=262144):
+                        if self.run_cancelled():
+                            return None
+                        if chunk:
+                            f.write(chunk)
+                            written += len(chunk)
+                        self.mark_activity()
+                        now_t = time.monotonic()
+                        if now_t - started > REALTIME_DOWNLOAD_MAX_SECONDS:
+                            raise Exception(
+                                f"Realtime download took over {REALTIME_DOWNLOAD_MAX_SECONDS // 60} min "
+                                f"({written / 1048576:.1f} MB) — JMS ส่งไฟล์ช้าผิดปกติ ลองใหม่อีกครั้ง")
+                        if now_t - last_note >= 15:
+                            last_note = now_t
+                            size = f" / {total / 1048576:.1f}" if total else ""
+                            self.log(f"Downloading... {written / 1048576:.1f}{size} MB "
+                                     f"({int(now_t - started)}s)", "REALTIME")
+            if written < 1000:
+                raise Exception("Realtime download is empty — JMS ไม่ได้ส่งไฟล์มา")
             self._validate_xlsx_download(temp_path)
             if self.run_cancelled():
                 return None
@@ -6548,8 +6578,8 @@ class App(ctk.CTk):
             if is_current:
                 self.current_run_source = None
 
-            if is_current and not self.scheduler_running:
-                self.set_ui_running(False)
+            if is_current:
+                self.restore_ui_after_run()
 
             self.schedule_pipeline_reset(run_generation)
 
@@ -6609,6 +6639,18 @@ class App(ctk.CTk):
         save_config(self.config)
         if "ds_last_sent_label" in self.__dict__:
             self.run_on_ui_thread(self.refresh_daily_summary_last_sent)
+
+    def restore_ui_after_run(self):
+        """คืนปุ่มหลังรอบรันจบ — กด Run Now ระหว่างเปิด Auto ต้องกลับเป็นโหมด Auto
+
+        Run Now ตั้ง mode = manual (โชว์ปุ่ม Stop Run) ถ้า Auto ยังเปิดอยู่ตอนรันจบ
+        ต้องคืน mode = auto และวาดปุ่มใหม่ (Stop Auto + Run Now) ไม่งั้นค้างปุ่ม Stop Run
+        """
+        if self.scheduler_running:
+            self.mode = "auto"
+            self.set_ui_running(True)
+        else:
+            self.set_ui_running(False)
 
     def run_once(self):
         if self.running:
@@ -7031,7 +7073,22 @@ class App(ctk.CTk):
             return
         self.switch_plan(target_plan)
 
-    def start_jms_placeholder(self):
+    def bots_autostart(self):
+        """START BOT ของ BOT DWS PLAN (Feishu bot) และ BOT JMS USER ให้เองหลังเปิดโปรแกรม"""
+        feishu = self.config["FEISHU"] if "FEISHU" in self.config else {}
+        try:
+            if as_bool(feishu.get("bot_autostart", "true"), True) and not self.bot_running:
+                self.start_feishu_bot()
+                self.add_log("[SYSTEM] Feishu Bot auto-started on launch")
+        except Exception as e:
+            self.add_log(f"[ERROR] Feishu Bot auto-start failed -> {e}")
+        try:
+            if as_bool(feishu.get("jms_autostart", "true"), True) and not self.jms_running:
+                self.start_jms_placeholder(auto=True)
+        except Exception as e:
+            self.jms_log(f"[ERROR] JMS Bot auto-start failed -> {e}")
+
+    def start_jms_placeholder(self, auto: bool = False):
         self.save_config()
         if not self.get_jms_auth_token():
             self.jms_running = False
@@ -7042,7 +7099,8 @@ class App(ctk.CTk):
                 "JMS_TOKEN ยังไม่ได้ตั้งค่า",
                 "BOT JMS USER ไม่สามารถเริ่มทำงานได้ กรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า"
             )
-            messagebox.showwarning("JMS_TOKEN", "ยังไม่ได้ตั้งค่า JMS_TOKEN\nกรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า")
+            if not auto:  # ตอนเปิดโปรแกรมไม่เด้งกล่องค้างหน้าจอ แจ้งใน log/IT alert แทน
+                messagebox.showwarning("JMS_TOKEN", "ยังไม่ได้ตั้งค่า JMS_TOKEN\nกรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า")
             return
         if not self.bot_running:
             self.start_feishu_bot()
