@@ -277,6 +277,25 @@ class SchedulerRegressionTests(unittest.TestCase):
         self.assertFalse(
             app.scheduler_slot_in_range(datetime(2026, 9, 28, 23, 1, 0)))
 
+    def test_scheduler_runs_the_end_hour_at_its_run_minute(self) -> None:
+        # จบ 23:00 รันนาที 1 -> รอบสุดท้ายคือ 23:01 (เดิมข้ามไป เพราะ 23:01 เลย 23:00)
+        app = self.make_app()
+        self.assertTrue(app.scheduler_slot_in_range(datetime(2026, 9, 28, 23, 1, 30)))
+        self.assertFalse(app.scheduler_slot_in_range(datetime(2026, 9, 28, 23, 2, 0)))
+        self.assertEqual(app.get_next_scheduler_run_time(datetime(2026, 9, 28, 22, 30)),
+                         datetime(2026, 9, 28, 23, 1))
+        app.last_run_minute = "2026-09-28 23:01"
+        self.assertIsNone(app.get_next_scheduler_run_time(datetime(2026, 9, 28, 23, 1, 30)))
+
+    def test_daily_summary_button_uses_finished_round_early_in_new_round(self) -> None:
+        app = self.make_app()  # start_hour 16
+        self.assertEqual(app.daily_summary_manual_range(datetime(2026, 9, 28, 17, 10)),
+                         ("2026-09-27 16:00:00", "2026-09-28 17:10:00"))
+        self.assertEqual(app.daily_summary_manual_range(datetime(2026, 9, 28, 18, 0)),
+                         ("2026-09-28 16:00:00", "2026-09-28 18:00:00"))
+        self.assertEqual(app.daily_summary_manual_range(datetime(2026, 9, 28, 12, 30)),
+                         ("2026-09-27 16:00:00", "2026-09-28 12:30:00"))
+
     def test_feishu_webhook_and_plan_endpoint_require_token(self) -> None:
         class DummyController:
             bot_running = True

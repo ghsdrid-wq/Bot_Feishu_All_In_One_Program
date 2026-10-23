@@ -1635,6 +1635,10 @@ class App(ctk.CTk):
         """Compatibility display for the configured start/end hours."""
         return self.scheduler_start_hour, self.scheduler_end_hour
 
+    def scheduler_last_run_at(self, end_dt: datetime) -> datetime:
+        """รอบสุดท้ายของช่วง = ชั่วโมงจบ + นาทีรัน (จบ 12:00 รันนาที 5 -> รอบสุดท้าย 12:05)"""
+        return end_dt.replace(minute=self.scheduler_run_minute, second=59, microsecond=0)
+
     def in_send_window(self, moment) -> bool:
         """Return whether an exact datetime is inside the configured run range.
 
@@ -1645,7 +1649,7 @@ class App(ctk.CTk):
         """
         if isinstance(moment, datetime):
             start_dt, end_dt = self.get_scheduler_time_range()
-            return start_dt <= moment <= end_dt
+            return start_dt <= moment <= self.scheduler_last_run_at(end_dt)
         hour = int(moment)
         first, last = self.send_window()
         if first <= last:
@@ -1656,7 +1660,7 @@ class App(ctk.CTk):
         """Compare the scheduled minute, not loop wake-up seconds, to the range."""
         start_dt, end_dt = self.get_scheduler_time_range()
         slot = moment.replace(second=0, microsecond=0)
-        return start_dt <= slot <= end_dt
+        return start_dt <= slot <= self.scheduler_last_run_at(end_dt)
 
     def get_next_scheduler_run_time(
             self, now: Optional[datetime] = None) -> Optional[datetime]:
@@ -1676,7 +1680,7 @@ class App(ctk.CTk):
             candidate = start_dt.replace(minute=minute, second=0, microsecond=0)
             if candidate < start_dt:
                 candidate += timedelta(hours=1)
-        return candidate if candidate <= end_dt else None
+        return candidate if candidate <= self.scheduler_last_run_at(end_dt) else None
 
     def format_next_scheduler_run(self, next_run: Optional[datetime] = None) -> str:
         candidate = next_run if next_run is not None else self.get_next_scheduler_run_time()
@@ -3545,6 +3549,18 @@ class App(ctk.CTk):
             return
         self.ds_status.configure(text=text, text_color=color)
 
+    def daily_summary_manual_range(self, moment: Optional[datetime] = None):
+        """ช่วงของปุ่มส่งสรุปเอง — ช่วง 2 ชั่วโมงแรกของรอบใหม่ยังหมายถึงรอบที่เพิ่งจบ
+
+        วันที่ยอดปล่อยเลยไปถึง 13:00 จะกดส่งเองหลัง 13:00 ซึ่งรอบใหม่เริ่มแล้ว
+        สรุปรอบใหม่ที่เพิ่งเริ่มไม่มีประโยชน์ จึงใช้รอบก่อนหน้าแทน (ตารางขยายถึง 12点-13点 ให้เอง)
+        """
+        start, end = self.get_report_time_range(moment)
+        start_dt, end_dt = datetime.fromisoformat(start), datetime.fromisoformat(end)
+        if end_dt - start_dt < timedelta(hours=2):
+            start = (start_dt - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+        return start, end
+
     def start_daily_summary_now(self, send: bool):
         """ปุ่มในหน้าสรุปรายวัน: สร้างตัวอย่าง (ไม่ส่ง) หรือส่งทันที ด้วยช่วงเวลารายงานของตอนนี้"""
         if self.running or self.ds_busy:
@@ -3552,7 +3568,7 @@ class App(ctk.CTk):
             return
         self.save_all()
         settings = self.daily_summary_settings(entry_value(self.out_entry))
-        start, end = self.get_report_time_range()
+        start, end = self.daily_summary_manual_range()
         if send:
             target = settings.chat_id or "(ไม่มี Chat ID)"
             if not messagebox.askyesno(
@@ -6660,7 +6676,7 @@ class App(ctk.CTk):
                     and self.last_run_minute != now_key
                     and self.scheduler_slot_in_range(now)
                 )
-                if now > range_end and not due_in_final_minute:
+                if now > self.scheduler_last_run_at(range_end) and not due_in_final_minute:
                     if self.scheduler_follows_shift_dates():
                         # วันที่ตั้งตามรอบงานอัตโนมัติ: ไม่หยุด รอให้วันที่เลื่อนเป็นรอบใหม่
                         # (date_roll_hour, ค่าเริ่มต้น 13:00) แล้วรันต่อเองตามเวลาเริ่ม

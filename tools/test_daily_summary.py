@@ -93,6 +93,30 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(window.labels_for_hourly_totals(totals, trailing_total=1000)["end"], "11.00")
         self.assertEqual(window.labels_for_hourly_totals(totals, trailing_total=0)["end"], "11.00")
 
+    def test_window_extends_to_13_only_after_the_extra_hour_finishes(self) -> None:
+        start = datetime(2026, 10, 20, 13)
+        normal = ds.make_window(start, datetime(2026, 10, 21, 12, 20))
+        self.assertEqual((len(normal.hours), normal.hours[-1]), (23, 11))
+        extended = ds.make_window(start, datetime(2026, 10, 21, 13, 30))
+        self.assertEqual((len(extended.hours), extended.hours[-1]), (24, 12))
+        self.assertEqual(extended.end, datetime(2026, 10, 21, 13))
+        self.assertIsNone(extended.slot_of(datetime(2026, 10, 21, 13, 10)))
+        self.assertEqual(extended.slot_of(datetime(2026, 10, 21, 12, 40)), 12)
+        self.assertEqual(extended.labels_for_hourly_totals({**{h: 5_000 for h in extended.hours}})["end"],
+                         "13.00")
+
+    def test_autopack_extra_hour_reads_next_folders_13_file(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            for name in ("2026-10-20", "2026-10-21"):
+                os.makedirs(os.path.join(raw, name))
+            window = ds.make_window(datetime(2026, 10, 20, 13), datetime(2026, 10, 21, 13, 30))
+            self.assertEqual(ds.autopack_hour_path(raw, window, 11),
+                             os.path.join(raw, "2026-10-20", "12.xlsx"))
+            self.assertEqual(ds.autopack_hour_path(raw, window, 12),
+                             os.path.join(raw, "2026-10-21", "13.xlsx"))
+            self.assertEqual(ds.autopack_hour_path(raw, window, 13),
+                             os.path.join(raw, "2026-10-20", "14.xlsx"))
+
     def test_title_labels_keep_configured_range_when_no_hour_reaches_100(self) -> None:
         window = ds.make_window(datetime(2026, 10, 18, 14), datetime(2026, 10, 19, 11))
         self.assertEqual(window.labels_for_hourly_totals({hour: 99 for hour in window.hours}),

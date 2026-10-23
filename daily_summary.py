@@ -62,6 +62,7 @@ DEFAULTS: Dict[str, str] = {
     "dws_pda_prefix": "Dws_pda",
     "dws_pda_count": "10",
     # รอบงานจบกี่โมง (ตารางรายชั่วโมงแสดงถึงก่อนชั่วโมงนี้) / กะ B เริ่มกี่โมง
+    # วันที่ยอดเลยเวลาจบ กด "ส่งสรุปตอนนี้" หลังชั่วโมงถัดไปจบ ตารางจะขยายให้เอง (ไม่เกิน 24 ชั่วโมง)
     "day_end_hour": "12",
     "shift_b_start": "1",
     # เวลาสิ้นสุดในหัวข้อ: ชั่วโมงท้าย ๆ ที่ยอด AutoPacking รวมกันไม่เกินนี้ถือเป็นยอดเกินมา
@@ -227,6 +228,9 @@ class Window:
         """ชั่วโมงนี้เริ่มแล้วหรือยัง ณ เวลาสิ้นสุดของรอบ (ชั่วโมงในอนาคตยังไม่มีข้อมูล)"""
         return self.start + timedelta(hours=self.hours.index(hour)) < self.end
 
+    def slot_end(self, hour: int) -> datetime:
+        return self.start + timedelta(hours=self.hours.index(hour) + 1)
+
 
 def make_window(start: datetime, end: datetime, day_end_hour: int = 12,
                 shift_b_start: int = 1) -> Window:
@@ -234,6 +238,14 @@ def make_window(start: datetime, end: datetime, day_end_hour: int = 12,
     if end <= start:
         raise ValueError(f"ช่วงเวลาไม่ถูกต้อง: {start} -> {end}")
     span = (day_end_hour - start.hour) % 24 or 24
+    # ยอดเลยเวลาจบ (เช่นปล่อยถึง 13:00): ขยายตารางเฉพาะชั่วโมงที่จบครบแล้ว
+    # ส่งอัตโนมัติ 12:20 จึงยังจบที่ 12点 เหมือนเดิม ไม่มีคอลัมน์ 12点 ที่ข้อมูลยังไม่ครบ
+    complete_hours = int((end - start).total_seconds() // 3600)
+    if complete_hours > span:
+        span = min(24, complete_hours)
+    if span == 24:
+        # ครบ 24 ชั่วโมงแล้ว ชั่วโมงเดียวกันของวันถัดไปห้ามนับซ้ำในคอลัมน์แรก
+        end = min(end, start + timedelta(hours=24))
     hours = [(start.hour + i) % 24 for i in range(span)]
     return Window(start=start, end=end, hours=hours, shift_b_start=shift_b_start)
 
@@ -951,15 +963,15 @@ def read_autopack_throughput(raw_dir: str, window: Window, file_hour_offset: int
     """ไฟล์ NN.xlsx เก็บยอดของชั่วโมง NN-1 — อ่านเฉพาะชั่วโมงที่เริ่มแล้ว"""
     from python_calamine import CalamineWorkbook
 
-    folder = autopacking_folder(raw_dir, window.business_date) if raw_dir else None
     result: Dict[int, List[list]] = {}
-    if folder is None:
+    if not raw_dir or autopacking_folder(raw_dir, window.business_date) is None:
         return result
+    folders: Dict[date, Optional[str]] = {}
     for hour in window.hours:
         if not window.slot_started(hour):
             continue
-        path = os.path.join(folder, f"{(hour - file_hour_offset) % 24:02d}.xlsx")
-        if not os.path.isfile(path):
+        path = autopack_hour_path(raw_dir, window, hour, file_hour_offset, folders)
+        if not path or not os.path.isfile(path):
             continue
         workbook = CalamineWorkbook.from_path(path)
         if "Throughput" not in workbook.sheet_names:
@@ -1444,14 +1456,35 @@ def autopacking_folder(raw_dir: str, business_date: date) -> Optional[str]:
     return raw_dir
 
 
+# โปรแกรม AutoPacking ขึ้นโฟลเดอร์วันใหม่ตอน 13:00 — ไฟล์ 13.xlsx (ยอด 12点-13点) เป็นไฟล์แรกของโฟลเดอร์
+AUTOPACK_FOLDER_ROLL_HOUR = 13
+
+
+def autopack_hour_path(raw_dir: str, window: Window, hour: int, file_hour_offset: int = -1,
+                       folders: Optional[Dict[date, Optional[str]]] = None) -> Optional[str]:
+    """ไฟล์ของชั่วโมงนี้ — ชั่วโมงที่เลยรอบของโฟลเดอร์ (12点-13点 ของวันถัดไป) อยู่ในโฟลเดอร์วันถัดไป"""
+    folder_date = window.business_date
+    folder_end = datetime.combine(folder_date + timedelta(days=1), datetime.min.time()).replace(
+        hour=AUTOPACK_FOLDER_ROLL_HOUR)
+    if window.slot_end(hour) >= folder_end:  # ไฟล์ 13.xlsx เขียนตอน 13:00 พอดี = ไฟล์แรกของโฟลเดอร์ถัดไป
+        folder_date += timedelta(days=1)
+    folders = {} if folders is None else folders
+    if folder_date not in folders:
+        folders[folder_date] = autopacking_folder(raw_dir, folder_date)
+    folder = folders[folder_date]
+    if folder is None:
+        return None
+    return os.path.join(folder, f"{(hour - file_hour_offset) % 24:02d}.xlsx")
+
+
 def autopacking_sheets(raw_dir: str, window: Window, file_hour_offset: int = -1,
                        log: LogFunc = _noop) -> List[RawSheet]:
     """รวมชีต Throughput / Abnormal ของไฟล์ 00-23.xlsx ที่อยู่ในรอบ"""
     if not raw_dir or not os.path.isdir(raw_dir):
         _say(log, f"Daily summary: ไม่พบโฟลเดอร์ AutoPacking {raw_dir}", "WARN")
         return []
-    folder = autopacking_folder(raw_dir, window.business_date)
-    if folder is None:
+    folders: Dict[date, Optional[str]] = {}
+    if autopacking_folder(raw_dir, window.business_date) is None:
         _say(log, f"Daily summary: ไม่มีไฟล์ AutoPacking ของวันที่ {window.business_date} บน share แล้ว", "WARN")
         return []
     throughput = RawSheet("AUTOPACKING Throughput", [], [])
@@ -1459,9 +1492,8 @@ def autopacking_sheets(raw_dir: str, window: Window, file_hour_offset: int = -1,
     for hour in window.hours:
         if not window.slot_started(hour):
             continue
-        file_hour = (hour - file_hour_offset) % 24
-        path = os.path.join(folder, f"{file_hour:02d}.xlsx")
-        if not os.path.isfile(path):
+        path = autopack_hour_path(raw_dir, window, hour, file_hour_offset, folders)
+        if not path or not os.path.isfile(path):
             continue
         try:
             from python_calamine import CalamineWorkbook
