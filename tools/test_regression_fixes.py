@@ -298,6 +298,22 @@ class SchedulerRegressionTests(unittest.TestCase):
         app.restore_ui_after_run()
         self.assertEqual(calls, [True, False])
 
+    def test_stop_auto_during_run_redraws_buttons(self) -> None:
+        app = self.make_app()
+        calls = []
+
+        class Button:
+            def grid_remove(self): calls.append("remove")
+            def configure(self, **_): pass
+
+        app.btn_stop_auto = app.btn_start = Button()
+        app.set_ui_running = lambda active: calls.append(("ui", active))
+        app.set_next_run_display = app.set_status = app.write_log = app.log_scheduler_event =             lambda *a, **k: None
+        app.scheduler_running, app.running, app.mode = True, True, "auto"
+        app.stop_scheduler()
+        self.assertEqual((app.scheduler_running, app.mode), (False, "manual"))
+        self.assertIn(("ui", True), calls)
+
     def test_bots_start_on_launch_unless_disabled(self) -> None:
         app = self.make_app()
         started = []

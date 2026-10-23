@@ -6810,6 +6810,11 @@ class App(ctk.CTk):
             self.cancel_pending_runs()
             self.stop_requested = False
             self.set_ui_running(False)
+        else:
+            # หยุด Auto ระหว่างรอบกำลังรัน: เดิมปุ่มช่องนี้หายไปจนรอบจบ
+            # รอบที่เหลือถือเป็นรอบรันเอง — วาดปุ่มใหม่ (Start Auto + Stop Run ไว้หยุดรอบนี้)
+            self.mode = "manual"
+            self.set_ui_running(True)
 
         self.write_log("Auto scheduler stopped", level="SUCCESS")
         self.log_scheduler_event("Auto stopped by user (กดปุ่มหยุด Auto)")
