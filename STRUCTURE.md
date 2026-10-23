@@ -26,6 +26,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 |------|---------|
 | `bot_main.py` | **หัวใจหลัก (~6000 บรรทัด)** — Flask `bot_app` (webhook) + คลาส `App(ctk.CTk)` รวมทุกหน้า/ทุกระบบ + Data Export (DWS DB + JMS API) + scheduler |
 | `Createphoto.py` | เปิด Excel ผ่าน win32com, จัดวันที่/คอลัมน์ตามเวลา, แคปภาพชีต → `run_create(...)` (เรียกจาก `App.run_process`) |
+| `daily_summary.py` | **Daily Summary** (ส่งวันละครั้งตามเวลา): คำนวณและวาดทุกตารางเองจากไฟล์ดิบ — AutoPacking (Autoformat A2:AK32), DWS (DWSREALTIME), AUTO PDA / กระสอบซิปแดง / DWS PDA จากไฟล์ JMS และตาราง Error จากชีต Abnormal ของไฟล์รายชั่วโมงที่รวมแล้ว (ตัด Billcode ซ้ำ, % ตามสูตรไฟล์ manual), วาด PNG (Pillow), รวมรูป Excel (AUTOPACKING/DWSREALTIME) เป็น Feishu post ข้อความเดียว แล้วส่งไฟล์ข้อมูลดิบรวมแยก sheet (`run`, `build`, `send`) |
 | `Botmessage.py` | อัปโหลดรูปเข้า Feishu แล้วส่งเข้า chat → `run_send(folder, ...)` (เรียกจาก `App.run_process`) |
 | `controller/controller_api.py` | Flask API พอร์ต **6100** (`/status`, `/switch_plan`, `/refresh`); endpoint ที่แก้สถานะต้องส่ง `VERIFY_TOKEN` |
 | `core/jms_api.py` | เรียก JMS J&T: `search_user`, `reset_app_password`, `reset_jms_password`, `enable_user` (BASE_URL `jmsgw.jtexpress.co.th`) |
@@ -47,6 +48,9 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - `WorkbookCard`, `SheetRow` (คลาสแยก) — การ์ดตั้งค่าไฟล์ Excel / ชีตในหน้า Workbooks
 
 ### Data Export pipeline (DWS DB + JMS API)
+- `_jms_base_headers` and `_run_realtime_db` request `lang=CN` and `langtype=CN` for JMS AUTO/PDA and Realtime exports. Daily Summary and Realtime resolve Chinese headers first and accept legacy Thai files. Employee-account APIs retain their original language.
+- `realtime_report.build_matrix` accepts `最新操作类型` / `超时类型` while preserving the existing English category values and Thai summary labels. `Project-Template/modules/realtime_db_bilingual.pq` provides the equivalent bilingual Excel query, selects the DATA sheet when present, and preserves the Thai output column names used by existing formulas.
+- `tools/update_realtime_query.py` backs up the workbook, changes only REALTIME_DB inside DataMashup, and regenerates its DPAPI permission binding per MS-QDEFF 2.6. Other XLSX parts stay byte-identical. `tools/test_realtime_power_query.py` tests four native Excel language/layout combinations; `tools/probe_realtime_chinese.py` and `tools/verify_realtime_live.py` verify a live export without Feishu delivery.
 - `run_dws_jms_task` / `run_dws_jms_process` — orchestrate การดึงยอด
 - `run_dws()` — query MySQL DB (`get_dws_db_config`, `_probe_dws_db` ผ่าน pymysql) แปลงเป็น Excel (`_dws_row_from_record`, `autofit_excel_file`)
 - `run_jms_auto` / `run_jms_pda` / `run_realtime_db` / `_export_jms` / `_jms_fire_export` / `_jms_collect_export` — ยิง JMS export API, ตรวจว่าไฟล์เป็น XLSX จริง, เขียนไฟล์ชั่วคราวที่ยังมีนามสกุล `.xlsx` แล้วแทนไฟล์หลักแบบ atomic เมื่อจบครบเท่านั้น
@@ -54,9 +58,22 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 
 ### Workbook (แคปภาพ) + ส่ง
 - `run_process()` — เรียก `run_create(...)` (Createphoto) แคปภาพ แล้ว `run_send(...)` (Botmessage) ส่งรูป
+- `delete_columns_by_start` หาคอลัมน์ชั่วโมงแรกจากหัวตารางของแต่ละชีต (`hour_header_columns`) คืน `{ชีต: จำนวนคอลัมน์ที่ลบ}` แล้ว `shift_range_left` เลื่อนช่วงรูปตามชีตนั้น — ถ้าหาหัวตารางไม่เจอใช้ตำแหน่งเดิม (12点 = คอลัมน์ C)
+
+### Daily Summary (สรุปยอดประจำวัน)
+- หน้า **📋 สรุปรายวัน** (`build_daily_summary_page`) ตั้งค่า `[DAILY_SUMMARY]` ได้ทั้งหมด: Chat ID, ไฟล์ดิบ, เปิด/ปิดและแก้ชื่อหัวข้อ, path ไฟล์ดิบแยก (`custom_paths` + `path_*` ช่องว่าง = ใช้ค่าหน้า ตั้งค่า), รูปจาก Excel แทน และค่าขั้นสูง พร้อมปุ่ม สร้างตัวอย่าง (ไม่ส่ง) / ส่งสรุปตอนนี้ (`start_daily_summary_now`)
+- `daily_summary_tick` — ตัวตั้งเวลาแยกจาก pipeline เช็กทุก 30 วินาที ขณะเปิด Auto และติ๊ก `auto_send`: ส่งวันละครั้งเมื่อถึง `send_time` (ชั่วโมง:นาที ค่าเริ่มต้น 12:00) ของรอบงานนั้น (`daily_summary.due_to_send`) ถ้ารอบรายชั่วโมงกำลังรันจะรอ, ติ๊ก `send_catch_up` = ส่งตามได้ไม่เกิน `send_late_minutes` (30) นาทีหลังเวลาส่ง / ไม่ติ๊ก = ส่งเฉพาะตรงเวลา (เผื่อ `ON_TIME_GRACE_MINUTES` 5 นาที) เกินนั้นแจ้งครั้งเดียวให้กดส่งเอง, ส่งไม่สำเร็จลองใหม่ได้ไม่เกิน 3 ครั้งห่างกัน 10 นาที, สำเร็จแล้วจำ `last_sent_date` กันส่งซ้ำ
+- ตั้งค่าใน `[DAILY_SUMMARY]` ของ `config.ini` (สร้างให้อัตโนมัติ): `sections`, ชื่อรูป Excel, จำนวนเครื่อง PDA, หัวข้อ (`{date}` `{start}` `{end}`; เวลาตามคอลัมน์ AutoPacking ที่มียอดตั้งแต่ 100 และตัดชั่วโมงท้ายที่รวมกันไม่เกิน `title_end_trim_total` 1000 ออก), `abnormal_file` (ว่าง = ใช้ชีต Abnormal รายชั่วโมง; ใส่ไฟล์/โฟลเดอร์ Abnormal Detail = ใช้ไฟล์นั้นแทน ซึ่งมีพัสดุ Intercept ด้วย), `chat_id`, `send_raw_file`, `raw_file_max_mb`
+- ไฟล์ Excel หลักของสรุปคือ `2_DWS & PDA (Network Sharing) - เมนูสแกนเปรียบเทียบ.xlsx` — ช่วงรูปในหน้า Workbooks: DWSREALTIME `A1:AF26`, AUTO PDA `A1:AC50`, DWS PDA `A1:AC15`, PDA BAG `A1:B47`
+- ทุกตารางวาดเองจากไฟล์ดิบเป็นค่าเริ่มต้น ตรวจกับค่าที่ Excel คำนวณแล้ว: AutoPacking 918 ช่อง (2026-08-27), DWS 594 ช่อง และ AUTO PDA / DWS PDA / กระสอบแดง (ตรวจกับค่าที่ Excel คำนวณใน 2026-09-11 แล้วตรงทุกช่อง; กระสอบแดงตัดเลขกระสอบซ้ำทั้งไฟล์ก่อนนับ เหมือน PDA BAG DATA; DWS PDA นับเฉพาะแถวที่ไม่มีเลขกระสอบ เหมือน query DWS PDA DATA) ตั้ง `{key}_image` เพื่อใช้รูปจาก Excel แทนได้
+- ตารางกระสอบซิปแดงเป็นแถวยาวแบบ manual แต่เติมพื้นขาวด้านขวาให้รูปไม่สูงเกิน 1.2 เท่าของความกว้าง เพราะ Feishu ตัดท้ายรูปที่สูงยาวใน post
+- รูป Excel ต้องสร้างในรอบเดียวกันหรือไม่เก่ากว่า `image_max_age_minutes`; ส่วนที่ขาดจะขึ้นในข้อความว่าไม่มีข้อมูลและสถานะเป็น WARNING
+- ไฟล์ดิบ: ชีตตาราง `TABLE_SHEETS` (AUTO, DWS = DWSREALTIME, DWS+DWSPDA = DWSREALTIME + ตารางลงรถ PDA, AUTOPDA, กระสอบ, ERROR — เขียนจาก grid เดียวกับรูปด้วย `write_grid_sheet`) แล้วตามด้วย `DATA_SHEETS` ครบทุกชีต ชีตที่ไม่มีข้อมูลของรอบนี้ปล่อยว่าง (`window_file_sheet` กรอง DWS1-8/DWS9-11 ตามรอบ)
+- `backup_dir` (หน้าเว็บเรียก "โฟลเดอร์บันทึกไฟล์ Excel"): ทุกครั้งที่ส่งจะ `save_excel_copy` บันทึกไฟล์ Excel ที่ใช้ส่งลงโฟลเดอร์นี้ตรง ๆ ก่อนส่ง (ไม่มีโฟลเดอร์ย่อย ไม่มีรูป) ชีตตารางมีสีแท็บ `TABLE_TAB_COLOR`
+- ทดสอบนอกโปรแกรม: `python daily_summary.py --start "2026-10-18 15:00" --end "2026-10-19 10:00" --no-send`
 
 ### Scheduler / runtime
-- `start_scheduler` / `scheduler_loop` / `stop_scheduler` — Auto รันตามรอบ (`run_minute`, `start_hour`/`end_hour`) โดยเทียบเป็นช่องนาที จึงไม่พลาดรอบสุดท้ายจาก loop ที่ตื่นหลังวินาที 00
+- `start_scheduler` / `scheduler_loop` / `stop_scheduler` — Auto รันตามรอบ (`run_minute`, `start_hour`/`end_hour`) โดยเทียบเป็นช่องนาที จึงไม่พลาดรอบสุดท้ายจาก loop ที่ตื่นหลังวินาที 00; ถ้าวันที่ตั้งตามรอบงานอัตโนมัติ (`scheduler_follows_shift_dates`) เลยเวลาสิ้นสุดแล้ว Auto **ไม่หยุด** แต่รอวันที่เลื่อน (`date_roll_hour` 13:00) แล้วเริ่มรอบใหม่เอง ช่วงวันที่ที่ผู้ใช้เลือกเองยังจบตามเดิม; เหตุการณ์ Auto บันทึกลง runtime log ระดับ NOTICE (`log_scheduler_event`); `set_locked_date` เลื่อนวันที่ได้แม้ช่องถูกล็อกระหว่าง Auto
 - `run_once` / `run_process` / `worker_loop` / `watchdog` — คุมการรัน manual + กันค้าง; `run_generation` กันงานเก่ากลับมาเขียนผลหลังผู้ใช้หยุดแล้วเริ่มรอบใหม่
 - `run_token_healthcheck` / `notify_it_alert` / `notify_export_token_error` — ตรวจ token เชิงรุกแล้วแจ้ง Feishu
 - กล่อง `Live Log`, `Controller Logs` และ `JMS Logs` เป็น read-only: โปรแกรมปลดล็อกเฉพาะตอนเติม/ล้างข้อความแล้วล็อกกลับทันที ผู้ใช้ยังถมดำ เลื่อน และคัดลอกได้ แต่พิมพ์ทับ วาง หรือลบข้อความไม่ได้
@@ -81,14 +98,15 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 ## Config (`config.ini`)
 - `[PATH]`: `output_dir`
 - `[FEISHU]`: `app_id`, `app_secret`, `chat_id`, `verify_token`, `bot_port` (7000), `ngrok_url`, `auth_token` (JMS), `bot_name` (default `BOT_JMSKKN`)
-- `[TIME]`: `run_minute` (5), `start_hour` (15), `end_hour` (12)
-- `[DWS_JMS]`: `dws_url`, `dws_token`, `jms_token`, ชื่อไฟล์ export (`name_dws`, `name_auto`, `name_dwspda`, `name_realtime_db`), ช่วงวัน/เวลา (`start_date`, `end_date`, `start_hour`, `end_hour`), `raw_path`, `download_size`, flags `enabled` / `send_*_file`
+- `[TIME]`: `run_minute` (5), `start_hour` (15), `end_hour` (12) — รอบแรกคือชั่วโมงหลัง `start_hour` (เริ่ม 15:00 -> 16:0x, `scheduler_first_run_at`) รอบสุดท้ายคือ `end_hour` ที่นาที `run_minute` (เช่น 12:05, `scheduler_last_run_at`)
+- `[DWS_JMS]`: `dws_url`, `dws_token`, `jms_token`, ชื่อไฟล์ export (`name_dws`, `name_auto`, `name_dwspda`, `name_realtime_db`), ช่วงเวลา (`start_hour`, `end_hour`; `start_date` / `end_date` ไม่บันทึกแล้ว — วันที่ตามรอบงานเสมอ เลือกเองได้เฉพาะตอนโปรแกรมเปิดอยู่), `raw_path`, `download_size`, flags `enabled` / `send_*_file`
 - `[DWS1]..[DWS9-11]`: `ip`, `port` ของเครื่อง agent (default subnet `10.30.32.x`, พอร์ต 4000/4001)
 - `[WORKBOOKS]` / `[EXPORTS]`: `items` — รายการไฟล์ Excel/ชีต ที่จัดการในหน้า Workbooks
 - หมายเหตุ: `core/config.ini` เป็นไฟล์แยกของ `core/*` (มี `[FEISHU]`, `[NGROK]`)
 - Build เก็บ `metrics_config.yaml` สองตำแหน่ง: สำเนาที่ผู้ใช้แก้ได้ข้าง EXE และสำเนากู้คืน read-only ใน `_internal`; ไฟล์เดิมของผู้ใช้มีสิทธิ์สูงสุดและไม่ถูกเขียนทับ
 
 ## Dependencies / บริการภายนอก
+- `build_onedir.ps1` validates resolved release/move paths under `dist/` and temporary cleanup under the OS temp directory before filesystem operations. `Excel/` is local-only because operator workbooks contain source data; version the reusable M query and patch tools instead.
 - Python libs (ดู `requirements.txt`): `customtkinter`, `tkcalendar`, `requests`, `flask`, `waitress`, `pywin32`, `Pillow`, `pymysql`, `openpyxl`, `pyinstaller`
 - Feishu OpenAPI (`open.feishu.cn`), JMS J&T (`jmsgw.jtexpress.co.th`)
 - MySQL DB ของ DWS (ต่อผ่าน pymysql — ตั้งค่าใน `[DWS_JMS]`)

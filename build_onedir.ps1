@@ -10,6 +10,13 @@ $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectDir
+function Assert-ChildPath([string]$Path, [string]$Root) {
+    $ResolvedPath = [System.IO.Path]::GetFullPath($Path)
+    $ResolvedRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $ResolvedPath.StartsWith($ResolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing filesystem operation outside expected root: $ResolvedPath"
+    }
+}
 $AppVersion = (& python -c "from app_version import APP_VERSION; print(APP_VERSION)").Trim()
 if ($LASTEXITCODE -ne 0 -or $AppVersion -notmatch '^\d+\.\d+\.\d+$') {
     throw "Invalid APP_VERSION in app_version.py: '$AppVersion'"
@@ -130,6 +137,8 @@ $ErrorActionPreference = "Stop"
 
 $PyInstallerDistDir = Join-Path $ProjectDir "dist\AutoReportFeishu"
 $DistDir = Join-Path $ProjectDir ("dist\" + $ReleaseFolderName)
+Assert-ChildPath $DistDir $DistRoot
+Assert-ChildPath $PyInstallerDistDir $DistRoot
 if (Test-Path $DistDir) {
     Remove-Item -LiteralPath $DistDir -Recurse -Force
 }
@@ -166,6 +175,7 @@ $SavedDb = Join-Path $ConfigBackupDir "store.db"
 if (Test-Path $SavedDb) {
     Copy-Item -LiteralPath $SavedDb -Destination (Join-Path $DistDir "store.db") -Force
 }
+Assert-ChildPath $ConfigBackupDir ([System.IO.Path]::GetTempPath())
 Remove-Item -LiteralPath $ConfigBackupDir -Recurse -Force
 
 # ---- browser ของ Playwright ----

@@ -148,8 +148,12 @@ def upload_image(token: str, path: str, log: Optional[LogFunc] = None) -> str:
     return res["data"]["image_key"]
 
 
-def upload_file(token: str, path: str, log: Optional[LogFunc] = None) -> str:
-    """อัปโหลดไฟล์แนบเข้า Feishu คืน file_key"""
+def upload_file(token: str, path: str, log: Optional[LogFunc] = None,
+                file_type: str = "xls") -> str:
+    """อัปโหลดไฟล์แนบเข้า Feishu คืน file_key
+
+    file_type ของ Feishu: xls/doc/pdf/ppt/mp4/opus หรือ stream สำหรับไฟล์อื่น (.zip)
+    """
     filename = os.path.basename(path)
     mime = (mimetypes.guess_type(filename)[0]
             or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -160,7 +164,7 @@ def upload_file(token: str, path: str, log: Optional[LogFunc] = None) -> str:
             response = requests.post(
                 FILE_URL, headers=headers,
                 files={"file": (filename, fh, mime)},
-                data={"file_type": "xls", "file_name": filename},
+                data={"file_type": file_type, "file_name": filename},
                 timeout=TIMEOUT_UPLOAD)
             return response_json(response, "upload_file")
 
@@ -209,6 +213,25 @@ def send_card(token: str, chat_id: str, card_content: str,
         MESSAGE_URL, token,
         {"receive_id": chat_id, "msg_type": "interactive", "content": card_content},
         "send_card", log=log)
+
+
+def send_post(token: str, chat_id: str, title: str, content: list,
+              log: Optional[LogFunc] = None) -> Dict[str, Any]:
+    """ส่งข้อความแบบ rich text (post) — หัวข้อกับรูปหลายรูปอยู่ในข้อความเดียว
+
+    content คือรายการ "บรรทัด" แต่ละบรรทัดเป็นรายการ element เช่น
+    [[{"tag": "text", "text": "หัวข้อ"}], [{"tag": "img", "image_key": "..."}]]
+    title ว่าง = ไม่มีบรรทัดหัวเรื่องของข้อความ
+    """
+    body: Dict[str, Any] = {"content": content}
+    if str(title or "").strip():
+        body["title"] = title.strip()
+    post = {"zh_cn": body}
+    return _post_json(
+        MESSAGE_URL, token,
+        {"receive_id": chat_id, "msg_type": "post",
+         "content": json.dumps(post, ensure_ascii=False)},
+        "send_post", log=log)
 
 
 def chat_name(token: str, chat_id: str) -> str:

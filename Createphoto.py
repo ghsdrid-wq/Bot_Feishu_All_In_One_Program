@@ -253,35 +253,73 @@ def update_excel_date(wb, start_hour: int, log: Optional[LogFunc] = None) -> Non
             print(e)
 
 
-def delete_columns_by_start(wb, start_hour: int, target_sheets: List[str], log: Optional[LogFunc] = None) -> int:
-    """Original delete logic preserved: delete C until mapped column, backward."""
-    try:
-        hour_to_col = {
-            12: 3, 13: 4, 14: 5, 15: 6, 16: 7, 17: 8,
-            18: 9, 19: 10, 20: 11, 21: 12, 22: 13, 23: 14,
-            0: 15, 1: 16, 2: 17, 3: 18, 4: 19, 5: 20,
-            6: 21, 7: 22, 8: 23, 9: 24, 10: 25, 11: 26,
-        }
-        delete_until = hour_to_col.get(start_hour)
-        if not delete_until:
-            return 0
+def hour_header_columns(values: Any, max_rows: int = 12, max_cols: int = 40) -> Dict[int, int]:
+    """หาแถวหัวตารางชั่วโมงในค่าที่อ่านจากชีต คืน {ชั่วโมง: เลขคอลัมน์ (เริ่ม 1)}
 
-        deleted_count = delete_until - 3
-        for sheet in target_sheets:
-            try:
-                ws = excel_call(lambda s=sheet: wb.Worksheets(s), log, f"open worksheet {sheet}", timeout=120)
-                for col in range(delete_until - 1, 2, -1):
-                    excel_call(lambda c=col, sheet_ref=ws: sheet_ref.Columns(c).Delete(Shift=-4159), log, f"delete column {sheet}:{col}", timeout=180)
+    ชีตแต่ละไฟล์วางคอลัมน์แรกต่างกัน (ไฟล์ bot เดิม 12点 อยู่คอลัมน์ C
+    ไฟล์ "2_DWS & PDA" ชีต DWSREALTIME อยู่คอลัมน์ B) จึงอ่านตำแหน่งจริงจากหัวตาราง
+    """
+    best: Dict[int, int] = {}
+    for row_index in range(max_rows):
+        found: Dict[int, int] = {}
+        for column_index in range(max_cols):
+            hour = extract_hour_header(_matrix_cell(values, row_index, column_index))
+            if hour is not None and hour not in found:
+                found[hour] = column_index + 1
+        if len(found) > len(best):
+            best = found
+    return best
+
+
+def delete_columns_by_start(wb, start_hour: int, target_sheets: List[str],
+                            log: Optional[LogFunc] = None) -> Dict[str, int]:
+    """ลบคอลัมน์ชั่วโมงก่อน start_hour ของแต่ละชีต คืน {ชื่อชีต: จำนวนคอลัมน์ที่ลบ}
+
+    ตำแหน่งคอลัมน์ชั่วโมงแรกอ่านจากหัวตารางของชีตนั้นเอง ถ้าหาไม่เจอจึงใช้ตำแหน่งเดิม
+    (12点 = คอลัมน์ C) เหมือนก่อนหน้า
+    """
+    legacy_first_col = 3
+    legacy_order = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    result: Dict[str, int] = {}
+    seen: set = set()
+    for sheet in target_sheets:
+        key = sheet.strip().lower()
+        if key in seen:  # หลาย export ใช้ชีตเดียวกัน ต้องลบครั้งเดียว
+            continue
+        seen.add(key)
+        try:
+            ws = excel_call(lambda s=sheet: wb.Worksheets(s), log, f"open worksheet {sheet}", timeout=120)
+            values = excel_call(
+                lambda sheet_ref=ws: sheet_ref.Range(sheet_ref.Cells(1, 1), sheet_ref.Cells(12, 40)).Value2,
+                log, f"read hour headers {sheet}", timeout=120)
+            headers = hour_header_columns(values)
+            if headers and start_hour in headers:
+                first_col = min(headers.values())
+                delete_until = headers[start_hour]
+            elif start_hour in legacy_order:
+                first_col = legacy_first_col
+                delete_until = legacy_first_col + legacy_order.index(start_hour)
                 if log:
-                    log(f"[DELETE] {sheet} {deleted_count} cols")
-            except Exception as e:
-                if log:
-                    log(f"[SKIP] Could not trim sheet {sheet}: {e}")
-        return deleted_count
-    except Exception as e:
-        if log:
-            log(f"[ERROR] delete_columns: {e}")
-        return 0
+                    log(f"[DELETE] {sheet}: hour header not found, using legacy column C layout")
+            else:
+                result[sheet] = 0
+                continue
+            for col in range(delete_until - 1, first_col - 1, -1):
+                excel_call(lambda c=col, sheet_ref=ws: sheet_ref.Columns(c).Delete(Shift=-4159), log, f"delete column {sheet}:{col}", timeout=180)
+            result[sheet] = delete_until - first_col
+            if log:
+                log(f"[DELETE] {sheet} {result[sheet]} cols")
+        except Exception as e:
+            result[sheet] = 0
+            if log:
+                log(f"[SKIP] Could not trim sheet {sheet}: {e}")
+    return result
+
+
+def deleted_for(deleted: Dict[str, int], sheet: str) -> int:
+    lookup = {name.strip().lower(): count for name, count in deleted.items()}
+    return lookup.get(sheet.strip().lower(), 0)
 
 
 def extract_hour_header(value: Any) -> Optional[int]:
@@ -1226,10 +1264,10 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                 active_group.append(item)
 
             delete_sheets = [x.sheet for x in active_group if x.delete_by_start]
-            deleted_cols = delete_columns_by_start(wb, start_hour, delete_sheets, log=write) if delete_sheets else 0
+            deleted_cols = delete_columns_by_start(wb, start_hour, delete_sheets, log=write) if delete_sheets else {}
             if delete_sheets:
                 validation_ranges = {
-                    item.sheet: shift_range_left(item.cell_range, deleted_cols)
+                    item.sheet: shift_range_left(item.cell_range, deleted_for(deleted_cols, item.sheet))
                     for item in active_group if item.delete_by_start
                 }
                 validate_hour_formula_alignment(
@@ -1250,7 +1288,8 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                 if not keep_running():
                     return
 
-                rng = shift_range_left(item.cell_range, deleted_cols) if item.delete_by_start else item.cell_range
+                rng = (shift_range_left(item.cell_range, deleted_for(deleted_cols, item.sheet))
+                       if item.delete_by_start else item.cell_range)
                 if not item.delete_by_start:
                     write(f"[SKIP DELETE] {item.name}")
 

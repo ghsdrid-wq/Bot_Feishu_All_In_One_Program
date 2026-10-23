@@ -1,5 +1,60 @@
 # Changelog
 
+## 2.1.13
+
+- Auto's first run is the hour after the start hour. A 15:00 start with run minute 1 now runs first at 16:01. The 15:01 run had only one minute of the new round, so it posted a `15:00 - 15:00` card with empty JMS tables and stale AutoPacking numbers.
+- Daily Summary accepts the waybill header `运单编号` used by JMS Chinese exports since 2026-10-23. Before this, the PDA 人工建包, red zip bag, PDA unloading and DWS tables failed with "ไม่พบคอลัมน์ 运单号".
+- Auto now runs the end hour at its run minute: an end of 12:00 with run minute 5 makes 12:05 the final hourly run. Before this, 12:05 counted as past the end, so the last report went out at 11:05.
+- Daily Summary tables extend to 12点-13点 (24 hourly columns) when the round's report time passes 13:00, for days when releases run until 13:00. The 12:20 automatic send still ends at 11点-12点. The extra hour is read from the next date folder's `13.xlsx`, which the AutoPacking export writes at 13:00 exactly.
+- In the first two hours of a new round, the send-now and preview buttons summarise the round that just finished, so a manual press after 13:00 sends the previous day's summary.
+- Daily Summary header matching falls back to ignoring spaces and the word "ที่" when no listed header matches exactly, and a missing-column error now lists the headers found in the file, so the next JMS rename shows up in the Feishu report. Fixes the 2026-10-22 report where DWSXAUTOPDA.xlsx and DWSPDA.xlsx came with the renamed Thai headers (`เวลาสแกน`, `ผู้สแกน`) on a bot still running 2.1.11.
+
+## 2.1.12
+
+- Built and smoke-tested the onedir release with a responsive v2.1.12 window and healthy controller/Dashboard endpoints. Added resolved-path checks to release cleanup and move operations. Keep operator Excel source data local and preserve reusable query logic in Git as the baseline before the planned full workbook-calculation migration.
+
+- Request Chinese column headers for JMS AUTO/PDA exports (`DWSXAUTOPDA.xlsx` and `DWSPDA.xlsx`) using `lang=CN` / `langtype=CN`.
+- Read Chinese scan headers first in Daily Summary while preserving legacy Thai files and the existing report presentation.
+- Request Chinese Realtime DB headers and accept verified `最新操作类型` / `超时类型` with Thai fallback; live JMS keeps the operation/overtime category values in English.
+- Add bilingual REALTIME_DB Power Query to the operator DWS/PDA workbook, selecting columns by name and preserving the Thai output names expected by existing formulas. Preserve all other workbook parts and provide a backup plus reusable M query and patch tool.
+- Keep employee-account requests in their original language.
+- Verified 92 automated tests, four bilingual/layout native Excel fixtures, and live Chinese Realtime raw/report Power Query parity across 11,829 rows. Reopened the patched operator workbook and verified its other 11 queries and all XLSX parts outside DataMashup are unchanged.
+
+## 2.1.11
+
+- The end time in Daily Summary titles drops trailing AutoPacking hours whose combined total is at most `title_end_trim_total` (default 1000). For example, 2026-10-20 had 9点-10点 = 25,609 and 10点-11点 = 334, so the title now ends at 10.00 instead of 11.00. Set 0 to turn the rule off.
+- Scheduler Start/End dates are no longer saved to `config.ini`; only the hours are. Each launch starts from the current shift dates and keeps rolling them at `date_roll_hour`. A manually picked date range applies only until the program closes.
+- Added a "send late if the send time was missed" checkbox with a minutes field (`send_catch_up`, `send_late_minutes`, defaults on / 30). Unticked sends only on time, allowing a 5-minute grace for the 30-second timer and a finishing hourly run.
+- Automatic Daily Summary catch-up is limited to 30 minutes after the send time (`send_late_minutes`). Starting Auto later than that skips the automatic send, logs one warning, and asks the operator to press send-now.
+- Auto no longer stops after the final 12:00 run when the Start/End dates follow the shift automatically: it waits, the dates roll at `date_roll_hour` (13:00), and the next shift starts on its own at the start hour. A manually selected date range still finishes at its end. This keeps the Daily Summary timer (12:20) alive.
+- Fixed the shift date roll silently failing while Auto runs: the locked DateEntry ignored `set_date`, after which the program treated the dates as user-chosen and never rolled them again.
+- Auto start, user stop, finish, wait, continue, and program close are written to `logs/<date>-runtime.log` as NOTICE events so a stopped Auto can be explained afterwards.
+- Table sheets in the raw-data workbook get an orange tab colour so they stand apart from data sheets.
+- The daily backup now saves only the Excel file sent to the group, directly into the chosen folder (no per-day subfolder, no images); preview builds still save nothing.
+
+## 2.1.10
+
+- The raw-data workbook starts with the summary tables as sheets — AUTO (AutoPacking), DWS (DWSREALTIME), DWS+DWSPDA (DWSREALTIME followed by the PDA unloading table), AUTOPDA, กระสอบ, ERROR — using the same colours and numeric cells as the posted images, followed by every data sheet in a fixed order including DWS1–8 and DWS9-11. Data with no rows for the business day (missing or stale files) leaves its sheet empty, and DWS realtime sheets keep only rows inside the report window.
+- Added a daily backup folder: each send first copies the raw workbook and table images to `<backup_dir>/<business date>/`, so files survive a failed Feishu delivery. Preview builds are not backed up.
+
+## 2.1.9
+
+- Added Daily Summary (`daily_summary.py`): one Feishu post with the manual-report headings and tables (AutoPacking, PDA 人工建包, red zip bags, PDA unloading scans, DWS, AutoPacking abnormal report), followed by one raw-data workbook with a sheet per source.
+- PDA 人工建包, red zip bag, and PDA unloading tables are computed directly from the JMS raw files and rendered with the manual workbook's colour scale; red zip bags de-duplicate bag numbers across the whole file (first row kept, like the manual `PDA BAG DATA`) before counting `B…` bags per PDA. Verified cell-for-cell against the 2026-09-11 Excel results.
+- The AutoPacking abnormal table reads the auto-exported `all error.xls` (Abnormal Detail) and counts distinct billcodes per Sort Source within the business day, matching the manual 2026-10-18 report (604 / 2,892 / 3,501).
+- The abnormal source may be a folder; the Auto export folder is scanned for the Abnormal Detail file with the most rows in the business day, warning when its data ends more than 2 hours before report time.
+- The red zip bag table keeps the manual single-list layout (yellow header/total) on a widened canvas so Feishu posts do not crop the tall image.
+- PDA unloading counts keep only rows without a bag number, matching the manual `DWS PDA DATA` Power Query filter.
+- Excel start-hour trimming now locates the first hour column from each sheet's own header row, so sheets whose 12点 column is B (the `2_DWS & PDA` DWSREALTIME layout) are trimmed correctly; duplicate sheet entries are trimmed once.
+- The AutoPacking (Autoformat A2:AK32) and DWS (DWSREALTIME) tables are now computed and drawn from raw files too, so the summary no longer depends on Excel; verified against cached Excel results (918 and 594 cells, no differences). Excel images remain available through `autopacking_image` / `dws_image`.
+- AutoPacking falls back to the share's root folder only for the newest, not-yet-archived business day.
+- The abnormal table now aggregates the hourly AutoPacking `Abnormal` sheets (Chinese Sort Source names mapped) instead of a separate Abnormal Detail export, so the raw workbook no longer duplicates it as `AUTOPACKING Error`. Hourly data lacks Intercept parcels, so 2026-10-18 gives 604 / 2,891 / 3,495 versus the manual 604 / 2,892 / 3,501; `abnormal_file` still selects the Abnormal Detail export.
+- Raw PDA sheets keep only the machines shown in the tables (Autopacking_pda01–45, Dws_pda01–10); the 2026-09-16 raw workbook shrinks from 25.7MB to 5.7MB.
+- Added the **สรุปรายวัน** page for every `[DAILY_SUMMARY]` option, a preview (no send) and a confirmed send-now button, and an optional per-source raw path override (`custom_paths`, `path_*`) that falls back to the shared Settings paths for blank fields.
+- Daily Summary runs on its own once-a-day timer instead of a pipeline step: while Auto is on and `auto_send` is ticked it sends at the selected hour and minute (default 12:00), waits for a running hourly pipeline to finish, retries at most three times ten minutes apart, and records `last_sent_date`. The page's send-now button ignores the schedule.
+- Raw-data workbooks keep formula-like text as text and are zipped when larger than Feishu's 30MB attachment limit.
+- Added `feishu_client.send_post` and an optional `file_type` for `upload_file`.
+
 ## 2.1.8
 
 - Preserved formula-like JMS raw values such as text beginning with `=` as plain text in the RealtimeDB `DATA` sheet, preventing Excel from repairing `sheet2.xml`.

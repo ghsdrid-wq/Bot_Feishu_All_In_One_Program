@@ -27,6 +27,14 @@ SHEET_RAW = "DATA"
 # หัวคอลัมน์ในไฟล์ดิบที่ต้องใช้ ชื่อมาจาก JMS ตรง ๆ
 COL_OPERATE = "ประเภทการดำเนินงานล่าสุด"
 COL_OVERTIME = "ประเภทเกินเวลา"
+# JMS header reference and runtime fallback, in priority order.
+# Keep Chinese first; retain Thai aliases for historical exports.
+# 最新操作类型 -> ประเภทการดำเนินงานล่าสุด / ชื่อประเภทการดำเนินการล่าสุด
+# 超时类型 -> ประเภทเกินเวลา
+# These are source headers; COL_OPERATE/COL_OVERTIME also label the Thai report.
+# CN exports verified on 2026-10-22 keep category values in English.
+OPERATE_HEADERS = ("最新操作类型", COL_OPERATE, "ชื่อประเภทการดำเนินการล่าสุด")
+OVERTIME_HEADERS = ("超时类型", COL_OVERTIME)
 
 # แถวของตาราง (ชื่อที่โชว์, ค่าที่ JMS ส่งมา) เรียงตามของเดิมใน Excel
 # สามแถวท้ายยังไม่ได้ขอจาก JMS ในตอนนี้ แต่คงไว้ให้หน้าตาตารางเหมือนเดิม
@@ -105,9 +113,10 @@ def build_matrix(header: Sequence[str], data: Sequence[tuple],
                  log: Optional[LogFunc] = None) -> Dict[str, Dict[int, int]]:
     """นับจำนวนพัสดุแยกตามประเภทการดำเนินงาน x ชั่วโมงที่เกิน"""
     try:
-        i_operate = header.index(COL_OPERATE)
-        i_overtime = header.index(COL_OVERTIME)
-    except ValueError as exc:
+        cleaned = [str(value).strip() for value in header]
+        i_operate = next(cleaned.index(name) for name in OPERATE_HEADERS if name in cleaned)
+        i_overtime = next(cleaned.index(name) for name in OVERTIME_HEADERS if name in cleaned)
+    except StopIteration as exc:
         raise Exception(
             f"ไฟล์ดิบไม่มีคอลัมน์ที่ต้องใช้ ({COL_OPERATE} / {COL_OVERTIME})"
         ) from exc

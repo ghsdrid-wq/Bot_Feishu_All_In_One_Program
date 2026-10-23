@@ -36,6 +36,44 @@ from controller import controller_api  # noqa: E402
 
 
 class SchedulerRegressionTests(unittest.TestCase):
+    def test_realtime_requests_chinese_without_changing_filters(self) -> None:
+        app = bot_main.App.__new__(bot_main.App)
+        app.log = mock.Mock()
+        app.get_jms_auth_token = mock.Mock(return_value="test-token")
+        session = mock.Mock()
+        session.post.side_effect = RuntimeError("stop after request capture")
+        with self.assertRaisesRegex(RuntimeError, "request capture"):
+            app._run_realtime_db(session)
+        kwargs = session.post.call_args.kwargs
+        self.assertEqual(kwargs["headers"]["lang"], "CN")
+        self.assertEqual(kwargs["headers"]["langtype"], "CN")
+        self.assertEqual(kwargs["json"]["operateTypeCode"][0], "Arrive scan")
+        self.assertEqual(len(kwargs["json"]["overTimeType"]), 7)
+
+    def test_realtime_chinese_headers_match_legacy_with_reordered_columns(self) -> None:
+        rows = [("Arrive scan", "Exceed 4 hours with no track"),
+                ("Packing scan", "Exceed 12 hours with no track"),
+                ("Return Item Registration", "Exceed 48 hours with no track")]
+        expected = realtime_report.build_matrix(
+            [realtime_report.COL_OPERATE, realtime_report.COL_OVERTIME], rows)
+        actual = realtime_report.build_matrix(
+            ["超时类型", "ignored", "最新操作类型"], [(r[1], None, r[0]) for r in rows])
+        self.assertEqual(actual, expected)
+        self.assertEqual(sum(sum(v.values()) for v in actual.values()), 3)
+
+    def test_realtime_missing_required_header_fails_instead_of_zero_report(self) -> None:
+        with self.assertRaisesRegex(Exception, "ไฟล์ดิบไม่มีคอลัมน์"):
+            realtime_report.build_matrix(["unexpected"], [("Arrive scan",)])
+
+    def test_jms_scan_exports_request_chinese_headers(self) -> None:
+        app = bot_main.App.__new__(bot_main.App)
+        app.get_jms_auth_token = mock.Mock(return_value="test-token")
+        base, headers = app._jms_base_headers()
+        self.assertTrue(base.endswith("/operatingplatform"))
+        self.assertEqual(headers["lang"], "CN")
+        self.assertEqual(headers["langtype"], "CN")
+        self.assertEqual(headers["authtoken"], "test-token")
+
     def test_realtime_raw_formula_like_text_remains_plain_text(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "RealtimeDB.xlsx"
@@ -201,13 +239,23 @@ class SchedulerRegressionTests(unittest.TestCase):
             "run_minute": "1", "start_hour": "16", "end_hour": "23",
             "prefire_enabled": "true", "prefire_lead": "5",
         }
-        cfg["DWS_JMS"] = {
-            "start_date": "2026-09-27", "end_date": "2026-09-28",
-        }
         app.config = cfg
         app.ui_thread_id = -1
         app.last_run_minute = None
+        # วันที่ไม่ได้บันทึกใน config แล้ว — ช่วงวันที่ทดสอบคือช่วงที่เลือกเองในรอบเปิดโปรแกรมนี้
+        from datetime import date as _date
+        app._dates_user_selected = True
+        app._manual_dates = (_date(2026, 9, 27), _date(2026, 9, 28))
         return app
+
+    def test_scheduler_dates_follow_the_shift_and_are_not_saved(self) -> None:
+        from datetime import date as _date
+        app = self.make_app()
+        app._dates_user_selected = False
+        app.shift_date_range = lambda: (_date(2026, 10, 20), _date(2026, 10, 21))
+        start, end = app.get_scheduler_time_range()
+        self.assertEqual((start, end), (datetime(2026, 10, 20, 16), datetime(2026, 10, 21, 23)))
+        self.assertTrue(app.scheduler_follows_shift_dates())
 
     def test_scheduler_uses_full_datetime_range_across_midnight(self) -> None:
         app = self.make_app()
@@ -228,6 +276,35 @@ class SchedulerRegressionTests(unittest.TestCase):
             app.scheduler_slot_in_range(datetime(2026, 9, 28, 23, 0, 59)))
         self.assertFalse(
             app.scheduler_slot_in_range(datetime(2026, 9, 28, 23, 1, 0)))
+
+    def test_scheduler_runs_the_end_hour_at_its_run_minute(self) -> None:
+        # จบ 23:00 รันนาที 1 -> รอบสุดท้ายคือ 23:01 (เดิมข้ามไป เพราะ 23:01 เลย 23:00)
+        app = self.make_app()
+        self.assertTrue(app.scheduler_slot_in_range(datetime(2026, 9, 28, 23, 1, 30)))
+        self.assertFalse(app.scheduler_slot_in_range(datetime(2026, 9, 28, 23, 2, 0)))
+        self.assertEqual(app.get_next_scheduler_run_time(datetime(2026, 9, 28, 22, 30)),
+                         datetime(2026, 9, 28, 23, 1))
+        app.last_run_minute = "2026-09-28 23:01"
+        self.assertIsNone(app.get_next_scheduler_run_time(datetime(2026, 9, 28, 23, 1, 30)))
+
+    def test_scheduler_first_run_is_the_hour_after_start(self) -> None:
+        # เริ่ม 16:00 รันนาที 1 -> ไม่รัน 16:01 (มีข้อมูลรอบใหม่นาทีเดียว) รอบแรกคือ 17:01
+        app = self.make_app()
+        self.assertFalse(app.scheduler_slot_in_range(datetime(2026, 9, 27, 16, 1)))
+        self.assertTrue(app.scheduler_slot_in_range(datetime(2026, 9, 27, 17, 1)))
+        self.assertEqual(app.get_next_scheduler_run_time(datetime(2026, 9, 27, 15, 30)),
+                         datetime(2026, 9, 27, 17, 1))
+        self.assertEqual(app.get_next_scheduler_run_time(datetime(2026, 9, 27, 16, 1, 30)),
+                         datetime(2026, 9, 27, 17, 1))
+
+    def test_daily_summary_button_uses_finished_round_early_in_new_round(self) -> None:
+        app = self.make_app()  # start_hour 16
+        self.assertEqual(app.daily_summary_manual_range(datetime(2026, 9, 28, 17, 10)),
+                         ("2026-09-27 16:00:00", "2026-09-28 17:10:00"))
+        self.assertEqual(app.daily_summary_manual_range(datetime(2026, 9, 28, 18, 0)),
+                         ("2026-09-28 16:00:00", "2026-09-28 18:00:00"))
+        self.assertEqual(app.daily_summary_manual_range(datetime(2026, 9, 28, 12, 30)),
+                         ("2026-09-27 16:00:00", "2026-09-28 12:30:00"))
 
     def test_feishu_webhook_and_plan_endpoint_require_token(self) -> None:
         class DummyController:
@@ -917,11 +994,163 @@ class MetricsRegressionTests(unittest.TestCase):
         self.assertEqual(run_cycle.call_count, 2)
 
 
+class DailySummarySettingsPageTests(unittest.TestCase):
+    def test_page_fields_are_saved_to_daily_summary_section(self) -> None:
+        class Value:
+            def __init__(self, value):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        app = bot_main.App.__new__(bot_main.App)
+        app.config = configparser.RawConfigParser()
+        app.ds_entries = {"chat_id": Value(" oc_test 123 "), "title_dws": Value("DWS {date}"),
+                          "raw_file_max_mb": Value("25")}
+        app.ds_section_order = ["dws", "abnormal", "autopacking"]
+        app.ds_section_vars = {"dws": Value(True), "abnormal": Value(False), "autopacking": Value(True)}
+        app.ds_send_raw_var = Value(False)
+        app.save_daily_summary_fields()
+        section = app.config["DAILY_SUMMARY"]
+        self.assertEqual(section["chat_id"], "oc_test123")
+        self.assertEqual(section["title_dws"], "DWS {date}")
+        self.assertEqual(section["sections"], "dws,autopacking")  # คงลำดับเดิม ตัดที่ไม่ติ๊ก
+        self.assertEqual(section["send_raw_file"], "false")
+
+
+class SchedulerShiftRolloverTests(unittest.TestCase):
+    def _run_one_tick(self, follows_shift_dates: bool, now: datetime):
+        from datetime import date as _date
+        app = bot_main.App.__new__(bot_main.App)
+        app.config = configparser.RawConfigParser()
+        app.config["DWS_JMS"] = {"start_date": "2026-10-19", "end_date": "2026-10-20"}
+        app._auto_dates = (_date(2026, 10, 19), _date(2026, 10, 20))
+        app._dates_user_selected = not follows_shift_dates
+        app.scheduler_running = True
+        app.scheduler_run_minute = 0
+        app.last_run_minute = None
+        app.running = False
+        app.statuses, app.events, app.logs = [], [], []
+        app.get_scheduler_time_range = lambda: (datetime(2026, 10, 19, 15), datetime(2026, 10, 20, 12))
+        app.scheduler_slot_in_range = lambda moment: False
+        app.set_next_run_display = lambda *a, **k: None
+        app.set_ui_running = lambda active: None
+        app.set_status = lambda text, *a: app.statuses.append(text)
+        app.write_log = lambda msg, level=None: app.logs.append(msg)
+        app.log_scheduler_event = app.events.append
+
+        class FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now
+
+        def stop_after_one_tick(_seconds):
+            # หยุดลูปหลังรอบแรก (App ยังไม่ได้สร้าง Tk จึงห้ามเรียก getattr ที่ไม่มีอยู่)
+            app.__dict__["still_running_before_stop"] = app.scheduler_running
+            app.scheduler_running = False
+
+        with mock.patch.object(bot_main, "datetime", FrozenDatetime), \
+                mock.patch.object(bot_main.time, "sleep", side_effect=stop_after_one_tick):
+            app.scheduler_loop()
+        return app
+
+    def test_auto_waits_for_next_shift_when_dates_follow_the_shift(self) -> None:
+        app = self._run_one_tick(True, datetime(2026, 10, 20, 12, 20))
+        self.assertEqual(app.statuses, ["Auto Waiting"])
+        self.assertTrue(app.__dict__["still_running_before_stop"])  # ไม่หยุดเอง
+        self.assertTrue(any("Auto รอรอบงานใหม่" in e for e in app.events))
+
+    def test_auto_still_finishes_for_a_manually_selected_range(self) -> None:
+        app = self._run_one_tick(False, datetime(2026, 10, 20, 12, 20))
+        self.assertEqual(app.statuses, ["Auto Finished"])
+        self.assertNotIn("still_running_before_stop", app.__dict__)  # จบลูปเองก่อนถึง sleep
+        self.assertTrue(any("Auto finished" in e for e in app.events))
+
+
+class DailySummaryTimerTests(unittest.TestCase):
+    def _app(self, last_sent=""):
+        app = bot_main.App.__new__(bot_main.App)
+        app.config = configparser.RawConfigParser()
+        app.config["DAILY_SUMMARY"] = {"auto_send": "true", "send_time": "12:20", "last_sent_date": last_sent}
+        app.scheduler_running = True
+        app.running = False
+        app.ds_busy = False
+        app.logs = []
+        app.write_log = lambda msg, level=None: app.logs.append(msg)
+        app.after = lambda *args: None
+        app.daily_summary_settings = lambda out="": "settings"
+        app.calls = []
+        app.run_daily_summary_in_background = lambda *args, **kwargs: app.calls.append((args, kwargs))
+        return app
+
+    def test_sends_once_after_minute_and_waits_for_running_pipeline(self) -> None:
+        app = self._app()
+        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:10:00")
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])  # ยังไม่ถึง 12:20
+        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:20:30")
+        app.running = True
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])  # รอบรายชั่วโมงยังรัน รอก่อน
+        app.running = False
+        app.daily_summary_tick()
+        self.assertEqual(len(app.calls), 1)
+        self.assertTrue(app.calls[0][1]["mark_sent"])
+        app.daily_summary_tick()
+        self.assertEqual(len(app.calls), 1)  # ครั้งต่อไปต้องรอ 10 นาที
+
+    def test_started_too_late_skips_and_notifies_once(self) -> None:
+        app = self._app()
+        app.events, app.statuses = [], []
+        app.log_scheduler_event = app.events.append
+        app.ds_status = object()
+        app.set_daily_summary_status = lambda text, color=None: app.statuses.append(text)
+        # เปิด Auto ตอน 12:59 แต่ตั้งส่ง 12:20 -> เกิน 30 นาที ไม่ส่งเอง
+        app.get_report_time_range = lambda: ("2026-10-19 16:00:00", "2026-10-20 12:59:00")
+        app.daily_summary_tick()
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])
+        self.assertEqual(len(app.events), 1)  # แจ้งครั้งเดียว
+        self.assertEqual(len(app.statuses), 1)
+
+    def test_catch_up_off_sends_only_near_the_send_time(self) -> None:
+        app = self._app()
+        app.config["DAILY_SUMMARY"]["send_catch_up"] = "false"
+        app.events, app.statuses = [], []
+        app.log_scheduler_event = app.events.append
+        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:35:00")
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])  # เลย 12:20 ไป 15 นาที ไม่ติ๊กส่งย้อนหลัง -> ไม่ส่ง
+        app.ds_late_notified = set()
+        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:23:00")
+        app.daily_summary_tick()
+        self.assertEqual(len(app.calls), 1)  # ยังอยู่ในช่วงเผื่อ 5 นาที -> ส่งตามเวลา
+
+    def test_already_sent_or_auto_off_does_nothing(self) -> None:
+        app = self._app(last_sent="2026-10-18")
+        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:30:00")
+        app.daily_summary_tick()
+        app.config["DAILY_SUMMARY"]["last_sent_date"] = ""
+        app.config["DAILY_SUMMARY"]["auto_send"] = "false"
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])
+
+
 class ReportHourAlignmentTests(unittest.TestCase):
     def test_hour_header_parser_supports_report_formats(self) -> None:
         self.assertEqual(Createphoto.extract_hour_header("16点-17点"), 16)
         self.assertEqual(Createphoto.extract_hour_header("16:00-17:00"), 16)
         self.assertIsNone(Createphoto.extract_hour_header("合计"))
+
+    def test_hour_columns_are_read_from_each_sheet_layout(self) -> None:
+        # ไฟล์ bot เดิม: 12点 อยู่คอลัมน์ C / ไฟล์ 2_DWS ชีต DWSREALTIME: อยู่คอลัมน์ B
+        # Excel COM คืน Value2 เป็น tuple ของ tuple
+        legacy = ((None,) * 6, ("พนักงาน", None, "12点-13点", "13点-14点", "14点-15点", "合计"))
+        dws = (("供件台", "12点-13点", "13点-14点", "14点-15点", "15点-16点", "A"),)
+        self.assertEqual(Createphoto.hour_header_columns(legacy)[12], 3)
+        self.assertEqual(Createphoto.hour_header_columns(legacy)[14], 5)
+        self.assertEqual(Createphoto.hour_header_columns(dws)[12], 2)
+        self.assertEqual(Createphoto.hour_header_columns(dws)[14], 4)
 
     def test_formula_hour_parser_reads_literal_count_criteria(self) -> None:
         formula = '=COUNTIFS(raw!$A:$A,AI11&" 16*",raw!$B:$B,"ok")'

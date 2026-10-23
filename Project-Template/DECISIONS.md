@@ -1,5 +1,16 @@
 # Decisions
 
+## 2026-10-22 - Stable JMS scan export language
+
+- Checkpoint the bilingual-header release before starting the proposed full Excel calculation migration. Keep operator workbooks and source data local under ignored `Excel/`; preserve the reusable query, patch tools, tests, skills and continuity notes in Git.
+
+- Request Chinese (`CN`) for AUTO/PDA exports to avoid dependence on changing Thai column labels. The public JMS application language constants confirm `CN` is its Chinese language code.
+- Prefer Chinese scan headers in Daily Summary and retain Thai compatibility for historical files. Keep display labels unchanged.
+- User additionally authorized Realtime and workbook changes. A live CN export confirmed `最新操作类型` / `超时类型`; operation and overtime values remain English, so retain existing category/count semantics and report presentation.
+- Patch REALTIME_DB to select DATA over TABLE and choose columns by Chinese/Thai names instead of positions 12/17. Keep the Thai query output names so dependent Excel formulas continue working.
+- Native Excel did not persist the changed query in this environment. Patch the documented DataMashup package directly and regenerate its DPAPI permission binding; preserve all XLSX parts outside DataMashup byte-for-byte. Specification: https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-qdeff/d0959ba8-ac8d-4bee-bb58-9a869d7b226a
+- Preserve the original workbook at `Backup/20261022-010259-realtime-chinese/1DWS_&_PDA_v1.8.3 Bot.xlsx`. Native Excel reopens the patched file and confirms only REALTIME_DB differs among its 12 queries.
+
 ## 2026-10-13 - RealtimeDB raw values and Excel open recovery
 
 - Treat every JMS field copied into the RealtimeDB `DATA` sheet as source data; a string beginning with `=` remains text and must never become an executable Excel formula.
