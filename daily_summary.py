@@ -112,13 +112,13 @@ DEFAULTS: Dict[str, str] = {
 
 # ชื่อหัวคอลัมน์ในไฟล์ JMS — ไฟล์ export บางรอบใช้คำต่างกันเล็กน้อย
 # JMS header reference and runtime fallback: Chinese first, then Thai aliases.
-# 运单号 -> หมายเลข AWB / เลขพัสดุ
+# 运单号 / 运单编号 -> หมายเลข AWB / เลขพัสดุ (JMS export ภาษาจีนตั้งแต่ 2026-10-23 ใช้ 运单编号)
 # 所属包号 -> หมายเลขกระสอบ
 # 扫描时间 -> เวลาที่สแกน / เวลาที่ทำการสแกน / เวลาสแกน
 # 扫描员 -> พนักงานสแกน / ผู้สแกน
 # 上传时间 -> เวลาอัปโหลด
 # Preserve RAW_SCAN_HEADER separately: it controls the exported report labels.
-COL_AWB = ("运单号", "หมายเลข AWB", "เลขพัสดุ")
+COL_AWB = ("运单号", "运单编号", "หมายเลข AWB", "เลขพัสดุ")
 COL_BAG = ("所属包号", "หมายเลขกระสอบ")
 COL_TIME = ("扫描时间", "เวลาที่สแกน", "เวลาที่ทำการสแกน", "เวลาสแกน")
 COL_SCANNER = ("扫描员", "พนักงานสแกน", "ผู้สแกน")

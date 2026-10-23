@@ -183,6 +183,12 @@ class CountTests(unittest.TestCase):
             self.assertEqual(ds.hourly_counts(actual, names, window), ds.hourly_counts(expected, names, window))
             self.assertEqual(ds.bag_counts(actual, names), ds.bag_counts(expected, names))
 
+    def test_waybill_header_accepts_jms_2026_10_23_name(self) -> None:
+        # JMS export 2026-10-23: 运单编号 แทน 运单号 (หัวจริงจากไฟล์ DWSXAUTOPDA.xlsx / DWSPDA.xlsx)
+        header = ["运单编号", "所属包号", "扫描类型", "扫描时间", "扫描网点", "上一站或下一站", "件数",
+                  "重量", "物品类型", "运输方式", "寄件网点", "寄件客户", "扫描员", "派件或收件员", "备注", "上传时间"]
+        self.assertEqual(ds._find_column(header, ds.COL_AWB, "scan.xlsx"), 0)
+
     def test_chinese_headers_take_priority_over_changed_thai_labels(self) -> None:
         header = ["เวลาที่สแกน", "扫描时间", "พนักงานสแกน", "扫描员"]
         self.assertEqual(ds._find_column(header, ds.COL_TIME, "scan.xlsx"), 1)
