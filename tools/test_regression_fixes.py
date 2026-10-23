@@ -287,6 +287,16 @@ class SchedulerRegressionTests(unittest.TestCase):
         app.last_run_minute = "2026-09-28 23:01"
         self.assertIsNone(app.get_next_scheduler_run_time(datetime(2026, 9, 28, 23, 1, 30)))
 
+    def test_scheduler_first_run_is_the_hour_after_start(self) -> None:
+        # เริ่ม 16:00 รันนาที 1 -> ไม่รัน 16:01 (มีข้อมูลรอบใหม่นาทีเดียว) รอบแรกคือ 17:01
+        app = self.make_app()
+        self.assertFalse(app.scheduler_slot_in_range(datetime(2026, 9, 27, 16, 1)))
+        self.assertTrue(app.scheduler_slot_in_range(datetime(2026, 9, 27, 17, 1)))
+        self.assertEqual(app.get_next_scheduler_run_time(datetime(2026, 9, 27, 15, 30)),
+                         datetime(2026, 9, 27, 17, 1))
+        self.assertEqual(app.get_next_scheduler_run_time(datetime(2026, 9, 27, 16, 1, 30)),
+                         datetime(2026, 9, 27, 17, 1))
+
     def test_daily_summary_button_uses_finished_round_early_in_new_round(self) -> None:
         app = self.make_app()  # start_hour 16
         self.assertEqual(app.daily_summary_manual_range(datetime(2026, 9, 28, 17, 10)),

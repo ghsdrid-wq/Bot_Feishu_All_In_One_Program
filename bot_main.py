@@ -1635,6 +1635,14 @@ class App(ctk.CTk):
         """Compatibility display for the configured start/end hours."""
         return self.scheduler_start_hour, self.scheduler_end_hour
 
+    def scheduler_first_run_at(self, start_dt: datetime) -> datetime:
+        """รอบแรกของช่วง = ชั่วโมงหลังเวลาเริ่ม (เริ่ม 15:00 รันนาที 1 -> รอบแรก 16:01)
+
+        รอบตรงเวลาเริ่ม (15:01) มีข้อมูลรอบใหม่แค่นาทีเดียว ส่งไปก็ได้ตารางว่าง/ยอดค้าง
+        """
+        return (start_dt + timedelta(hours=1)).replace(
+            minute=self.scheduler_run_minute, second=0, microsecond=0)
+
     def scheduler_last_run_at(self, end_dt: datetime) -> datetime:
         """รอบสุดท้ายของช่วง = ชั่วโมงจบ + นาทีรัน (จบ 12:00 รันนาที 5 -> รอบสุดท้าย 12:05)"""
         return end_dt.replace(minute=self.scheduler_run_minute, second=59, microsecond=0)
@@ -1649,7 +1657,7 @@ class App(ctk.CTk):
         """
         if isinstance(moment, datetime):
             start_dt, end_dt = self.get_scheduler_time_range()
-            return start_dt <= moment <= self.scheduler_last_run_at(end_dt)
+            return self.scheduler_first_run_at(start_dt) <= moment <= self.scheduler_last_run_at(end_dt)
         hour = int(moment)
         first, last = self.send_window()
         if first <= last:
@@ -1660,7 +1668,7 @@ class App(ctk.CTk):
         """Compare the scheduled minute, not loop wake-up seconds, to the range."""
         start_dt, end_dt = self.get_scheduler_time_range()
         slot = moment.replace(second=0, microsecond=0)
-        return start_dt <= slot <= self.scheduler_last_run_at(end_dt)
+        return self.scheduler_first_run_at(start_dt) <= slot <= self.scheduler_last_run_at(end_dt)
 
     def get_next_scheduler_run_time(
             self, now: Optional[datetime] = None) -> Optional[datetime]:
@@ -1676,10 +1684,9 @@ class App(ctk.CTk):
             candidate = (now + timedelta(hours=1)).replace(
                 minute=minute, second=0, microsecond=0)
         start_dt, end_dt = self.get_scheduler_time_range()
-        if candidate < start_dt:
-            candidate = start_dt.replace(minute=minute, second=0, microsecond=0)
-            if candidate < start_dt:
-                candidate += timedelta(hours=1)
+        first_run = self.scheduler_first_run_at(start_dt)
+        if candidate < first_run:
+            candidate = first_run
         return candidate if candidate <= self.scheduler_last_run_at(end_dt) else None
 
     def format_next_scheduler_run(self, next_run: Optional[datetime] = None) -> str:

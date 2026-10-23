@@ -2,6 +2,7 @@
 
 ## 2.1.13
 
+- Auto's first run is the hour after the start hour. A 15:00 start with run minute 1 now runs first at 16:01. The 15:01 run had only one minute of the new round, so it posted a `15:00 - 15:00` card with empty JMS tables and stale AutoPacking numbers.
 - Daily Summary accepts the waybill header `运单编号` used by JMS Chinese exports since 2026-10-23. Before this, the PDA 人工建包, red zip bag, PDA unloading and DWS tables failed with "ไม่พบคอลัมน์ 运单号".
 - Auto now runs the end hour at its run minute: an end of 12:00 with run minute 5 makes 12:05 the final hourly run. Before this, 12:05 counted as past the end, so the last report went out at 11:05.
 - Daily Summary tables extend to 12点-13点 (24 hourly columns) when the round's report time passes 13:00, for days when releases run until 13:00. The 12:20 automatic send still ends at 11点-12点. The extra hour is read from the next date folder's `13.xlsx`, which the AutoPacking export writes at 13:00 exactly.
