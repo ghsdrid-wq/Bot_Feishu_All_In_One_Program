@@ -1524,6 +1524,11 @@ class App(ctk.CTk):
                         self.config[section]["pull_folder"] = clean_input_value(row["folder_entry"].get())
                         self.config[section]["pull_file"] = clean_input_value(row["file_entry"].get(), collapse_internal_spaces=True)
                         self.config[section]["pull_enabled"] = str(row["pull_var"].get()).lower()
+                        self.config[section]["source_path"] = clean_input_value(row["source_entry"].get())
+            if hasattr(self, "auto_cache_entry"):
+                if "REPORT_CALCULATION" not in self.config:
+                    self.config["REPORT_CALCULATION"] = {}
+                self.config["REPORT_CALCULATION"]["auto_cache"] = entry_value(self.auto_cache_entry)
             for old_key in (("WEB" + chr(72) + "OOK"), "SECRET"):
                 self.config.remove_option("FEISHU", old_key)
             if "DWS_JMS" not in self.config:
@@ -1834,6 +1839,7 @@ class App(ctk.CTk):
             "jms_user": ("👤  BOT JMS USER", "nav_jms_user"),
             "code_policy": ("🔐  สิทธิ์รหัส", "nav_code_policy"),
             "daily_summary": ("📋  สรุปรายวัน", "nav_daily_summary"),
+            "sources": ("▤  แหล่งข้อมูลรายงาน", "nav_sources"),
             "settings": ("⚙  ตั้งค่า", "nav_settings"),
         }
         self.render_nav_menu()
@@ -1859,6 +1865,7 @@ class App(ctk.CTk):
             "code_policy": self.build_code_policy_page(self.content),
             "daily_summary": self.build_daily_summary_page(self.content),
             "settings": self.build_settings_page(self.content),
+            "sources": self.build_sources_page(self.content),
         }
         self.show_page("home")
 
@@ -2088,10 +2095,29 @@ class App(ctk.CTk):
         self.btn_save_workspace = ctk.CTkButton(tools, text="💾 บันทึก", width=92, fg_color="#4c566a", hover_color="#5e6779", command=self.save_all)
         self.btn_save_workspace.grid(row=0, column=2, padx=14, pady=14)
 
+        self.report_calculation_var = ctk.BooleanVar(value=as_bool(
+            self.config.get("REPORT_CALCULATION", "enabled", fallback="true"), True))
+        ctk.CTkSwitch(
+            tools, text="คำนวณรายงานด้วยโปรแกรม", variable=self.report_calculation_var,
+            command=self.save_report_calculation_mode,
+        ).grid(row=1, column=0, columnspan=2, padx=14, pady=(0, 6), sticky="w")
+        ctk.CTkLabel(
+            tools, text="AutoPacking และ DWS/PDA: สร้างไฟล์ตัวเลขแยกจากต้นฉบับ ปิดเพื่อใช้ Excel คำนวณแบบเดิม",
+            text_color="#aeb8cc", anchor="w",
+        ).grid(row=2, column=0, columnspan=3, padx=14, pady=(0, 12), sticky="ew")
+
         self.workbook_scroll = ctk.CTkScrollableFrame(page, fg_color="#323847", corner_radius=18)
         self.workbook_scroll.grid(row=2, column=0, padx=24, pady=(8, 24), sticky="nsew")
         self.workbook_scroll.grid_columnconfigure(0, weight=1)
         return page
+
+    def save_report_calculation_mode(self):
+        """Persist an explicit, reversible calculation-engine choice."""
+        if "REPORT_CALCULATION" not in self.config:
+            self.config["REPORT_CALCULATION"] = {}
+        self.config["REPORT_CALCULATION"]["enabled"] = (
+            "true" if self.report_calculation_var.get() else "false")
+        self.save_all()
 
     def bind_clean_entry(self, ent, collapse_internal_spaces: bool = False, digits_only: bool = False):
         """Clean risky input at UI level and before saving.
@@ -3073,7 +3099,7 @@ class App(ctk.CTk):
             has_pull = client["name"] in DWS_PULL_CLIENTS
 
             ctk.CTkLabel(self.controller_client_frame, text=client["name"], text_color="#d8dee9").grid(
-                row=row, column=0, rowspan=2 if has_pull else 1, padx=8, pady=5, sticky="w")
+                row=row, column=0, rowspan=3 if has_pull else 1, padx=8, pady=5, sticky="w")
 
             ip_entry = ctk.CTkEntry(self.controller_client_frame, width=180)
             ip_entry.insert(0, client["ip"])
@@ -3115,10 +3141,42 @@ class App(ctk.CTk):
                 entry.update({"folder_entry": folder_entry, "file_entry": file_entry,
                               "pull_var": pull_var})
 
+            if has_pull:
+                from core import dws_mirror
+                source = ctk.CTkEntry(self.controller_client_frame, placeholder_text="พาธไฟล์ต้นทาง (share)")
+                value = self.config.get(client["name"], "source_path", fallback="") or dws_mirror._yaml_source(client["name"]).get("path", "")
+                source.insert(0, value)
+                source.grid(row=row + 2, column=1, columnspan=4, padx=8, pady=(0, 10), sticky="ew")
+                self.bind_clean_entry(source)
+                self.lockable_inputs.append(source)
+                entry["source_entry"] = source
             self.controller_client_rows.append(entry)
-            row += 2 if has_pull else 1
+            row += 3 if has_pull else 1
 
         self.controller_client_frame.grid_columnconfigure(1, weight=1)
+
+    def build_sources_page(self, master):
+        page = SmoothScrollableFrame(master, fg_color="#2e3440", corner_radius=0)
+        page.grid_columnconfigure(0, weight=1)
+        self.header(page, "แหล่งข้อมูลรายงาน", "ดึงสำเนามาเก็บในเครื่องก่อนคำนวณ • DWS ที่ติดต่อไม่ได้จะเก็บสำเนาล่าสุดไว้").grid(row=0, column=0, padx=24, pady=18, sticky="ew")
+        ctk.CTkButton(page, text="บันทึกการตั้งค่า", command=self.save_all).grid(row=1, column=0, padx=24, sticky="e")
+        auto = self.make_card(page, "#3b4252", 22)
+        auto.grid(row=2, column=0, padx=24, pady=12, sticky="ew")
+        auto.grid_columnconfigure(1, weight=1)
+        self.autopack_dir_entry = self.path_row(auto, 0, "AutoPacking ต้นทาง", self.browse_folder)
+        self.auto_cache_entry = self.path_row(auto, 1, "โฟลเดอร์สำเนา Auto", self.browse_folder)
+        self.auto_cache_entry.insert(0, self.config.get("REPORT_CALCULATION", "auto_cache", fallback=""))
+        ctk.CTkLabel(auto, text="เว้นต้นทางว่าง = ใช้พาธใน Excel • ไฟล์ Auto รีเซ็ต 12:00 จึงแยกสำเนาตามวันรายงาน", text_color="#aeb8cc").grid(row=2, column=0, columnspan=3, padx=16, pady=12)
+        clients = self.make_card(page, "#3b4252", 22)
+        clients.grid(row=3, column=0, padx=24, pady=(8, 24), sticky="ew")
+        clients.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(clients, text="ตั้งค่า DWS PLAN Clients", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 4), sticky="w")
+        ctk.CTkLabel(clients, text="IP/Port สำหรับหน้า DWS PLAN และ Controller API", text_color="#aeb8cc").grid(row=1, column=0, padx=16, pady=(0, 6), sticky="w")
+        self.controller_client_frame = ctk.CTkFrame(clients, fg_color="#252b36", corner_radius=12)
+        self.controller_client_frame.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
+        self.controller_client_rows = []
+        self.render_controller_client_settings()
+        return page
 
     def build_settings_page(self, master):
         page = SmoothScrollableFrame(master, fg_color="#2e3440", corner_radius=0)
@@ -3139,7 +3197,7 @@ class App(ctk.CTk):
         self.raw_path_entry = self.path_row(path, 2, "ตำแหน่งเก็บ Excel", self.browse_folder)
         # โฟลเดอร์ไฟล์ 00-23.xlsx ของ AutoPacking — มาจากโปรแกรม auto export คนละตัว
         # ปกติเป็น network share ของเครื่องที่รันโปรแกรมนั้น ไม่ใช่โฟลเดอร์ในเครื่องนี้
-        self.autopack_dir_entry = self.path_row(path, 3, "โฟลเดอร์ AutoPacking", self.browse_folder)
+
 
         # ชื่อไฟล์ดิบ — โปรแกรมใช้ค่าพวกนี้ทั้งตอน export และตอนอ่านเข้า Dashboard
         # (metrics/core.py เอา raw_path + ชื่อพวกนี้มาต่อกันเป็นพาธเต็ม)
@@ -3195,15 +3253,6 @@ class App(ctk.CTk):
         ).grid(row=10, column=0, columnspan=2, padx=16, pady=(0, 14), sticky="w")
 
 
-        clients = self.make_card(page, "#3b4252", 22)
-        clients.grid(row=6, column=0, padx=24, pady=(8, 24), sticky="ew")
-        clients.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(clients, text="ตั้งค่า DWS PLAN Clients", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 4), sticky="w")
-        ctk.CTkLabel(clients, text="IP/Port สำหรับหน้า DWS PLAN และ Controller API", text_color="#aeb8cc").grid(row=1, column=0, padx=16, pady=(0, 6), sticky="w")
-        self.controller_client_frame = ctk.CTkFrame(clients, fg_color="#252b36", corner_radius=12)
-        self.controller_client_frame.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
-        self.controller_client_rows = []
-        self.render_controller_client_settings()
         return page
 
     # ------------------------------------------------------------------

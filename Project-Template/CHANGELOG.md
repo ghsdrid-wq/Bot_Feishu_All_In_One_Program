@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0 (in development)
+
+- Calculate accepted AutoPacking and DWS/PDA report templates in Python and write separate numeric XLSX outputs without Power Query or Excel formula recalculation.
+- Preserve template styles/layouts, business-day and start-hour rules, source-language aliases, strict missing/changing-source handling, cancellation and atomic output replacement.
+- Remove cached source rows/unused shared strings from temporary template snapshots and use compact source counters instead of full raw-row lists.
+- Add the Workbook Manager calculation-mode switch with an explicit legacy fallback. Excel image capture is retained.
+- Verify all 3,673 formula cells against native Excel using synthetic data and reopen generated reports with no refresh/formula dependencies. Live SMB/source acceptance remains pending.
+
 ## 2.1.13
 
 - Daily Summary header matching falls back to ignoring spaces and the word "ที่" when no listed header matches exactly, and a missing-column error now lists the headers found in the file, so the next JMS rename shows up in the Feishu report. Fixes the 2026-10-22 report where DWSXAUTOPDA.xlsx and DWSPDA.xlsx came with the renamed Thai headers (`เวลาสแกน`, `ผู้สแกน`) on a bot still running 2.1.11.

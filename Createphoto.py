@@ -7,7 +7,7 @@ import ctypes
 import threading
 import configparser
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, cast
 
 import pythoncom
@@ -1032,6 +1032,15 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
         raise Exception("No enabled export sheets")
 
     start_hour = int(get_time_config().get("start_hour", 15))
+    # Compute accepted templates before starting Excel; originals stay untouched.
+    # Excel remains a renderer only for these values-only generated copies.
+    import report_workbooks
+    calculated_paths = report_workbooks.prepare(
+        config, workbooks, items, out_dir,
+        date.fromisoformat(get_business_date(start_hour)), datetime.now(),
+        keep_running=keep_running, log=write)
+    if not keep_running():
+        return
     pythoncom.CoInitialize()
 
     excel: Any = None
@@ -1212,9 +1221,11 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
 
             write(f"[OPEN] {wb_item.display_name}")
 
+            program_calculated = wb_item.key in calculated_paths
+            workbook_path = calculated_paths.get(wb_item.key, wb_item.path)
             wb = cast(Any, excel_call(
-                lambda item=wb_item: excel_app.Workbooks.Open(
-                    item.path,
+                lambda item_path=workbook_path: excel_app.Workbooks.Open(
+                    item_path,
                     UpdateLinks=0,
                     ReadOnly=False,
                     IgnoreReadOnlyRecommended=True,
@@ -1233,10 +1244,14 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                 excel_app.ScreenUpdating = False
             except Exception as e:
                 write(f"[WARN] Could not enable low-load Excel mode: {e}")
-            update_excel_date(wb, start_hour, log=write)
+            if not program_calculated:
+                update_excel_date(wb, start_hour, log=write)
 
             excel_call(lambda workbook=wb: setattr(workbook, "Saved", True), write, f"mark workbook saved {wb_item.display_name}", timeout=60)
-            refresh_workbook_queries(wb, excel_app, keep_running, write)
+            if program_calculated:
+                write(f"[REPORT] Values ready; skipping Power Query: {wb_item.display_name}")
+            else:
+                refresh_workbook_queries(wb, excel_app, keep_running, write)
             if not keep_running():
                 return
 
@@ -1274,9 +1289,10 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                     wb, delete_sheets, start_hour, log=write,
                     target_ranges=validation_ranges)
 
-            write(f"[CALCULATE] Calculating {wb_item.display_name}")
-            excel_call(lambda: excel_app.CalculateFull(), write, f"calculate workbook {wb_item.display_name}", timeout=300)
-            wait_excel(excel_app, keep_running, write, timeout=300)
+            if not program_calculated:
+                write(f"[CALCULATE] Calculating {wb_item.display_name}")
+                excel_call(lambda: excel_app.CalculateFull(), write, f"calculate workbook {wb_item.display_name}", timeout=300)
+                wait_excel(excel_app, keep_running, write, timeout=300)
             try:
                 excel_app.ScreenUpdating = True
             except Exception:

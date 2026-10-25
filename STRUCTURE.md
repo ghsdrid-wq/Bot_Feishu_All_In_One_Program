@@ -4,6 +4,15 @@
 > ทุกครั้งที่แก้ไขโค้ดใน repo นี้ — เพิ่ม/ลบ/ย้ายไฟล์, เปลี่ยนชื่อหรือ logic ของฟังก์ชัน/คลาส, เพิ่ม/แก้ HTTP endpoint, เปลี่ยน config key, หรือเปลี่ยน flow การทำงาน — **ต้องอัปเดตไฟล์ STRUCTURE.md นี้ให้ตรงกับโค้ดเสมอ** เพื่อให้ใช้อ้างอิงหาจุดแก้ไขได้ถูกในอนาคต
 
 ## ภาพรวม
+
+### Python-calculated report workbooks (2.2.0)
+- `report_workbooks.py` recognizes the accepted AutoPacking and DWS/PDA templates, builds a lightweight snapshot without cached raw rows or unused shared strings, evaluates every report formula in Python, and atomically writes a separate values-only XLSX under `<output_dir>/calculated_workbooks/`. Original template files are never overwritten.
+- `core/report_formulas.py` implements only the audited template formula vocabulary with lazy IF/IFERROR, bounded references, exact-match VLOOKUP and explicit failure for unknown formulas. COUNTIF/COUNTIFS over raw sources use compact counters instead of materializing Excel columns.
+- `core/report_sources.py` streams required local/UNC source sheets, supports Thai/Chinese scan headers, honors business-day/start-hour boundaries, ignores future AutoPacking hours, detects changing/stale/missing input and retains no full raw-row list. AutoPacking source sheets are checked as one stable hourly snapshot.
+- `Createphoto.run_create` prepares recognized workbooks before launching Excel. For generated copies it skips date mutation, Power Query refresh and CalculateFull; Excel is still used for image rendering and start-hour column trimming. Unrecognized workbooks retain their prior Excel path.
+- The Workbook Manager switch `คำนวณรายงานด้วยโปรแกรม` persists `[REPORT_CALCULATION] enabled` (default true). Switching it off explicitly restores the legacy calculation flow; calculation errors do not silently fall back to cached Excel data.
+- Paths follow existing `[PATH] autopacking_dir`, `[DWS_JMS] raw_path/name_*`, and enabled `[DWS1]..[DWS8] pull_folder/pull_file` mirrors. Optional `[REPORT_CALCULATION] path_<query_name>` overrides local/UNC paths. AutoPacking checks a business-date subfolder first. Accepted template start hours are 12–19; other values fail explicitly.
+- `tools/inventory_report_templates.py` inventories every formula/query read-only; `tools/test_report_workbooks.py` tests thresholds, atomicity, cancellation and pre-Excel source failures; `tools/verify_report_workbooks.py` compares every formula against native Excel on synthetic inputs. `tools/test_report_calculation_ui.py` exercises the real Tk switch and INI persistence. `tools/audit_report_paths.py` checks the exact Power Query source paths with bounded access probes and saves local diagnostic evidence.
 GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวมทุกระบบของฝั่ง controller/report เข้าด้วยกันเป็น **"All-In-One"**:
 1. **Data Export (ตัวดึงยอด)** — ดึงยอดจาก DB ของ DWS (MySQL/pymysql) และจาก JMS J&T API ออกมาเป็นไฟล์ Excel (openpyxl) แล้วส่งเข้า Feishu
 2. **Workbook Manager** — เปิด Excel (win32com) แคปภาพชีตตามช่วงเวลา แล้วส่งรูปเข้า Feishu chat
