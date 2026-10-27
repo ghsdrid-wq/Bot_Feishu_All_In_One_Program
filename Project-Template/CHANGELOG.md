@@ -2,6 +2,7 @@
 
 ## 2.1.13
 
+- Added message recall. Every message sent during a report round (hourly card, images, Excel files, Dashboard card, Daily Summary post and file) is saved as one round in `sent_messages.json` next to `config.ini`, keeping the last 100 rounds. The "↶ ถอนข้อความ" button beside Live Log lists recent rounds and recalls a whole round after confirmation. Feishu only allows recalling the bot's own messages within the organization's recall time limit; failures (such as an expired limit) are listed in Live Log, and pressing recall again retries only the messages still in the group.
 - Pressing Stop Auto during a running cycle no longer leaves an empty button slot. The buttons are redrawn as Start Auto + Stop Run, and the rest of that cycle can be stopped like a manual run.
 - Daily Summary titles follow each site's own working hours. AutoPacking, PDA 人工建包 and red zip bags still use the AutoPacking totals. The DWS and PDA unloading titles now use the DWS table's hourly 合计 (DWS machines + DWS PDA) with the same rules: populated hours from 100, trailing hours totalling at most 1000 trimmed. On 2026-10-22 the DWS site ended at 9.00 while AutoPacking ran until 12.00.
 - Fixed the BOT REPORT buttons after Run Now while Auto is on. When the manual run finished, Stop Run stayed in place of Run Now because the mode stayed "manual". `restore_ui_after_run` now returns to Auto mode (Stop Auto + Run Now).

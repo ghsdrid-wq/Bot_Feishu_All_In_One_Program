@@ -1,6 +1,7 @@
 # Local configuration and runtime output
 config.ini
 jms_user_policy.json
+sent_messages.json
 *.log
 build_log.txt
 __pycache__/

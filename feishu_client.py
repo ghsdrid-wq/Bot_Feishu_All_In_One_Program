@@ -20,8 +20,10 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 import requests
 
@@ -37,6 +39,29 @@ TIMEOUT_MESSAGE = 30
 TIMEOUT_UPLOAD = 60
 
 LogFunc = Callable[..., None]
+
+# ข้อความที่ส่งระหว่าง capture_sends() ของ thread นี้ (ไว้ถอนทั้งรอบทีหลัง — sent_messages.py)
+_capture = threading.local()
+
+
+@contextmanager
+def capture_sends() -> Iterator[List[Dict[str, str]]]:
+    """เก็บ message_id ของทุกข้อความที่ส่งเข้ากลุ่มใน thread นี้ ระหว่าง with"""
+    previous = getattr(_capture, "items", None)
+    items: List[Dict[str, str]] = []
+    _capture.items = items
+    try:
+        yield items
+    finally:
+        _capture.items = previous
+
+
+def _remember_sent(payload: Dict[str, Any], res: Dict[str, Any]) -> None:
+    items = getattr(_capture, "items", None)
+    message_id = (res.get("data") or {}).get("message_id")
+    if items is not None and message_id:
+        items.append({"message_id": message_id, "chat_id": str(payload.get("receive_id", "")),
+                      "msg_type": str(payload.get("msg_type", ""))})
 
 
 def _say(log: Optional[LogFunc], message: str) -> None:
@@ -102,6 +127,8 @@ def _post_json(url: str, token: str, payload: Dict[str, Any], name: str,
     res = request_with_retry(do_request, retries=retries, log=log, name=name)
     if res.get("code") != 0:
         raise Exception(f"{name} failed: {res}")
+    if url == MESSAGE_URL:
+        _remember_sent(payload, res)
     return res
 
 
@@ -232,6 +259,25 @@ def send_post(token: str, chat_id: str, title: str, content: list,
         {"receive_id": chat_id, "msg_type": "post",
          "content": json.dumps(post, ensure_ascii=False)},
         "send_post", log=log)
+
+
+def recall_message(token: str, message_id: str, log: Optional[LogFunc] = None) -> None:
+    """ถอนข้อความที่บอทส่งไป — Feishu ให้ถอนได้เฉพาะข้อความของบอทเอง ภายในเวลาที่องค์กรตั้งไว้"""
+    def do_request() -> Dict[str, Any]:
+        response = requests.delete(f"{BASE_URL}/im/v1/messages/{message_id}",
+                                   headers={"Authorization": f"Bearer {token}"},
+                                   timeout=TIMEOUT_MESSAGE)
+        # ถอนไม่ได้ (เช่นเกินเวลา) Feishu ตอบ HTTP 4xx พร้อม JSON บอกเหตุ — อ่านเหตุนั้น
+        # ไม่ใช้ response_json ที่จะโยน HTTPError ทิ้งเหตุผลและ retry ไปเปล่า ๆ
+        try:
+            return response.json()
+        except ValueError:
+            response.raise_for_status()
+            raise Exception(f"recall_message: ตอบกลับไม่ใช่ JSON (HTTP {response.status_code})")
+
+    res = request_with_retry(do_request, retries=2, log=log, name="recall_message")
+    if res.get("code") != 0:
+        raise Exception(f"code {res.get('code')}: {res.get('msg', '')}")
 
 
 def chat_name(token: str, chat_id: str) -> str:

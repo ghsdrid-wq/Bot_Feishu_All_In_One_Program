@@ -3,6 +3,7 @@ import re
 import sys
 import json
 import time
+import contextlib
 import queue
 import threading
 import webbrowser
@@ -45,6 +46,7 @@ from Createphoto import (
 import Botmessage
 import feishu_client
 import realtime_report
+import sent_messages
 import daily_summary
 from Botmessage import run_send
 
@@ -2080,7 +2082,9 @@ class App(ctk.CTk):
         top.grid(row=0, column=0, padx=16, pady=(14, 6), sticky="ew")
         top.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(top, text="Live Log", font=ctk.CTkFont(size=16, weight="bold"), text_color="#e5e9f0").grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(top, text="Clear", width=70, fg_color="#4c566a", hover_color="#5e6779", command=lambda: self.clear_log_box("log_box")).grid(row=0, column=1, sticky="e")
+        ctk.CTkButton(top, text="↶ ถอนข้อความ", width=110, fg_color="#4c566a", hover_color="#5e6779",
+                      command=self.open_recall_dialog).grid(row=0, column=1, padx=(0, 8), sticky="e")
+        ctk.CTkButton(top, text="Clear", width=70, fg_color="#4c566a", hover_color="#5e6779", command=lambda: self.clear_log_box("log_box")).grid(row=0, column=2, sticky="e")
         self.log_box = ctk.CTkTextbox(log_card, fg_color="#252b36", text_color="#a3be8c", font=("Consolas", 12), corner_radius=12, height=150)
         self.log_box.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
         try:
@@ -2872,6 +2876,105 @@ class App(ctk.CTk):
                 command=lambda item=value: self.delete_policy_entry(item),
             ).grid(row=row_index, column=2, padx=(6, 12), pady=5)
 
+    def sent_messages_path(self) -> str:
+        return os.path.join(os.path.dirname(os.path.abspath(CONFIG_FILE)), sent_messages.FILE_NAME)
+
+    def open_recall_dialog(self):
+        """หน้าต่างถอนข้อความ: รายการรอบที่ส่งเข้ากลุ่ม (ใหม่สุดก่อน) กดถอนได้ทีละรอบ"""
+        old = self.__dict__.get("recall_dialog")
+        if old is not None:
+            try:
+                if old.winfo_exists():
+                    old.focus_force()
+                    return
+            except Exception:
+                pass
+        dialog = ctk.CTkToplevel(self)
+        self.recall_dialog = dialog
+        dialog.title("ถอนข้อความที่บอทส่ง")
+        dialog.geometry("760x520")
+        dialog.minsize(640, 420)
+        dialog.transient(self)
+        dialog.update_idletasks()
+        dialog_x = max(0, self.winfo_rootx() + (self.winfo_width() - 760) // 2)
+        dialog_y = max(0, self.winfo_rooty() + (self.winfo_height() - 520) // 2)
+        dialog.geometry(f"760x520+{dialog_x}+{dialog_y}")
+        dialog.grid_columnconfigure(0, weight=1)
+        dialog.grid_rowconfigure(2, weight=1)
+        ctk.CTkLabel(dialog, text="ถอนข้อความที่บอทส่ง", text_color="#eceff4",
+                     font=ctk.CTkFont(size=22, weight="bold")).grid(row=0, column=0, padx=24, pady=(20, 2), sticky="w")
+        ctk.CTkLabel(dialog, text="กดถอนแล้วจะลบทุกข้อความของรอบนั้น (การ์ด รูป ไฟล์) ออกจากกลุ่ม "
+                                  "— ถอนได้ภายในเวลาที่องค์กรตั้งไว้ใน Feishu เท่านั้น",
+                     text_color="#aeb8cc", anchor="w", justify="left", wraplength=700,
+                     ).grid(row=1, column=0, padx=24, pady=(0, 10), sticky="ew")
+        listing = ctk.CTkScrollableFrame(dialog, fg_color="#252b36", corner_radius=12)
+        listing.grid(row=2, column=0, padx=24, pady=(0, 12), sticky="nsew")
+        listing.grid_columnconfigure(1, weight=1)
+        status = ctk.CTkLabel(dialog, text="", text_color="#aeb8cc", anchor="w")
+        status.grid(row=3, column=0, padx=24, pady=(0, 4), sticky="ew")
+        ctk.CTkButton(dialog, text="ปิด", width=90, fg_color="#434c5e", hover_color="#4c566a",
+                      command=dialog.destroy).grid(row=4, column=0, padx=24, pady=(0, 18), sticky="e")
+
+        def fill():
+            for child in listing.winfo_children():
+                child.destroy()
+            rounds = sent_messages.load_rounds(self.sent_messages_path())[:30]
+            if not rounds:
+                ctk.CTkLabel(listing, text="ยังไม่มีข้อความที่บันทึกไว้ (บันทึกตั้งแต่เวอร์ชันนี้เป็นต้นไป)",
+                             text_color="#aeb8cc").grid(row=0, column=0, columnspan=4, padx=12, pady=12, sticky="w")
+                return
+            for row, entry in enumerate(rounds):
+                ctk.CTkLabel(listing, text=entry.get("sent_at", ""), text_color="#d8dee9",
+                             font=("Consolas", 13)).grid(row=row, column=0, padx=(12, 8), pady=4, sticky="w")
+                ctk.CTkLabel(listing, text=entry.get("label", ""), text_color="#eceff4",
+                             anchor="w").grid(row=row, column=1, padx=8, pady=4, sticky="ew")
+                state_text = sent_messages.round_status(entry)
+                finished = state_text == "ถอนแล้ว"
+                ctk.CTkLabel(listing, text=state_text,
+                             text_color="#7b8496" if finished else "#aeb8cc").grid(row=row, column=2, padx=8, pady=4)
+                ctk.CTkButton(listing, text="ถอน", width=64, height=28,
+                              fg_color="#4a3438", hover_color="#69434a",
+                              state="disabled" if finished else "normal",
+                              command=lambda item=entry: recall(item)).grid(row=row, column=3, padx=(8, 12), pady=4)
+
+        def recall(entry):
+            count = len(entry.get("messages") or []) - len(entry.get("recalled") or [])
+            if not messagebox.askyesno(
+                    "ยืนยันถอนข้อความ",
+                    f"ถอน {count} ข้อความของ\n{entry.get('label', '')} (ส่งเมื่อ {entry.get('sent_at', '')})\n"
+                    "ออกจากกลุ่ม Feishu ?", parent=dialog):
+                return
+            status.configure(text="กำลังถอน...", text_color="#88c0d0")
+
+            def worker():
+                try:
+                    token = self.get_tenant_access_token_for_file_send()
+                    done, errors = sent_messages.recall_round(
+                        self.sent_messages_path(), entry["id"], token, log=self.write_log)
+                    self.write_log(f"ถอนข้อความ {entry.get('label', '')}: สำเร็จ {done} ข้อความ"
+                                   + (f", ไม่สำเร็จ {len(errors)}" if errors else ""),
+                                   level="WARN" if errors else "SUCCESS")
+                    for error in errors:
+                        self.write_log(f"  ถอนไม่ได้ — {error}", level="WARN")
+                    text, color = (f"ถอนสำเร็จ {done} ข้อความ", "#a3be8c") if not errors else (
+                        f"ถอนสำเร็จ {done}, ไม่สำเร็จ {len(errors)} (เช่น เกินเวลาที่ถอนได้) ดูใน Live Log", "#ebcb8b")
+                except Exception as exc:
+                    self.write_log(f"ถอนข้อความไม่สำเร็จ — {exc}", level="ERROR")
+                    text, color = f"ถอนไม่สำเร็จ: {exc}", "#d3868e"
+
+                def done_ui():
+                    try:
+                        if dialog.winfo_exists():
+                            status.configure(text=text, text_color=color)
+                            fill()
+                    except Exception:
+                        pass
+                self.run_on_ui_thread(done_ui)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        fill()
+
     def open_policy_bulk_dialog(self):
         title = "เพิ่มรหัสละเว้น" if self.policy_mode == "exempt_codes" else "เพิ่มหัวรหัสที่บล็อก"
         dialog = ctk.CTkToplevel(self)
@@ -3601,9 +3704,14 @@ class App(ctk.CTk):
 
         def worker():
             try:
-                result = daily_summary.run(
-                    settings, datetime.fromisoformat(start), datetime.fromisoformat(end),
-                    log=self.write_log, send_to_feishu=send)
+                with contextlib.ExitStack() as send_record:
+                    if send:
+                        send_record.enter_context(sent_messages.recording(
+                            self.sent_messages_path(), "daily_summary",
+                            f"สรุปรายวัน {datetime.fromisoformat(start):%Y-%m-%d}", log=self.write_log))
+                    result = daily_summary.run(
+                        settings, datetime.fromisoformat(start), datetime.fromisoformat(end),
+                        log=self.write_log, send_to_feishu=send)
                 if mark_sent:
                     self.mark_daily_summary_sent(datetime.fromisoformat(start).date().isoformat())
                 folder = os.path.dirname(result["sections"][0].image or "") if result["sections"] else ""
@@ -6478,6 +6586,12 @@ class App(ctk.CTk):
                 pipeline_error_key = "feishu"
                 self.set_pipeline_state("feishu", "run")
                 self.set_progress(76)
+                # จำ message_id ทุกข้อความของรอบนี้ไว้ถอนทีหลัง (ปุ่ม ถอนข้อความ ในหน้า BOT REPORT)
+                send_record = contextlib.ExitStack()
+                send_record.enter_context(sent_messages.recording(
+                    self.sent_messages_path(), "hourly",
+                    f"รายงาน{'อัตโนมัติ' if self.mode == 'auto' else 'รันเอง'} {datetime.now():%H:%M}",
+                    log=self.write_log))
                 try:
                     Botmessage.send_ui = lambda stage: self.set_status(stage.capitalize(), "#88c0d0", "#3b4252")
                     still_running = lambda: self.running and self.is_run_generation_active(run_generation)
@@ -6544,6 +6658,7 @@ class App(ctk.CTk):
                     pipeline_error_key = None
                 finally:
                     Botmessage.send_ui = None
+                    send_record.close()
             else:
                 self.set_pipeline_state("feishu", "skip")
 

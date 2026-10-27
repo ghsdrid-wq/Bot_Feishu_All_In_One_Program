@@ -98,6 +98,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 ## Config (`config.ini`)
 - `[PATH]`: `output_dir`
 - `[FEISHU]`: `app_id`, `app_secret`, `chat_id`, `verify_token`, `bot_port` (7000), `ngrok_url`, `auth_token` (JMS), `bot_name` (default `BOT_JMSKKN`), `bot_autostart` / `jms_autostart` (true = START BOT ของ BOT DWS PLAN / BOT JMS USER เองหลังเปิดโปรแกรม 2 วินาที, `bots_autostart`)
+- `sent_messages.json` (ข้าง `config.ini`, สร้างเอง): ข้อความที่บอทส่งเป็นรอบ ๆ ไว้ถอน — `feishu_client.capture_sends()` เก็บ message_id, `sent_messages.recording()` / `recall_round()`, ปุ่ม "↶ ถอนข้อความ" ข้าง Live Log (`open_recall_dialog`)
 - `[TIME]`: `run_minute` (5), `start_hour` (15), `end_hour` (12) — รอบแรกคือชั่วโมงหลัง `start_hour` (เริ่ม 15:00 -> 16:0x, `scheduler_first_run_at`) รอบสุดท้ายคือ `end_hour` ที่นาที `run_minute` (เช่น 12:05, `scheduler_last_run_at`)
 - `[DWS_JMS]`: `dws_url`, `dws_token`, `jms_token`, ชื่อไฟล์ export (`name_dws`, `name_auto`, `name_dwspda`, `name_realtime_db`), ช่วงเวลา (`start_hour`, `end_hour`; `start_date` / `end_date` ไม่บันทึกแล้ว — วันที่ตามรอบงานเสมอ เลือกเองได้เฉพาะตอนโปรแกรมเปิดอยู่), `raw_path`, `download_size`, flags `enabled` / `send_*_file`
 - `[DWS1]..[DWS9-11]`: `ip`, `port` ของเครื่อง agent (default subnet `10.30.32.x`, พอร์ต 4000/4001)
