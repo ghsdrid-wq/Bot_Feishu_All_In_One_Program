@@ -1957,14 +1957,22 @@ def parse_send_time(value: str) -> Tuple[int, int]:
         return 12, 0
 
 
+# รอบงานที่เพิ่งเริ่มยังไม่มีอะไรให้สรุป — เวลาส่งต้องห่างจากต้นรอบอย่างน้อยเท่านี้
+# (กันเคสเริ่มรอบ 12:00 ส่ง 12:20: เดิมนับ 12:20 วันเดียวกันเป็นเวลาส่งของรอบใหม่
+#  จึงส่งสรุปเปล่า ๆ ของรอบที่เพิ่งเริ่ม 20 นาที — เกิดจริง 2026-10-27 12:24)
+MIN_ROUND_HOURS_BEFORE_SEND = 2
+
+
 def scheduled_send_at(report_start: datetime, send_time: str) -> datetime:
-    """เวลาส่งของรอบงานที่เริ่มตอน report_start — เป็นครั้งแรกหลังต้นรอบที่ถึงเวลานี้
+    """เวลาส่งของรอบงานที่เริ่มตอน report_start — ครั้งแรกที่ถึงเวลานี้ หลังต้นรอบอย่างน้อย 2 ชั่วโมง
 
     เช่น รอบเริ่ม 2026-10-18 14:00 ส่ง 12:00 -> 2026-10-19 12:00
+         รอบเริ่ม 2026-10-26 12:00 ส่ง 12:20 -> 2026-10-27 12:20 (ไม่ใช่ 26 12:20)
     """
     hour, minute = parse_send_time(send_time)
+    earliest = report_start + timedelta(hours=MIN_ROUND_HOURS_BEFORE_SEND)
     send_at = report_start.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if send_at <= report_start:
+    while send_at < earliest:
         send_at += timedelta(days=1)
     return send_at
 

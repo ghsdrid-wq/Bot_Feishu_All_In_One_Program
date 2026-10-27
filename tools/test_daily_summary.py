@@ -148,6 +148,15 @@ class SendTimeTests(unittest.TestCase):
         self.assertEqual(ds.late_limit_minutes("false", "45"), ds.ON_TIME_GRACE_MINUTES)
         self.assertEqual(ds.late_limit_minutes("true", ""), 30)
 
+    def test_round_starting_just_before_send_time_waits_for_next_day(self) -> None:
+        # 2026-10-27: เปลี่ยนเวลาเริ่มเป็น 12:00 (ส่ง 12:20) แล้วรอบใหม่ถูกส่งตอน 12:24 ทั้งที่เพิ่งเริ่ม
+        start = datetime(2026, 10, 27, 12)
+        self.assertEqual(ds.scheduled_send_at(start, "12:20"), datetime(2026, 10, 28, 12, 20))
+        self.assertFalse(ds.due_to_send(start, datetime(2026, 10, 27, 12, 24), "12:20", "2026-10-26", 30)[0])
+        # รอบก่อนหน้า (เริ่ม 26 12:00) ส่ง 27 12:20 ตามปกติ
+        self.assertTrue(ds.due_to_send(datetime(2026, 10, 26, 12), datetime(2026, 10, 27, 12, 21),
+                                       "12:20", "2026-10-25", 30)[0])
+
     def test_new_business_day_waits_for_its_own_send_time(self) -> None:
         start = datetime(2026, 10, 19, 14)  # รอบงานใหม่เริ่มแล้ว ต้องรอถึง 12:00 ของวันถัดไป
         self.assertFalse(ds.due_to_send(start, datetime(2026, 10, 19, 14, 5), "12:00", "2026-10-18")[0])

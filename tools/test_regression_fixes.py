@@ -340,11 +340,11 @@ class SchedulerRegressionTests(unittest.TestCase):
 
     def test_daily_summary_button_uses_finished_round_early_in_new_round(self) -> None:
         app = self.make_app()  # start_hour 16
-        self.assertEqual(app.daily_summary_manual_range(datetime(2026, 9, 28, 17, 10)),
+        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 17, 10)),
                          ("2026-09-27 16:00:00", "2026-09-28 17:10:00"))
-        self.assertEqual(app.daily_summary_manual_range(datetime(2026, 9, 28, 18, 0)),
+        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 18, 0)),
                          ("2026-09-28 16:00:00", "2026-09-28 18:00:00"))
-        self.assertEqual(app.daily_summary_manual_range(datetime(2026, 9, 28, 12, 30)),
+        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 12, 30)),
                          ("2026-09-27 16:00:00", "2026-09-28 12:30:00"))
 
     def test_feishu_webhook_and_plan_endpoint_require_token(self) -> None:
@@ -1139,6 +1139,19 @@ class DailySummaryTimerTests(unittest.TestCase):
         self.assertTrue(app.calls[0][1]["mark_sent"])
         app.daily_summary_tick()
         self.assertEqual(len(app.calls), 1)  # ครั้งต่อไปต้องรอ 10 นาที
+
+    def test_timer_sends_finished_round_when_new_round_starts_before_send_time(self) -> None:
+        # เริ่มรอบ 12:00 ส่ง 12:20: ตอน 12:20 รอบปัจจุบันเพิ่งเริ่ม ต้องส่งสรุปของรอบที่เพิ่งจบ
+        app = self._app(last_sent="2026-10-25")
+        app.get_report_time_range = lambda: ("2026-10-27 12:00:00", "2026-10-27 12:20:30")
+        app.daily_summary_tick()
+        self.assertEqual(len(app.calls), 1)
+        self.assertEqual(app.calls[0][0][1:3], ("2026-10-26 12:00:00", "2026-10-27 12:20:30"))
+        # ส่งรอบ 26 ไปแล้ว: ตอน 12:24 ไม่ส่งรอบ 27 ที่เพิ่งเริ่ม
+        app = self._app(last_sent="2026-10-26")
+        app.get_report_time_range = lambda: ("2026-10-27 12:00:00", "2026-10-27 12:24:35")
+        app.daily_summary_tick()
+        self.assertEqual(app.calls, [])
 
     def test_started_too_late_skips_and_notifies_once(self) -> None:
         app = self._app()

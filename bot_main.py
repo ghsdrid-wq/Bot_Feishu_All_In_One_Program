@@ -3669,15 +3669,15 @@ class App(ctk.CTk):
             return
         self.ds_status.configure(text=text, text_color=color)
 
-    def daily_summary_manual_range(self, moment: Optional[datetime] = None):
-        """ช่วงของปุ่มส่งสรุปเอง — ช่วง 2 ชั่วโมงแรกของรอบใหม่ยังหมายถึงรอบที่เพิ่งจบ
+    def daily_summary_range(self, moment: Optional[datetime] = None):
+        """ช่วงของสรุปรายวัน (ปุ่มส่งเอง และตัวตั้งเวลา) — 2 ชั่วโมงแรกของรอบใหม่ยังหมายถึงรอบที่เพิ่งจบ
 
         วันที่ยอดปล่อยเลยไปถึง 13:00 จะกดส่งเองหลัง 13:00 ซึ่งรอบใหม่เริ่มแล้ว
         สรุปรอบใหม่ที่เพิ่งเริ่มไม่มีประโยชน์ จึงใช้รอบก่อนหน้าแทน (ตารางขยายถึง 12点-13点 ให้เอง)
         """
-        start, end = self.get_report_time_range(moment)
+        start, end = self.get_report_time_range(moment) if moment else self.get_report_time_range()
         start_dt, end_dt = datetime.fromisoformat(start), datetime.fromisoformat(end)
-        if end_dt - start_dt < timedelta(hours=2):
+        if end_dt - start_dt < timedelta(hours=daily_summary.MIN_ROUND_HOURS_BEFORE_SEND):
             start = (start_dt - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
         return start, end
 
@@ -3688,7 +3688,7 @@ class App(ctk.CTk):
             return
         self.save_all()
         settings = self.daily_summary_settings(entry_value(self.out_entry))
-        start, end = self.daily_summary_manual_range()
+        start, end = self.daily_summary_range()
         if send:
             target = settings.chat_id or "(ไม่มี Chat ID)"
             if not messagebox.askyesno(
@@ -6708,7 +6708,8 @@ class App(ctk.CTk):
             if (getattr(self, "scheduler_running", False)
                     and as_bool(self.daily_summary_option("auto_send"), True)
                     and not self.running and not getattr(self, "ds_busy", False)):
-                start, end = self.get_report_time_range()
+                # ช่วง 2 ชั่วโมงแรกของรอบใหม่ = ยังเป็นเวลาส่งของรอบที่เพิ่งจบ (เช่นเริ่มรอบ 12:00 ส่ง 12:20)
+                start, end = self.daily_summary_range()
                 late_limit = daily_summary.late_limit_minutes(
                     self.daily_summary_option("send_catch_up"), self.daily_summary_option("send_late_minutes"))
                 due, reason = daily_summary.due_to_send(
