@@ -61,9 +61,6 @@ DEFAULTS: Dict[str, str] = {
     "auto_pda_count": "45",
     "dws_pda_prefix": "Dws_pda",
     "dws_pda_count": "10",
-    # รอบงานของสรุปรายวันเริ่มกี่โมง — ตายตัว ไม่ขึ้นกับเวลาเริ่มของ Auto รายชั่วโมง
-    # 13 = ตามโฟลเดอร์วันของ AutoPacking (ขึ้นวันใหม่ 13:00) และ date_roll_hour
-    "round_start_hour": "13",
     # ก่อนสรุป ดึงไฟล์ JMS AUTO / JMS PDA / DWS9-11 ของช่วงรอบใหม่ลงโฟลเดอร์ DailySummaryRaw
     # (ไฟล์ของรอบรายชั่วโมงถูกเขียนทับตามช่วงของ Auto จึงอาจไม่ครบรอบ 13:00 หรือเป็นของรอบใหม่แล้ว)
     "fresh_raw_export": "true",
@@ -170,6 +167,12 @@ def _say(log: LogFunc, message: str, level: str = "INFO") -> None:
 
 @dataclass
 class Window:
+    """ช่วงของสรุป แบ่งเป็นช่องรายชั่วโมง
+
+    hours = คีย์ของแต่ละช่อง เรียงตามเวลา — ชั่วโมงจริง (0-23) ถ้าชั่วโมงนั้นซ้ำในช่วงเดียวกัน
+    (ช่วงที่เลือกเองยาวเกิน 24 ชม.) ช่องที่ซ้ำได้คีย์ +24 เช่น เริ่ม 12:00 ยาว 25 ชม.
+    -> 12..23, 0..11, 36 — ชั่วโมงจริงของช่องคือ คีย์ % 24 ช่วงไม่เกิน 24 ชม. คีย์เหมือนเดิมทุกอย่าง
+    """
     start: datetime
     end: datetime
     hours: List[int]
@@ -198,37 +201,50 @@ class Window:
         ``trailing_total``: ชั่วโมงท้ายรอบที่ยอดรวมกันไม่เกินค่านี้ = ยอดเกินมาหลังหน้างานจบ
         ตัดออกจากหัวข้อ ให้เวลาสิ้นสุดเป็นชั่วโมงก่อนหน้า (0 = ไม่ใช้กฎนี้)
         """
-        populated = [hour for hour in self.hours if totals.get(hour, 0) >= minimum]
-        if not populated:
+        span = self.active_span(totals, minimum, trailing_total)
+        if span is None:
             return self.labels()
-        if trailing_total > 0:
-            kept = populated[:]
-            leftover = sum(totals.get(h, 0) for h in self.hours[self.hours.index(kept[-1]) + 1:])
-            while len(kept) > 1 and leftover + totals.get(kept[-1], 0) <= trailing_total:
-                leftover += totals.get(kept[-1], 0)
-                kept.pop()
-            populated = kept
-        start = populated[0]
+        start, end = self.hours[span[0]], self.hours[span[1]] + 1
         # The label at the right edge is the beginning of the hour after the
         # final populated column; modulo keeps a 23:00-00:00 boundary correct.
-        end = (populated[-1] + 1) % 24
         return {
             "date": self.business_date.strftime("%Y/%m/%d"),
-            "start": f"{start}.00",
-            "end": f"{end}.00",
+            "start": f"{start % 24}.00",
+            "end": f"{end % 24}.00",
         }
+
+    def active_span(self, totals: Dict[int, int], minimum: int = 100,
+                    trailing_total: int = 0) -> Optional[Tuple[int, int]]:
+        """ลำดับช่องแรก/ช่องสุดท้ายที่หน้างานทำงานจริง (กฎเดียวกับเวลาในหัวข้อ) ไม่มีงานเลย = None"""
+        populated = [i for i, hour in enumerate(self.hours) if totals.get(hour, 0) >= minimum]
+        if not populated:
+            return None
+        if trailing_total > 0:
+            leftover = sum(totals.get(h, 0) for h in self.hours[populated[-1] + 1:])
+            while len(populated) > 1 and leftover + totals.get(self.hours[populated[-1]], 0) <= trailing_total:
+                leftover += totals.get(self.hours[populated[-1]], 0)
+                populated.pop()
+        return populated[0], populated[-1]
+
+    def sub(self, first: int, last: int) -> "Window":
+        """ช่วงย่อยช่อง first..last (คีย์ชั่วโมงเดิม) — ใช้ตัดคอลัมน์ตารางตามช่วงที่หน้างานทำงานจริง"""
+        return Window(start=self.start + timedelta(hours=first),
+                      end=min(self.end, self.start + timedelta(hours=last + 1)),
+                      hours=self.hours[first:last + 1], shift_b_start=self.shift_b_start)
 
     def shift_of(self, hour: int) -> str:
         """กะ A = ตั้งแต่ต้นรอบถึงก่อน shift_b_start, กะ B = shift_b_start ถึงจบรอบ"""
         position = self.hours.index(hour)
-        b_position = self.hours.index(self.shift_b_start) if self.shift_b_start in self.hours else len(self.hours)
+        b_position = next((i for i, h in enumerate(self.hours) if h % 24 == self.shift_b_start),
+                          len(self.hours))
         return "A" if position < b_position else "B"
 
     def slot_of(self, moment: datetime) -> Optional[int]:
-        """ชั่วโมงที่ moment ตกอยู่ ถ้าอยู่นอกรอบคืน None"""
+        """คีย์ของช่องที่ moment ตกอยู่ ถ้าอยู่นอกรอบคืน None"""
         if moment < self.start or moment >= self.end:
             return None
-        return moment.hour if moment.hour in self.hours else None
+        index = int((moment - self.start).total_seconds() // 3600)
+        return self.hours[index] if index < len(self.hours) else None
 
     def slot_started(self, hour: int) -> bool:
         """ชั่วโมงนี้เริ่มแล้วหรือยัง ณ เวลาสิ้นสุดของรอบ (ชั่วโมงในอนาคตยังไม่มีข้อมูล)"""
@@ -252,11 +268,31 @@ def make_window(start: datetime, end: datetime, day_end_hour: int = 12,
     if span == 24:
         # ครบ 24 ชั่วโมงแล้ว ชั่วโมงเดียวกันของวันถัดไปห้ามนับซ้ำในคอลัมน์แรก
         end = min(end, start + timedelta(hours=24))
-    hours = [(start.hour + i) % 24 for i in range(span)]
-    return Window(start=start, end=end, hours=hours, shift_b_start=shift_b_start)
+    return Window(start=start, end=end, hours=slot_keys(start.hour, span), shift_b_start=shift_b_start)
+
+
+def slot_keys(start_hour: int, span: int) -> List[int]:
+    """คีย์ของช่องรายชั่วโมง: ชั่วโมงจริง และ +24 ต่อรอบที่ชั่วโมงนั้นซ้ำ"""
+    keys: List[int] = []
+    seen: Dict[int, int] = {}
+    for i in range(span):
+        hour = (start_hour + i) % 24
+        keys.append(hour + 24 * seen.get(hour, 0))
+        seen[hour] = seen.get(hour, 0) + 1
+    return keys
+
+
+def scope_window(start: datetime, end: datetime, shift_b_start: int = 1) -> Window:
+    """ช่วงที่ผู้ใช้เลือกเอง (Manual) — ทุกชั่วโมงตั้งแต่ start ถึง end ยาวเกิน 24 ชม. ได้"""
+    start = start.replace(minute=0, second=0, microsecond=0)
+    if end <= start:
+        raise ValueError(f"ช่วงเวลาไม่ถูกต้อง: {start} -> {end}")
+    span = int(-(-(end - start).total_seconds() // 3600))
+    return Window(start=start, end=end, hours=slot_keys(start.hour, span), shift_b_start=shift_b_start)
 
 
 def hour_label(hour: int) -> str:
+    hour %= 24
     return f"{hour}点-{hour + 1}点"
 
 
@@ -977,7 +1013,7 @@ def read_autopack_throughput(raw_dir: str, window: Window, file_hour_offset: int
         if not window.slot_started(hour):
             continue
         path = autopack_hour_path(raw_dir, window, hour, file_hour_offset, folders)
-        if not path or not os.path.isfile(path):
+        if not path or not os.path.isfile(path) or not autopack_file_matches_slot(path, window, hour):
             continue
         workbook = CalamineWorkbook.from_path(path)
         if "Throughput" not in workbook.sheet_names:
@@ -1466,14 +1502,27 @@ def autopacking_folder(raw_dir: str, business_date: date) -> Optional[str]:
 AUTOPACK_FOLDER_ROLL_HOUR = 13
 
 
+# ไฟล์รายชั่วโมงต้องถูกเขียนใกล้เวลาจบช่องนั้น — ไฟล์ในโฟลเดอร์หลักที่ยังไม่ถูกเขียนทับ
+# เป็นของวันก่อน (เช่น 13.xlsx ของ 27 ยังค้างอยู่ตอน 28) ห้ามนับเป็นของวันนี้
+AUTOPACK_FILE_EARLY = timedelta(minutes=30)
+AUTOPACK_FILE_LATE = timedelta(hours=12)
+
+
+def autopack_file_matches_slot(path: str, window: Window, hour: int) -> bool:
+    try:
+        written = datetime.fromtimestamp(os.path.getmtime(path))
+    except OSError:
+        return False
+    slot_end = window.slot_end(hour)
+    return slot_end - AUTOPACK_FILE_EARLY <= written <= slot_end + AUTOPACK_FILE_LATE
+
+
 def autopack_hour_path(raw_dir: str, window: Window, hour: int, file_hour_offset: int = -1,
                        folders: Optional[Dict[date, Optional[str]]] = None) -> Optional[str]:
     """ไฟล์ของชั่วโมงนี้ — ชั่วโมงที่เลยรอบของโฟลเดอร์ (12点-13点 ของวันถัดไป) อยู่ในโฟลเดอร์วันถัดไป"""
-    folder_date = window.business_date
-    folder_end = datetime.combine(folder_date + timedelta(days=1), datetime.min.time()).replace(
-        hour=AUTOPACK_FOLDER_ROLL_HOUR)
-    if window.slot_end(hour) >= folder_end:  # ไฟล์ 13.xlsx เขียนตอน 13:00 พอดี = ไฟล์แรกของโฟลเดอร์ถัดไป
-        folder_date += timedelta(days=1)
+    # โฟลเดอร์วัน D เก็บไฟล์ที่เขียนตั้งแต่ D 13:00 ถึงก่อน D+1 13:00 (ไฟล์เขียนตอนจบช่อง)
+    # 13.xlsx ที่เขียนตอน 13:00 พอดี = ไฟล์แรกของโฟลเดอร์วันนั้น
+    folder_date = (window.slot_end(hour) - timedelta(hours=AUTOPACK_FOLDER_ROLL_HOUR)).date()
     folders = {} if folders is None else folders
     if folder_date not in folders:
         folders[folder_date] = autopacking_folder(raw_dir, folder_date)
@@ -1499,7 +1548,7 @@ def autopacking_sheets(raw_dir: str, window: Window, file_hour_offset: int = -1,
         if not window.slot_started(hour):
             continue
         path = autopack_hour_path(raw_dir, window, hour, file_hour_offset, folders)
-        if not path or not os.path.isfile(path):
+        if not path or not os.path.isfile(path) or not autopack_file_matches_slot(path, window, hour):
             continue
         try:
             from python_calamine import CalamineWorkbook
@@ -1731,8 +1780,13 @@ DWS_SITE_SECTIONS = ("dws", "dws_pda")
 
 def build(settings: Settings, window: Window, work_dir: str,
           log: LogFunc = _noop, is_running: RunFunc = _always,
-          run_started: Optional[datetime] = None) -> Dict[str, Any]:
-    """คำนวณ + วาดรูป + เขียนไฟล์ดิบ คืน {sections, raw_file, warnings}"""
+          run_started: Optional[datetime] = None, trim_to_activity: bool = False) -> Dict[str, Any]:
+    """คำนวณ + วาดรูป + เขียนไฟล์ดิบ คืน {sections, raw_file, warnings}
+
+    trim_to_activity (สรุป Manual ตามช่วงที่เลือกเอง): ตารางรายชั่วโมงของแต่ละหน้างานแสดงเฉพาะ
+    ชั่วโมงที่หน้างานนั้นทำงานจริง — AutoPacking + PDA บรรจุ ตามยอด AutoPacking,
+    DWS + PDA ลงรถ ตามแถว 合计 ของตาราง DWS (กฎเดียวกับเวลาในหัวข้อ)
+    """
     warnings: List[str] = []
     sections: List[Section] = []
     raw_sheets: List[RawSheet] = []
@@ -1762,19 +1816,26 @@ def build(settings: Settings, window: Window, work_dir: str,
     # Use the complete populated AutoPacking columns for every title in the
     # post.  This keeps a partial first/last column in the picture while the
     # stated time range accurately describes the full working hours.
+    trailing = settings.opt_int("title_end_trim_total")
     labels = window.labels()
+    ap_window = window  # คอลัมน์ของตารางหน้างาน AutoPacking (Manual = ตัดตามชั่วโมงที่ทำงานจริง)
     if "autopacking" in wanted:
         throughput = load_autopack_throughput()
         if throughput:
             table = autopack_feeder_counts(throughput, window)
-            labels = window.labels_for_hourly_totals(autopack_summary(table)["grand"]["hours"],
-                                                     trailing_total=settings.opt_int("title_end_trim_total"))
+            ap_totals = autopack_summary(table)["grand"]["hours"]
+            labels = window.labels_for_hourly_totals(ap_totals, trailing_total=trailing)
+            ap_span = window.active_span(ap_totals, trailing_total=trailing)
+            if trim_to_activity and ap_span:
+                ap_window = window.sub(*ap_span)
+                _say(log, f"Daily summary: AutoPacking ทำงาน {labels['start']}-{labels['end']}")
 
     # หน้างาน DWS (เครื่อง DWS + DWS PDA) จบไม่พร้อม AutoPacking — หัวข้อ DWS / PDA ลงรถ
     # ใช้เวลาจากแถว 合计 ของตาราง DWS เอง (กฎเดียวกัน: ชั่วโมงที่มียอด >= 100 / ตัดยอดเกินท้ายรอบ)
     dws_table: Optional[DwsTable] = None
     dws_table_warnings: List[str] = []
     dws_labels: Optional[Dict[str, str]] = None
+    dws_window = window  # คอลัมน์ของตารางหน้างาน DWS (Manual = ตัดตามชั่วโมงที่ทำงานจริง)
 
     def load_dws_table() -> DwsTable:
         nonlocal dws_table, dws_table_warnings
@@ -1783,15 +1844,18 @@ def build(settings: Settings, window: Window, work_dir: str,
         return dws_table
 
     def dws_site_labels() -> Dict[str, str]:
-        nonlocal dws_labels
+        nonlocal dws_labels, dws_window
         if dws_labels is None:
             dws_labels = labels
             try:
                 table = load_dws_table()
                 totals = {h: sum(values[h] for _, _, values in table.rows) for h in window.hours}
                 if any(totals.values()):
-                    dws_labels = window.labels_for_hourly_totals(
-                        totals, trailing_total=settings.opt_int("title_end_trim_total"))
+                    dws_labels = window.labels_for_hourly_totals(totals, trailing_total=trailing)
+                    dws_span = window.active_span(totals, trailing_total=trailing)
+                    if trim_to_activity and dws_span:
+                        dws_window = window.sub(*dws_span)
+                        _say(log, f"Daily summary: DWS ทำงาน {dws_labels['start']}-{dws_labels['end']}")
             except Exception as exc:
                 _say(log, f"Daily summary: เวลาหัวข้อ DWS ใช้ของ AutoPacking แทน — {exc}", "WARN")
         return dws_labels
@@ -1845,17 +1909,19 @@ def build(settings: Settings, window: Window, work_dir: str,
                     section.note = f"ไม่พบไฟล์ AutoPacking รายชั่วโมงของรอบนี้ใน {settings.autopacking_folder}"
                 else:
                     section.image = render_autopack_table(
-                        autopack_feeder_counts(throughput, window),
+                        autopack_feeder_counts(throughput, ap_window),
                         os.path.join(work_dir, f"AUTOPACKING_{stamp}.png"), capture=captured)
             elif key == "dws":
                 table = load_dws_table()
                 warnings.extend(f"dws: {w}" for w in dws_table_warnings)
+                if dws_window is not window:
+                    table = DwsTable(window=dws_window, rows=table.rows)
                 section.image = render_dws_table(table, os.path.join(work_dir, f"DWS_{stamp}.png"),
                                                  capture=captured)
             elif key == "auto_pda":
                 names = machine_names(settings.opt("auto_pda_prefix"), settings.opt_int("auto_pda_count"))
                 section.image = render_hourly_table(
-                    hourly_counts(load_auto(), names, window), window,
+                    hourly_counts(load_auto(), names, ap_window), ap_window,
                     os.path.join(work_dir, f"AUTO_PDA_{stamp}.png"), bold_values=True, capture=captured)
             elif key == "pda_bag":
                 names = machine_names(settings.opt("auto_pda_prefix"), settings.opt_int("auto_pda_count"))
@@ -1888,8 +1954,9 @@ def build(settings: Settings, window: Window, work_dir: str,
                         os.path.join(work_dir, f"ABNORMAL_{stamp}.png"), capture=captured)
             elif key == "dws_pda":
                 names = machine_names(settings.opt("dws_pda_prefix"), settings.opt_int("dws_pda_count"))
+                dws_site_labels()  # หาช่วงที่หน้างาน DWS ทำงาน (ตอน Manual)
                 section.image = render_hourly_table(
-                    hourly_counts(load_dws_pda(), names, window), window,
+                    hourly_counts(load_dws_pda(), names, dws_window), dws_window,
                     os.path.join(work_dir, f"DWS_PDA_{stamp}.png"), capture=captured)
             else:
                 section.note = f"ไม่รู้จักหัวข้อ '{key}'"
@@ -1984,6 +2051,8 @@ def scheduled_send_at(report_start: datetime, send_time: str) -> datetime:
 
 
 LATE_REASON = "เลยเวลาส่ง"
+# ส่งอัตโนมัติ (รวมส่งย้อนหลัง) ได้ไม่เกิน 13:00 — เลยจากนั้นเป็นงานของสรุป Manual ตามช่วงที่เลือกเอง
+AUTO_SEND_CUTOFF_HOUR = 13
 # ไม่ติ๊กส่งย้อนหลัง ก็ยังเผื่อไว้ไม่กี่นาที: ตัวตั้งเวลาเช็กทุก 30 วินาที และอาจต้องรอรอบรายชั่วโมงให้เสร็จ
 ON_TIME_GRACE_MINUTES = 5
 
@@ -1999,10 +2068,12 @@ def late_limit_minutes(catch_up: Any, minutes: Any) -> int:
 
 
 def due_to_send(report_start: datetime, report_end: datetime, send_time: str,
-                last_sent_date: str, max_late_minutes: Optional[int] = None) -> Tuple[bool, str]:
+                last_sent_date: str, max_late_minutes: Optional[int] = None,
+                cutoff_hour: Optional[int] = None) -> Tuple[bool, str]:
     """รอบนี้ต้องส่งสรุปไหม คืน (ส่งไหม, เหตุผล)
 
     max_late_minutes: ส่งตามได้ไม่เกินกี่นาทีหลังเวลาส่ง (None = ส่งตามได้ทั้งรอบงาน)
+    cutoff_hour: ส่งอัตโนมัติได้ไม่เกินชั่วโมงนี้ของวันที่ส่ง (เปิด Auto หลัง 13:00 = ไม่ส่งย้อนหลัง)
     """
     business_date = report_start.date().isoformat()
     send_at = scheduled_send_at(report_start, send_time)
@@ -2013,6 +2084,12 @@ def due_to_send(report_start: datetime, report_end: datetime, send_time: str,
     if max_late_minutes is not None and report_end > send_at + timedelta(minutes=max_late_minutes):
         return False, (f"{LATE_REASON} {send_at:%H:%M} เกิน {max_late_minutes} นาที "
                        f"— สรุปของวันที่ {business_date} ต้องกด \"ส่งสรุปตอนนี้\" เอง")
+    if cutoff_hour is not None:
+        cutoff = send_at.replace(hour=cutoff_hour, minute=0)
+        late_end = send_at + timedelta(minutes=ON_TIME_GRACE_MINUTES)
+        if report_end > max(cutoff, late_end):
+            return False, (f"{LATE_REASON} {cutoff_hour}:00 — สรุปของวันที่ {business_date} "
+                           f"ต้องเลือกช่วงแล้วกด \"ส่งสรุปตอนนี้\" เอง")
     return True, f"ถึงเวลาส่ง ({send_at:%Y-%m-%d %H:%M})"
 
 
@@ -2075,11 +2152,18 @@ def save_excel_copy(result: Dict[str, Any], folder: str, log: LogFunc = _noop) -
 
 def run(settings: Settings, start: datetime, end: datetime, log: LogFunc = _noop,
         is_running: RunFunc = _always, run_started: Optional[datetime] = None,
-        send_to_feishu: bool = True, work_dir: Optional[str] = None) -> Dict[str, Any]:
-    window = make_window(start, end, settings.opt_int("day_end_hour"), settings.opt_int("shift_b_start"))
+        send_to_feishu: bool = True, work_dir: Optional[str] = None,
+        scope: bool = False) -> Dict[str, Any]:
+    """scope = สรุป Manual ตามช่วงที่เลือกเอง: ใช้ทุกชั่วโมงของช่วงนั้น (เกิน 24 ชม. ได้)
+    แล้วตัดคอลัมน์ตารางของแต่ละหน้างานตามชั่วโมงที่ทำงานจริง"""
+    if scope:
+        window = scope_window(start, end, settings.opt_int("shift_b_start"))
+    else:
+        window = make_window(start, end, settings.opt_int("day_end_hour"), settings.opt_int("shift_b_start"))
     work_dir = work_dir or os.path.join(settings.output_dir or settings.raw_dir or ".", "DailySummary")
     _say(log, f"Daily summary: รอบ {window.start:%Y-%m-%d %H:%M} -> {window.end:%Y-%m-%d %H:%M}", "START")
-    result = build(settings, window, work_dir, log=log, is_running=is_running, run_started=run_started)
+    result = build(settings, window, work_dir, log=log, is_running=is_running, run_started=run_started,
+                   trim_to_activity=scope)
     # บันทึกไฟล์ Excel ก่อนส่ง — ส่ง Feishu ไม่สำเร็จไฟล์ก็ยังอยู่ (ปุ่มสร้างตัวอย่างไม่บันทึก)
     if send_to_feishu and settings.opt("backup_dir") and is_running():
         try:

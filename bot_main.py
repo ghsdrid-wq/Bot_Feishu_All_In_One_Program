@@ -13,7 +13,7 @@ import hmac
 import zipfile
 import traceback
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 
@@ -3391,6 +3391,36 @@ class App(ctk.CTk):
         btn_save.grid(row=0, column=3, padx=(8, 0), sticky="e")
         self.lockable_buttons += [self.btn_ds_preview, self.btn_ds_send, btn_save]
 
+        # ช่วงที่สรุปตอนกดเอง (Manual) — เลือกได้เกิน 24 ชม. เช่น 28 12:00 ถึง 29 13:00
+        # บอทหาเองว่า AutoPacking / DWS ทำงานถึงกี่โมง แล้วตัดตารางของแต่ละหน้างานตามนั้น
+        scope = ctk.CTkFrame(actions, fg_color="#3b4252", corner_radius=14)
+        scope.grid(row=1, column=0, columnspan=4, pady=(8, 0), sticky="ew")
+        ctk.CTkLabel(scope, text="ช่วงที่สรุป (กดเอง)", text_color="#eceff4",
+                     font=ctk.CTkFont(size=14, weight="bold")).grid(row=0, column=0, padx=(14, 10), pady=10)
+        hour_values = [f"{h:02d}:00" for h in range(24)]
+        self.ds_scope_start_date = DateEntry(scope, width=12, date_pattern="yyyy-mm-dd", state="readonly",
+                                             font=("Segoe UI", 11))
+        self.ds_scope_start_date.grid(row=0, column=1, padx=4)
+        self.ds_scope_start_hour = ctk.StringVar(value="13:00")
+        ctk.CTkComboBox(scope, values=hour_values, width=86, variable=self.ds_scope_start_hour,
+                        state="readonly").grid(row=0, column=2, padx=4)
+        ctk.CTkLabel(scope, text="ถึง", text_color="#d8dee9").grid(row=0, column=3, padx=6)
+        self.ds_scope_end_date = DateEntry(scope, width=12, date_pattern="yyyy-mm-dd", state="readonly",
+                                           font=("Segoe UI", 11))
+        self.ds_scope_end_date.grid(row=0, column=4, padx=4)
+        self.ds_scope_end_hour = ctk.StringVar(value="13:00")
+        ctk.CTkComboBox(scope, values=hour_values, width=86, variable=self.ds_scope_end_hour,
+                        state="readonly").grid(row=0, column=5, padx=4)
+        btn_scope_reset = ctk.CTkButton(scope, text="↺ รอบล่าสุด", width=100, fg_color="#4c566a",
+                                        hover_color="#5e6779", command=self.reset_daily_summary_scope)
+        btn_scope_reset.grid(row=0, column=6, padx=(8, 14))
+        ctk.CTkLabel(scope, text="ปุ่ม สร้างตัวอย่าง / ส่งสรุปตอนนี้ ใช้ช่วงนี้ — ดึงไฟล์ JMS ของช่วงนี้ใหม่ "
+                                 "แล้วหาเองว่า AutoPacking และ DWS ทำงานถึงกี่โมง (ส่งอัตโนมัติไม่ใช้ช่วงนี้)",
+                     text_color="#7b8496", anchor="w", justify="left", wraplength=900).grid(
+            row=1, column=0, columnspan=7, padx=14, pady=(0, 10), sticky="w")
+        self.lockable_buttons.append(btn_scope_reset)
+        self.reset_daily_summary_scope()
+
         # ---- การส่ง
         send = self.make_card(page, "#3b4252", 22)
         send.grid(row=2, column=0, padx=24, pady=8, sticky="ew")
@@ -3413,7 +3443,8 @@ class App(ctk.CTk):
         hour, minute = daily_summary.parse_send_time(self.daily_summary_option("send_time"))
         self.ds_send_hour_var = ctk.StringVar(value=f"{hour:02d}")
         self.ds_send_minute_var = ctk.StringVar(value=f"{minute:02d}")
-        hour_box = ctk.CTkComboBox(time_row, values=[f"{h:02d}" for h in range(24)], width=70,
+        # ส่งอัตโนมัติได้ไม่เกิน 13:00 (AUTO_SEND_CUTOFF_HOUR) — หลังจากนั้นใช้สรุปตามช่วงที่เลือกเอง
+        hour_box = ctk.CTkComboBox(time_row, values=[f"{h:02d}" for h in range(daily_summary.AUTO_SEND_CUTOFF_HOUR)], width=70,
                                    variable=self.ds_send_hour_var, state="readonly",
                                    command=lambda _value: self.save_config())
         hour_box.grid(row=0, column=0)
@@ -3549,11 +3580,9 @@ class App(ctk.CTk):
         self.ds_entry(advanced, 2, "จำนวนเครื่อง PDA บรรจุ", "auto_pda_count", width=90)
         self.ds_entry(advanced, 3, "ชื่อเครื่อง PDA ลงรถ", "dws_pda_prefix", width=200)
         self.ds_entry(advanced, 4, "จำนวนเครื่อง PDA ลงรถ", "dws_pda_count", width=90)
-        self.ds_entry(advanced, 5, "รอบงานเริ่มกี่โมง", "round_start_hour",
-                      "ตายตัว ไม่ขึ้นกับเวลาเริ่มของ Auto (13 = ตามโฟลเดอร์วันของ AutoPacking)", width=90)
-        self.ds_entry(advanced, 6, "รอบงานจบกี่โมง", "day_end_hour", "ตารางรายชั่วโมงแสดงถึงก่อนชั่วโมงนี้", width=90)
-        self.ds_entry(advanced, 7, "กะ B เริ่มกี่โมง", "shift_b_start", width=90)
-        ctk.CTkLabel(advanced, text="").grid(row=8, column=0, pady=2)
+        self.ds_entry(advanced, 5, "รอบงานจบกี่โมง", "day_end_hour", "ตารางรายชั่วโมงแสดงถึงก่อนชั่วโมงนี้", width=90)
+        self.ds_entry(advanced, 6, "กะ B เริ่มกี่โมง", "shift_b_start", width=90)
+        ctk.CTkLabel(advanced, text="").grid(row=7, column=0, pady=2)
         return page
 
     def daily_summary_shared_paths(self) -> Dict[str, str]:
@@ -3677,19 +3706,11 @@ class App(ctk.CTk):
         วันที่ยอดปล่อยเลยไปถึง 13:00 จะกดส่งเองหลัง 13:00 ซึ่งรอบใหม่เริ่มแล้ว
         สรุปรอบใหม่ที่เพิ่งเริ่มไม่มีประโยชน์ จึงใช้รอบก่อนหน้าแทน (ตารางขยายถึง 12点-13点 ให้เอง)
         """
-        now = (moment or self.daily_summary_now()).replace(microsecond=0)
-        try:
-            hour = max(0, min(23, int(float(self.daily_summary_option("round_start_hour")))))
-        except (TypeError, ValueError):
-            hour = int(daily_summary.DEFAULTS["round_start_hour"])
-        # รอบของสรุปเริ่ม round_start_hour (13:00) ตายตัว ไม่ใช้เวลาเริ่มของ Auto
-        # (2026-10-28: Auto เริ่ม 14:00 ทำให้สรุปขาดช่วง 13-14 ทั้งที่ AutoPacking ปล่อย 22,437 ชิ้น)
-        start_dt = now.replace(hour=hour, minute=0, second=0)
-        if start_dt > now:
-            start_dt -= timedelta(days=1)
-        if now - start_dt < timedelta(hours=daily_summary.MIN_ROUND_HOURS_BEFORE_SEND):
-            start_dt -= timedelta(days=1)
-        return start_dt.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d %H:%M:%S")
+        start, end = self.get_report_time_range(moment or self.daily_summary_now())
+        start_dt, end_dt = datetime.fromisoformat(start), datetime.fromisoformat(end)
+        if end_dt - start_dt < timedelta(hours=daily_summary.MIN_ROUND_HOURS_BEFORE_SEND):
+            start = (start_dt - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+        return start, end
 
     def daily_summary_now(self) -> datetime:
         return datetime.now()
@@ -3724,24 +3745,57 @@ class App(ctk.CTk):
             self.current_run_source = None
             self.raw_time_source = "manual"
 
+    def reset_daily_summary_scope(self):
+        """ตั้งช่วงที่สรุปเป็นรอบล่าสุด: ต้นรอบ (ตามเวลาเริ่มของ Auto) ถึงชั่วโมงถัดจากตอนนี้"""
+        try:
+            start, end = self.daily_summary_range()
+        except Exception:
+            return
+        start_dt = datetime.fromisoformat(start)
+        end_dt = (datetime.fromisoformat(end) + timedelta(minutes=59)).replace(minute=0, second=0)
+        for widget, value in ((self.ds_scope_start_date, start_dt.date()), (self.ds_scope_end_date, end_dt.date())):
+            self.set_locked_date(widget, value)
+        self.ds_scope_start_hour.set(f"{start_dt.hour:02d}:00")
+        self.ds_scope_end_hour.set(f"{end_dt.hour:02d}:00")
+
+    def daily_summary_scope(self) -> Tuple[datetime, datetime]:
+        """ช่วงที่เลือกในหน้าสรุปรายวัน — จุดจบเลยเวลาปัจจุบันจะตัดที่ตอนนี้"""
+        def read(date_widget, hour_var):
+            hour = int(str(hour_var.get() or "0").split(":")[0])
+            return datetime.combine(date_widget.get_date(), datetime.min.time()).replace(hour=hour)
+
+        start = read(self.ds_scope_start_date, self.ds_scope_start_hour)
+        end = min(read(self.ds_scope_end_date, self.ds_scope_end_hour), datetime.now().replace(microsecond=0))
+        return start, end
+
     def start_daily_summary_now(self, send: bool):
-        """ปุ่มในหน้าสรุปรายวัน: สร้างตัวอย่าง (ไม่ส่ง) หรือส่งทันที ด้วยช่วงเวลารายงานของตอนนี้"""
+        """ปุ่มในหน้าสรุปรายวัน: สร้างตัวอย่าง (ไม่ส่ง) หรือส่งทันที ตามช่วงที่เลือก (Manual)"""
         if self.running or self.ds_busy:
             self.set_daily_summary_status("มีงานอื่นกำลังรันอยู่ รอให้เสร็จก่อน", "#ebcb8b")
             return
+        try:
+            start_dt, end_dt = self.daily_summary_scope()
+        except Exception as exc:
+            self.set_daily_summary_status(f"ช่วงเวลาไม่ถูกต้อง: {exc}", "#d3868e")
+            return
+        if end_dt <= start_dt:
+            self.set_daily_summary_status("ช่วงเวลาไม่ถูกต้อง: เวลาจบต้องหลังเวลาเริ่ม (และไม่เลยเวลาปัจจุบัน)",
+                                          "#d3868e")
+            return
         self.save_all()
         settings = self.daily_summary_settings(entry_value(self.out_entry))
-        start, end = self.daily_summary_range()
+        start = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+        end = end_dt.strftime("%Y-%m-%d %H:%M:%S")
         if send:
             target = settings.chat_id or "(ไม่มี Chat ID)"
             if not messagebox.askyesno(
                     "ส่งสรุปตอนนี้",
                     f"ส่งสรุปยอดช่วง {start} -> {end}\nเข้ากลุ่ม {target} ?"):
                 return
-        self.run_daily_summary_in_background(settings, start, end, send)
+        self.run_daily_summary_in_background(settings, start, end, send, scope=True)
 
     def run_daily_summary_in_background(self, settings, start: str, end: str, send: bool,
-                                        mark_sent: bool = False):
+                                        mark_sent: bool = False, scope: bool = False):
         self.ds_busy = True
         self.set_daily_summary_status("กำลังส่ง..." if send else "กำลังสร้างตัวอย่าง...", "#88c0d0")
 
@@ -3763,7 +3817,7 @@ class App(ctk.CTk):
                             f"สรุปรายวัน {datetime.fromisoformat(start):%Y-%m-%d}", log=self.write_log))
                     result = daily_summary.run(
                         settings, datetime.fromisoformat(start), datetime.fromisoformat(end),
-                        log=self.write_log, send_to_feishu=send)
+                        log=self.write_log, send_to_feishu=send, scope=scope)
                 if mark_sent:
                     self.mark_daily_summary_sent(datetime.fromisoformat(start).date().isoformat())
                 folder = os.path.dirname(result["sections"][0].image or "") if result["sections"] else ""
@@ -6767,7 +6821,7 @@ class App(ctk.CTk):
                 due, reason = daily_summary.due_to_send(
                     datetime.fromisoformat(start), datetime.fromisoformat(end),
                     self.daily_summary_option("send_time"), self.daily_summary_option("last_sent_date"),
-                    max_late_minutes=late_limit)
+                    max_late_minutes=late_limit, cutoff_hour=daily_summary.AUTO_SEND_CUTOFF_HOUR)
                 business_date = datetime.fromisoformat(start).date().isoformat()
                 if reason.startswith(daily_summary.LATE_REASON):
                     # แจ้งครั้งเดียวต่อรอบงาน ไม่ต้องขึ้นซ้ำทุก 30 วินาที

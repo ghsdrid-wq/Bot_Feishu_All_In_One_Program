@@ -339,16 +339,13 @@ class SchedulerRegressionTests(unittest.TestCase):
                          datetime(2026, 9, 27, 17, 1))
 
     def test_daily_summary_button_uses_finished_round_early_in_new_round(self) -> None:
-        app = self.make_app()  # Auto เริ่ม 16:00 แต่รอบสรุปเริ่ม 13:00 ตายตัว
-        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 14, 10)),
-                         ("2026-09-27 13:00:00", "2026-09-28 14:10:00"))
-        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 15, 0)),
-                         ("2026-09-28 13:00:00", "2026-09-28 15:00:00"))
+        app = self.make_app()  # start_hour 16
+        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 17, 10)),
+                         ("2026-09-27 16:00:00", "2026-09-28 17:10:00"))
+        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 18, 0)),
+                         ("2026-09-28 16:00:00", "2026-09-28 18:00:00"))
         self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 12, 30)),
-                         ("2026-09-27 13:00:00", "2026-09-28 12:30:00"))
-        app.config["DAILY_SUMMARY"] = {"round_start_hour": "15"}
-        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 12, 30)),
-                         ("2026-09-27 15:00:00", "2026-09-28 12:30:00"))
+                         ("2026-09-27 16:00:00", "2026-09-28 12:30:00"))
 
     def test_feishu_webhook_and_plan_endpoint_require_token(self) -> None:
         class DummyController:
@@ -1116,6 +1113,8 @@ class DailySummaryTimerTests(unittest.TestCase):
         app = bot_main.App.__new__(bot_main.App)
         app.config = configparser.RawConfigParser()
         app.config["DAILY_SUMMARY"] = {"auto_send": "true", "send_time": "12:20", "last_sent_date": last_sent}
+        app.config["TIME"] = {"start_hour": "14"}  # รอบสรุปแบบ Auto เริ่มตามเวลาเริ่มของ Auto
+        app.ui_thread_id = -1
         app.scheduler_running = True
         app.running = False
         app.ds_busy = False
@@ -1146,12 +1145,14 @@ class DailySummaryTimerTests(unittest.TestCase):
     def test_timer_sends_finished_round_when_new_round_starts_before_send_time(self) -> None:
         # เริ่มรอบ 12:00 ส่ง 12:20: ตอน 12:20 รอบปัจจุบันเพิ่งเริ่ม ต้องส่งสรุปของรอบที่เพิ่งจบ
         app = self._app(last_sent="2026-10-25")
+        app.config["TIME"] = {"start_hour": "12"}
         app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-27 12:20:30")
         app.daily_summary_tick()
         self.assertEqual(len(app.calls), 1)
-        self.assertEqual(app.calls[0][0][1:3], ("2026-10-26 13:00:00", "2026-10-27 12:20:30"))
+        self.assertEqual(app.calls[0][0][1:3], ("2026-10-26 12:00:00", "2026-10-27 12:20:30"))
         # ส่งรอบ 26 ไปแล้ว: ตอน 12:24 ไม่ส่งรอบ 27 ที่เพิ่งเริ่ม
         app = self._app(last_sent="2026-10-26")
+        app.config["TIME"] = {"start_hour": "12"}
         app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-27 12:24:35")
         app.daily_summary_tick()
         self.assertEqual(app.calls, [])
