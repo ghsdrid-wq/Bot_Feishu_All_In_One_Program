@@ -339,13 +339,16 @@ class SchedulerRegressionTests(unittest.TestCase):
                          datetime(2026, 9, 27, 17, 1))
 
     def test_daily_summary_button_uses_finished_round_early_in_new_round(self) -> None:
-        app = self.make_app()  # start_hour 16
-        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 17, 10)),
-                         ("2026-09-27 16:00:00", "2026-09-28 17:10:00"))
-        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 18, 0)),
-                         ("2026-09-28 16:00:00", "2026-09-28 18:00:00"))
+        app = self.make_app()  # Auto เริ่ม 16:00 แต่รอบสรุปเริ่ม 13:00 ตายตัว
+        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 14, 10)),
+                         ("2026-09-27 13:00:00", "2026-09-28 14:10:00"))
+        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 15, 0)),
+                         ("2026-09-28 13:00:00", "2026-09-28 15:00:00"))
         self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 12, 30)),
-                         ("2026-09-27 16:00:00", "2026-09-28 12:30:00"))
+                         ("2026-09-27 13:00:00", "2026-09-28 12:30:00"))
+        app.config["DAILY_SUMMARY"] = {"round_start_hour": "15"}
+        self.assertEqual(app.daily_summary_range(datetime(2026, 9, 28, 12, 30)),
+                         ("2026-09-27 15:00:00", "2026-09-28 12:30:00"))
 
     def test_feishu_webhook_and_plan_endpoint_require_token(self) -> None:
         class DummyController:
@@ -1126,10 +1129,10 @@ class DailySummaryTimerTests(unittest.TestCase):
 
     def test_sends_once_after_minute_and_waits_for_running_pipeline(self) -> None:
         app = self._app()
-        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:10:00")
+        app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-19 12:10:00")
         app.daily_summary_tick()
         self.assertEqual(app.calls, [])  # ยังไม่ถึง 12:20
-        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:20:30")
+        app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-19 12:20:30")
         app.running = True
         app.daily_summary_tick()
         self.assertEqual(app.calls, [])  # รอบรายชั่วโมงยังรัน รอก่อน
@@ -1143,15 +1146,40 @@ class DailySummaryTimerTests(unittest.TestCase):
     def test_timer_sends_finished_round_when_new_round_starts_before_send_time(self) -> None:
         # เริ่มรอบ 12:00 ส่ง 12:20: ตอน 12:20 รอบปัจจุบันเพิ่งเริ่ม ต้องส่งสรุปของรอบที่เพิ่งจบ
         app = self._app(last_sent="2026-10-25")
-        app.get_report_time_range = lambda: ("2026-10-27 12:00:00", "2026-10-27 12:20:30")
+        app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-27 12:20:30")
         app.daily_summary_tick()
         self.assertEqual(len(app.calls), 1)
-        self.assertEqual(app.calls[0][0][1:3], ("2026-10-26 12:00:00", "2026-10-27 12:20:30"))
+        self.assertEqual(app.calls[0][0][1:3], ("2026-10-26 13:00:00", "2026-10-27 12:20:30"))
         # ส่งรอบ 26 ไปแล้ว: ตอน 12:24 ไม่ส่งรอบ 27 ที่เพิ่งเริ่ม
         app = self._app(last_sent="2026-10-26")
-        app.get_report_time_range = lambda: ("2026-10-27 12:00:00", "2026-10-27 12:24:35")
+        app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-27 12:24:35")
         app.daily_summary_tick()
         self.assertEqual(app.calls, [])
+
+    def test_summary_downloads_its_own_round_into_separate_folder(self) -> None:
+        app = self._app()
+        seen = []
+        with tempfile.TemporaryDirectory() as raw:
+            app.config["DWS_JMS"] = {"raw_path": raw}
+            app.ui_thread_id = -1
+            app.run_generation = 0
+            app.stop_requested = False
+            app.running = False
+            app.active_run_settings = app.active_run_generation = None
+            app.run_state_lock = threading.Lock()
+            app.watchdog_last_warning_at = 0
+            app.mark_activity = lambda: None
+            app.mode, app.raw_time_source = "auto", "manual"
+            record = lambda name: lambda: seen.append(
+                (name, app.get_raw_export_folder(), app.get_time_range(), app.running))
+            app.run_jms_auto, app.run_jms_pda, app.run_dws = record("auto"), record("pda"), record("dws")
+            folder = app.export_raw_for_daily_summary("2026-10-27 13:00:00", "2026-10-28 12:20:00")
+            self.assertEqual(folder, os.path.join(raw, "DailySummaryRaw"))
+        self.assertEqual([x[0] for x in seen], ["auto", "pda", "dws"])
+        self.assertTrue(all(x[1] == folder and x[3] for x in seen))
+        self.assertEqual(seen[0][2], ("2026-10-27 13:00:00", "2026-10-28 12:20:00"))
+        self.assertFalse(app.running)  # คืนสถานะให้รอบรายชั่วโมงรันต่อได้
+        self.assertIsNone(app.active_run_settings)
 
     def test_started_too_late_skips_and_notifies_once(self) -> None:
         app = self._app()
@@ -1160,7 +1188,7 @@ class DailySummaryTimerTests(unittest.TestCase):
         app.ds_status = object()
         app.set_daily_summary_status = lambda text, color=None: app.statuses.append(text)
         # เปิด Auto ตอน 12:59 แต่ตั้งส่ง 12:20 -> เกิน 30 นาที ไม่ส่งเอง
-        app.get_report_time_range = lambda: ("2026-10-19 16:00:00", "2026-10-20 12:59:00")
+        app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-20 12:59:00")
         app.daily_summary_tick()
         app.daily_summary_tick()
         self.assertEqual(app.calls, [])
@@ -1172,17 +1200,17 @@ class DailySummaryTimerTests(unittest.TestCase):
         app.config["DAILY_SUMMARY"]["send_catch_up"] = "false"
         app.events, app.statuses = [], []
         app.log_scheduler_event = app.events.append
-        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:35:00")
+        app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-19 12:35:00")
         app.daily_summary_tick()
         self.assertEqual(app.calls, [])  # เลย 12:20 ไป 15 นาที ไม่ติ๊กส่งย้อนหลัง -> ไม่ส่ง
         app.ds_late_notified = set()
-        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:23:00")
+        app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-19 12:23:00")
         app.daily_summary_tick()
         self.assertEqual(len(app.calls), 1)  # ยังอยู่ในช่วงเผื่อ 5 นาที -> ส่งตามเวลา
 
     def test_already_sent_or_auto_off_does_nothing(self) -> None:
         app = self._app(last_sent="2026-10-18")
-        app.get_report_time_range = lambda: ("2026-10-18 14:00:00", "2026-10-19 12:30:00")
+        app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-19 12:30:00")
         app.daily_summary_tick()
         app.config["DAILY_SUMMARY"]["last_sent_date"] = ""
         app.config["DAILY_SUMMARY"]["auto_send"] = "false"

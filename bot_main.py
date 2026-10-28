@@ -3549,9 +3549,11 @@ class App(ctk.CTk):
         self.ds_entry(advanced, 2, "จำนวนเครื่อง PDA บรรจุ", "auto_pda_count", width=90)
         self.ds_entry(advanced, 3, "ชื่อเครื่อง PDA ลงรถ", "dws_pda_prefix", width=200)
         self.ds_entry(advanced, 4, "จำนวนเครื่อง PDA ลงรถ", "dws_pda_count", width=90)
-        self.ds_entry(advanced, 5, "รอบงานจบกี่โมง", "day_end_hour", "ตารางรายชั่วโมงแสดงถึงก่อนชั่วโมงนี้", width=90)
-        self.ds_entry(advanced, 6, "กะ B เริ่มกี่โมง", "shift_b_start", width=90)
-        ctk.CTkLabel(advanced, text="").grid(row=7, column=0, pady=2)
+        self.ds_entry(advanced, 5, "รอบงานเริ่มกี่โมง", "round_start_hour",
+                      "ตายตัว ไม่ขึ้นกับเวลาเริ่มของ Auto (13 = ตามโฟลเดอร์วันของ AutoPacking)", width=90)
+        self.ds_entry(advanced, 6, "รอบงานจบกี่โมง", "day_end_hour", "ตารางรายชั่วโมงแสดงถึงก่อนชั่วโมงนี้", width=90)
+        self.ds_entry(advanced, 7, "กะ B เริ่มกี่โมง", "shift_b_start", width=90)
+        ctk.CTkLabel(advanced, text="").grid(row=8, column=0, pady=2)
         return page
 
     def daily_summary_shared_paths(self) -> Dict[str, str]:
@@ -3675,11 +3677,52 @@ class App(ctk.CTk):
         วันที่ยอดปล่อยเลยไปถึง 13:00 จะกดส่งเองหลัง 13:00 ซึ่งรอบใหม่เริ่มแล้ว
         สรุปรอบใหม่ที่เพิ่งเริ่มไม่มีประโยชน์ จึงใช้รอบก่อนหน้าแทน (ตารางขยายถึง 12点-13点 ให้เอง)
         """
-        start, end = self.get_report_time_range(moment) if moment else self.get_report_time_range()
-        start_dt, end_dt = datetime.fromisoformat(start), datetime.fromisoformat(end)
-        if end_dt - start_dt < timedelta(hours=daily_summary.MIN_ROUND_HOURS_BEFORE_SEND):
-            start = (start_dt - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
-        return start, end
+        now = (moment or self.daily_summary_now()).replace(microsecond=0)
+        try:
+            hour = max(0, min(23, int(float(self.daily_summary_option("round_start_hour")))))
+        except (TypeError, ValueError):
+            hour = int(daily_summary.DEFAULTS["round_start_hour"])
+        # รอบของสรุปเริ่ม round_start_hour (13:00) ตายตัว ไม่ใช้เวลาเริ่มของ Auto
+        # (2026-10-28: Auto เริ่ม 14:00 ทำให้สรุปขาดช่วง 13-14 ทั้งที่ AutoPacking ปล่อย 22,437 ชิ้น)
+        start_dt = now.replace(hour=hour, minute=0, second=0)
+        if start_dt > now:
+            start_dt -= timedelta(days=1)
+        if now - start_dt < timedelta(hours=daily_summary.MIN_ROUND_HOURS_BEFORE_SEND):
+            start_dt -= timedelta(days=1)
+        return start_dt.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d %H:%M:%S")
+
+    def daily_summary_now(self) -> datetime:
+        return datetime.now()
+
+    def export_raw_for_daily_summary(self, start: str, end: str) -> Optional[str]:
+        """ดึงไฟล์ JMS AUTO / JMS PDA / DWS9-11 ของช่วงสรุปใหม่ลงโฟลเดอร์ DailySummaryRaw
+
+        ไฟล์ในโฟลเดอร์ไฟล์ดิบเป็นของรอบรายชั่วโมง ซึ่งเริ่มตามเวลาเริ่มของ Auto และถูกเขียนทับ
+        ทุกชั่วโมง (เริ่ม 12:00 รอบ 12:01 ทับเป็นข้อมูลรอบใหม่ไปแล้ว / เริ่ม 14:00 ไม่มี 13-14)
+        คืนโฟลเดอร์ที่ดึงสำเร็จ หรือ None ถ้าถูกหยุด — ดึงไม่สำเร็จจะโยน error
+        """
+        folder = os.path.join(self.get_raw_export_folder() or ".", "DailySummaryRaw")
+        os.makedirs(folder, exist_ok=True)
+        generation = self.begin_run_request()
+        self.active_run_generation = generation
+        self.active_run_settings = {"raw_folder": folder, "time_range": (start, end)}
+        self.running = True
+        self.current_run_source = "daily_summary"
+        try:
+            for name, func in (("JMS AUTO", self.run_jms_auto), ("JMS PDA", self.run_jms_pda),
+                               ("DWS9-11", self.run_dws)):
+                if self.run_cancelled():
+                    return None
+                self.write_log(f"Daily summary: ดึง {name} ใหม่ ช่วง {start} -> {end}", level="START")
+                func()
+            return None if self.run_cancelled() else folder
+        finally:
+            self.running = False
+            self.active_run_settings = None
+            if self.__dict__.get("active_run_generation") == generation:
+                self.active_run_generation = None
+            self.current_run_source = None
+            self.raw_time_source = "manual"
 
     def start_daily_summary_now(self, send: bool):
         """ปุ่มในหน้าสรุปรายวัน: สร้างตัวอย่าง (ไม่ส่ง) หรือส่งทันที ด้วยช่วงเวลารายงานของตอนนี้"""
@@ -3704,6 +3747,15 @@ class App(ctk.CTk):
 
         def worker():
             try:
+                if as_bool(settings.opt("fresh_raw_export"), True):
+                    try:
+                        folder = self.export_raw_for_daily_summary(start, end)
+                    except Exception as exc:
+                        folder = None
+                        self.write_log(f"Daily summary: ดึงไฟล์ JMS ใหม่ไม่สำเร็จ ใช้ไฟล์ของรอบรายชั่วโมงแทน — {exc}",
+                                       level="WARN")
+                    if folder:
+                        settings.raw_dir = folder
                 with contextlib.ExitStack() as send_record:
                     if send:
                         send_record.enter_context(sent_messages.recording(
