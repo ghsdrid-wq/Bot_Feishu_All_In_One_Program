@@ -110,6 +110,21 @@ def _business_hour_position(hour: int, start_hour: int) -> int:
     return (hour - start_hour) % 24
 
 
+def _lags_behind(hours: Sequence[int], start_hour: int, now_hour: int) -> bool:
+    """ชั่วโมงที่มีข้อมูลยังไม่ถึงชั่วโมงปัจจุบันของรอบงาน
+
+    นับเฉพาะชั่วโมงที่มาถึงแล้วในรอบ (ลำดับไม่เกินชั่วโมงปัจจุบัน) ชั่วโมงที่อยู่
+    "หลัง" ตอนนี้เป็นของค้างจากตอนที่รอบงานเริ่มคนละเวลา — 2026-10-28 เวลาเริ่ม
+    เปลี่ยนจาก 12:00 เป็น 15:00 แถว 12:00-12:05 ที่เก็บไว้ตอนรอบเริ่ม 12:00
+    อยู่ท้ายรอบใหม่ จึงดูเหมือนข้อมูลล้ำหน้าไปแล้ว ไม่เก็บใหม่ทั้งคืน
+    การ์ดเลยขึ้น DWS / PDA ลงรถ เป็น 0 ส่วน AutoPacking เดินปกติ
+    """
+    current = _business_hour_position(now_hour, start_hour)
+    reached = [pos for pos in (_business_hour_position(h, start_hour) for h in hours)
+               if pos <= current]
+    return not reached or max(reached) < current
+
+
 def _stale_sources(business_date: str) -> bool:
     """ข้อมูลที่ไม่ใช่ AutoPacking ตามหลังชั่วโมงปัจจุบันแล้วหรือยัง
 
@@ -134,12 +149,7 @@ def _stale_sources(business_date: str) -> bool:
         finally:
             conn.close()
 
-        if not hours:
-            return True
-
-        newest = max(_business_hour_position(int(h), start_hour) for h in hours)
-        current = _business_hour_position(datetime.now().hour, start_hour)
-        return newest < current
+        return _lags_behind([int(h) for h in hours], start_hour, datetime.now().hour)
     except Exception:
         # เช็กไม่ได้ก็ถือว่าไม่ต้องเก็บใหม่ ดีกว่าไปไล่ ingest ทุกรอบ
         return False

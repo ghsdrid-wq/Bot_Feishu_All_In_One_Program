@@ -1021,6 +1021,16 @@ class MetricsRegressionTests(unittest.TestCase):
         self.assertEqual(rows, [("2026-09-27", "DWS2"),
                                 ("2026-09-28", "DWS1")])
 
+    def test_card_stale_check_ignores_hours_left_from_another_start_hour(self) -> None:
+        # 2026-10-28: รอบเริ่ม 12:00 เก็บแถว 12:00 ไว้ แล้วเปลี่ยนเป็นเริ่ม 15:00 — ทั้งคืนต้องยังเก็บใหม่
+        self.assertTrue(card_report._lags_behind([12], 15, 5))
+        self.assertTrue(card_report._lags_behind([12, 15, 16], 15, 5))
+        self.assertFalse(card_report._lags_behind([12, 15, 16, 4, 5], 15, 5))
+        self.assertTrue(card_report._lags_behind([], 15, 5))
+        self.assertFalse(card_report._lags_behind([15], 15, 15))
+        self.assertTrue(card_report._lags_behind([23], 15, 0))
+        self.assertFalse(card_report._lags_behind([23, 0], 15, 0))
+
     def test_card_ingest_failure_retries_in_same_hour(self) -> None:
         summary = {"business_date": "2026-09-27", "sources": []}
         card_report._last_ingest_slot = None
