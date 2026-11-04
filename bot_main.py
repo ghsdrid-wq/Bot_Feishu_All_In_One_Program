@@ -3766,6 +3766,7 @@ class App(ctk.CTk):
                 options[key] = ""  # ไม่ใช้รูปจาก Excel
         # 3 ตารางเหมือนการ์ดรายชั่วโมงเดิม เรียงตามเดิม
         options["sections"] = ",".join(HOURLY_PROGRAM_TABLES)
+        options["autopack_error_table"] = "true"  # ตาราง Error + ยอดเฉลี่ยกะ A/B ใต้ตาราง AutoPacking
         settings.options = options
         # คอลัมน์ยาวจนจบรอบงาน (เช่นถึง 11点-12点) ชั่วโมงที่ยังมาไม่ถึงเว้นว่างไว้
         cycle_end = end

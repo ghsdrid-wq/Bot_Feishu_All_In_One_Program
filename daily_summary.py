@@ -64,6 +64,8 @@ DEFAULTS: Dict[str, str] = {
     # ก่อนสรุป ดึงไฟล์ JMS AUTO / JMS PDA / DWS9-11 ของช่วงรอบใหม่ลงโฟลเดอร์ DailySummaryRaw
     # (ไฟล์ของรอบรายชั่วโมงถูกเขียนทับตามช่วงของ Auto จึงอาจไม่ครบรอบ 13:00 หรือเป็นของรอบใหม่แล้ว)
     "fresh_raw_export": "true",
+    # ตาราง Error (1号/2号异常口) + ยอดเฉลี่ยกะ A/B ใต้ตาราง AutoPacking — ใช้กับตาราง Pillow รายชั่วโมง
+    "autopack_error_table": "false",
     # รอบงานจบกี่โมง (ตารางรายชั่วโมงแสดงถึงก่อนชั่วโมงนี้) / กะ B เริ่มกี่โมง
     # วันที่ยอดเลยเวลาจบ กด "ส่งสรุปตอนนี้" หลังชั่วโมงถัดไปจบ ตารางจะขยายให้เอง (ไม่เกิน 24 ชั่วโมง)
     "day_end_hour": "12",
@@ -160,6 +162,25 @@ TEXT_RED = (0xFF, 0x00, 0x00)
 WHITE = (0xFF, 0xFF, 0xFF)
 BLACK = (0x00, 0x00, 0x00)
 GRID = (0x1F, 0x23, 0x29)
+# สีจากธีม Office ของสมุดงานต้นฉบับ (คำนวณ tint แล้ว)
+XL_TEXT = (0x26, 0x26, 0x26)          # dk1 tint 0.15
+XL_GREY_LT2 = (0xAE, 0xAA, 0xAA)      # lt2 tint -0.25
+XL_WHITE_DARK5 = (0xF2, 0xF2, 0xF2)   # lt1 tint -0.05
+
+
+# หน่วยของ Excel ที่ซูม 100%: คอลัมน์ px = ความกว้าง x 7 + 5, แถว/ฟอนต์ px = point x 4/3
+def _xl_col(chars: float) -> int:
+    return int(chars * 7 + 5)
+
+
+def _xl_row(points: float) -> int:
+    return round(points * 4 / 3)
+
+
+def _xl_pt(points: float) -> int:
+    return round(points * 4 / 3)
+
+
 
 
 def _noop(message: str, level: str = "INFO") -> None:
@@ -576,6 +597,7 @@ class Cell:
     color: Tuple[int, int, int] = BLACK
     size: Optional[int] = None  # ขนาดฟอนต์เฉพาะเซลล์ (ก่อนคูณ scale)
     family: Optional[str] = None  # ฟอนต์เฉพาะเซลล์ (ว่าง = ตามตาราง)
+    border: bool = True  # False = ไม่วาดเส้นกรอบ (ช่องว่างคั่นตาราง เหมือนเซลล์ไม่มีเส้นใน Excel)
 
 
 @dataclass
@@ -634,8 +656,9 @@ def render_grid(grid: Grid, out_path: str, font_size: int = 14, scale: int = 2,
             placed.append(((xs[c], ys[r], xs[c2 + 1], ys[r2 + 1]), cell or Cell()))
     for box, cell in placed:
         draw.rectangle(box, fill=cell.fill)
-    for box, _ in placed:
-        draw.rectangle(box, outline=GRID, width=1)
+    for box, cell in placed:
+        if cell.border:
+            draw.rectangle(box, outline=GRID, width=1)
 
     pad = 6 * scale
     for box, cell in placed:
@@ -669,75 +692,94 @@ def _num(value: int, dash_zero: bool = False) -> str:
 
 def render_hourly_table(counts: Dict[str, Dict[int, int]], window: Window,
                         out_path: str, name_header: str = "พนักงานสแกน",
-                        bold_values: bool = False, capture: Optional[list] = None) -> str:
-    """ตารางรายชั่วโมงแบบหน้า AUTO PDA / DWS PDA ในไฟล์ manual
+                        bold_values: bool = False, capture: Optional[list] = None,
+                        title: Optional[str] = None) -> str:
+    """ตารางรายชั่วโมงแบบชีต AUTO PDA ของ 1DWS_&_PDA (ขนาด/ฟอนต์/สีตามชีต ที่ซูม 100%)
 
-    ฟอนต์ Microsoft JhengHei เหมือนชีตต้นฉบับ (AUTO PDA ตัวเลขตัวหนา, DWS PDA ตัวปกติ)
+    title = แถวหัวเรื่องบนสุด (แถว 1 ของชีต) — bold_values เก็บไว้ให้เรียกแบบเดิมได้ (ชีตจริงไม่หนา)
     """
     names = list(counts)
     hours_a = [h for h in window.hours if window.shift_of(h) == "A"]
     hours_b = [h for h in window.hours if window.shift_of(h) == "B"]
+    p24, p30 = _xl_pt(24), _xl_pt(30)
 
-    # คอลัมน์: ชื่อ | ชม.กะ A... | 合计 | ชม.กะ B... | 合计 | Total
+    # คอลัมน์: A ชื่อ | C:O ชม.กะ A | P 合计 | Q:AA ชม.กะ B | AB 合计 | AC Total
     columns: List[Tuple[str, Any]] = [("name", None)]
     columns += [("hour", h) for h in hours_a] + [("sum", "A")]
     if hours_b:
         columns += [("hour", h) for h in hours_b] + [("sum", "B")]
     columns.append(("total", None))
-    widths = [180 if kind == "name" else (80 if kind == "hour" else 70) for kind, _ in columns]
-    grid = Grid(widths, family="jhenghei")
+    widths = []
+    for kind, key in columns:
+        if kind == "name":
+            widths.append(_xl_col(53.42578125))
+        elif kind == "hour":
+            widths.append(_xl_col(23 if window.shift_of(key) == "A" else 26))
+        elif kind == "sum":
+            widths.append(_xl_col(23 if key == "A" else 25.7109375))
+        else:
+            widths.append(_xl_col(25.7109375))
+    grid = Grid(widths)
     last = len(columns) - 1
 
-    grid.add_row(23, [Cell(window.business_date.isoformat(), WHITE, True)] + [None] * last)
-    grid.merges.append((0, 0, 0, last))
+    if title:
+        r = grid.add_row(_xl_row(100.5), [Cell(title, WHITE, False, "left", size=p30, border=False)]
+                         + [Cell("", WHITE, border=False) for _ in range(last)])
+        grid.merges.append((r, 0, r, last))
+    r = grid.add_row(_xl_row(33.75), [Cell(window.business_date.isoformat(), WHITE, True, size=p24)] + [None] * last)
+    grid.merges.append((r, 0, r, last))
 
-    shift_row: List[Optional[Cell]] = [Cell(name_header, FILL_NAME_HEADER, True)]
+    shift_row: List[Optional[Cell]] = [Cell(name_header, XL_GREY_LT2, True, size=p24)]
     hour_row: List[Optional[Cell]] = [None]
     for kind, key in columns[1:]:
         if kind == "hour":
-            fill = FILL_SHIFT_A if window.shift_of(key) == "A" else FILL_SHIFT_B
-            shift_row.append(Cell("", fill))
-            hour_row.append(Cell(hour_label(key), FILL_HOUR, True, size=12))
+            shift_row.append(Cell("", FILL_SHIFT_A if window.shift_of(key) == "A" else FILL_SHIFT_B))
+            hour_row.append(Cell(hour_label(key), XL_GREY_LT2, True, size=p24))
         elif kind == "sum":
             shift_row.append(Cell("", FILL_SHIFT_A if key == "A" else FILL_SHIFT_B))
-            hour_row.append(Cell("合计", FILL_SUBTOTAL, True))
+            hour_row.append(Cell("合计", FILL_GOLD, True, size=p24))
         else:
-            shift_row.append(Cell("Total", FILL_NAME_HEADER, True))
+            shift_row.append(Cell("Total", XL_GREY_LT2, True, size=p24))
             hour_row.append(None)
-    grid.add_row(20, shift_row)
-    grid.add_row(20, hour_row)
+    top = grid.add_row(_xl_row(33.75), shift_row)
+    grid.add_row(_xl_row(33.75), hour_row)
     a_first, a_last = 1, len(hours_a) + 1
-    grid.merges += [(1, 0, 2, 0), (1, last, 2, last), (1, a_first, 1, a_last)]
-    shift_row[a_first] = Cell("Shift A", FILL_SHIFT_A, True)
+    grid.merges += [(top, 0, top + 1, 0), (top, last, top + 1, last), (top, a_first, top, a_last)]
+    shift_row[a_first] = Cell("Shift A", FILL_SHIFT_A, True, size=p24)
     if hours_b:
         b_first, b_last = a_last + 1, last - 1
-        grid.merges.append((1, b_first, 1, b_last))
-        shift_row[b_first] = Cell("Shift B", FILL_SHIFT_B, True)
+        grid.merges.append((top, b_first, top, b_last))
+        shift_row[b_first] = Cell("Shift B", FILL_SHIFT_B, True, size=p24)
 
     scale = color_scale([counts[n][h] for n in names for h in window.hours])
     column_totals = [0] * len(columns)
     for name in names:
-        row: List[Optional[Cell]] = [Cell(name, WHITE)]
+        row: List[Optional[Cell]] = [Cell(name, XL_WHITE_DARK5, size=p24)]
         sums = {"A": 0, "B": 0}
         for idx, (kind, key) in enumerate(columns[1:], start=1):
             if kind == "hour":
                 value = counts[name][key]
                 sums[window.shift_of(key)] += value
-                row.append(Cell(_num(value), scale(value), bold_values))
+                row.append(Cell(_num(value), scale(value), size=p24))
             elif kind == "sum":
                 value = sums[key]
-                row.append(Cell(_num(value, True), WHITE))
+                row.append(Cell(_num(value, True), WHITE, size=p24))
             else:
                 value = sums["A"] + sums["B"]
-                row.append(Cell(_num(value, True), WHITE))
+                row.append(Cell(_num(value, True), WHITE, size=p24))
             column_totals[idx] += value
-        grid.add_row(19, row)
+        grid.add_row(_xl_row(32.25), row)
 
-    total_row: List[Optional[Cell]] = [Cell("Total", FILL_TOTAL_ROW, True)]
-    for idx in range(1, len(columns)):
-        total_row.append(Cell(_num(column_totals[idx], True), FILL_TOTAL_ROW, True))
-    grid.add_row(20, total_row)
-    return render_grid(grid, out_path, font_size=14, capture=capture)
+    total_row: List[Optional[Cell]] = [Cell("Total", XL_GREY_LT2, True, size=p24)]
+    for idx, (kind, _key) in enumerate(columns[1:], start=1):
+        if kind == "hour":
+            total_row.append(Cell(_num(column_totals[idx]), XL_GREY_LT2, size=p24))
+        elif kind == "sum":
+            total_row.append(Cell(_num(column_totals[idx], True), FILL_GOLD, size=p24))
+        else:
+            total_row.append(Cell(_num(column_totals[idx], True), XL_GREY_LT2, size=p24))
+    grid.add_row(_xl_row(33.75), total_row)
+    return render_grid(grid, out_path, font_size=p24, scale=1, margin=4, capture=capture)
 
 
 def render_bag_table(counts: Dict[str, int], out_path: str, capture: Optional[list] = None) -> str:
@@ -849,67 +891,87 @@ def dws_summary_rows(table: DwsTable) -> Dict[str, Dict[str, Any]]:
     return {"total": total_row, "pcs": pcs_row}
 
 
-def render_dws_table(table: DwsTable, out_path: str, capture: Optional[list] = None) -> str:
+def render_dws_table(table: DwsTable, out_path: str, capture: Optional[list] = None,
+                     title: Optional[str] = None) -> str:
+    """ตาราง DWS แบบชีต DWSREALTIME ของ 1DWS_&_PDA (ขนาด/ฟอนต์/สีตามชีต ที่ซูม 100%)"""
     window = table.window
     hours_a, hours_b = _shift_hours(window, "A"), _shift_hours(window, "B")
     columns: List[Tuple[str, Any]] = [("name", None)] + [("hour", h) for h in hours_a] + [("A", None)]
     columns += [("hour", h) for h in hours_b] + [("B", None)]
     columns += [("total", None), ("effective", None), ("avg", None), ("peak", None), ("pcs", None)]
-    widths = [110 if kind == "name" else (76 if kind == "hour" else 72) for kind, _ in columns]
-    grid = Grid(widths, family="yahei")
+    widths = []
+    for kind, key in columns:
+        if kind == "name":
+            widths.append(_xl_col(40.85546875))
+        elif kind == "hour":
+            widths.append(_xl_col(23 if window.shift_of(key) == "A" else 26))
+        elif kind in ("A", "B"):
+            widths.append(_xl_col(23))
+        else:
+            widths.append(_xl_col(22.7109375))
+    grid = Grid(widths)
     last = len(columns) - 1
-    grid.add_row(23, [Cell(window.business_date.isoformat(), WHITE, True, family="jhenghei")] + [None] * last)
-    grid.merges.append((0, 0, 0, last))
+    p18, p24, p30 = _xl_pt(18), _xl_pt(24), _xl_pt(30)
 
-    titles = {"name": "供件台", "A": "A", "B": "B", "total": "合计", "effective": "Effective\nTime",
-              "avg": "Avg.\nEfficiency", "peak": "Peak\nEfficiency", "pcs": "PCS/Hr"}
+    if title:
+        r = grid.add_row(_xl_row(99.95), [Cell(title, WHITE, False, "left", XL_TEXT, p30, border=False)]
+                         + [Cell("", WHITE, border=False) for _ in range(last)])
+        grid.merges.append((r, 0, r, last))
+    r = grid.add_row(_xl_row(45), [Cell(window.business_date.isoformat(), WHITE, True, color=XL_TEXT, size=p24)]
+                     + [None] * last)
+    grid.merges.append((r, 0, r, last))
+
+    titles = {"name": "供件台", "A": "A", "B": "B", "total": "合计", "effective": "Effective Time",
+              "avg": "Avg. Efficiency", "peak": "Peak Efficiency", "pcs": "PCS/Hr"}
     header: List[Optional[Cell]] = []
     for kind, key in columns:
         if kind == "hour":
-            header.append(Cell(hour_label(key), FILL_DARK_HEADER, True, size=11, family="jhenghei"))
+            header.append(Cell(hour_label(key), FILL_DARK_HEADER, True, color=XL_TEXT, size=p24))
         elif kind in ("A", "B"):
-            header.append(Cell(titles[kind], FILL_GOLD, True, family="jhenghei"))
+            header.append(Cell(titles[kind], FILL_GOLD, True, color=XL_TEXT, size=p24))
+        elif kind in ("effective", "avg", "peak"):
+            header.append(Cell(titles[kind], FILL_DARK_HEADER, True, color=XL_TEXT, size=p18))
         else:
-            header.append(Cell(titles[kind], FILL_DARK_HEADER, True,
-                               size=9 if "\n" in titles[kind] else None, family="jhenghei"))
-    grid.add_row(30, header)
+            header.append(Cell(titles[kind], FILL_DARK_HEADER, True, color=XL_TEXT, size=p24))
+    grid.add_row(_xl_row(48), header)
 
     scales = {}
     for group in ("dws", "pda"):
         values = [v[h] for _, g, v in table.rows if g == group for h in window.hours]
         scales[group] = color_scale(values)
-    for name, group, values in table.rows:
+    heights = [32.25, 32.25, 30.75, 30.75]  # แถว 4-7 ของชีต ที่เหลือ 32.25
+    for index, (name, group, values) in enumerate(table.rows):
         stats = dws_row_stats(values, window)
         row: List[Optional[Cell]] = [Cell(name, FILL_DWS_LABEL if group == "dws" else FILL_PDA_LABEL,
-                                          family="jhenghei")]
+                                          color=XL_TEXT, size=p24)]
         for kind, key in columns[1:]:
             if kind == "hour":
-                row.append(Cell(_num(values[key]), scales[group](values[key]), group == "dws"))
+                row.append(Cell(_num(values[key]), scales[group](values[key]), color=XL_TEXT, size=p24))
             else:
-                row.append(Cell(_num(round(stats[kind])), WHITE))
-        grid.add_row(19, row)
+                row.append(Cell(_num(round(stats[kind])), WHITE, color=XL_TEXT, size=p24))
+        grid.add_row(_xl_row(heights[index] if index < len(heights) else 32.25), row)
 
     summary = dws_summary_rows(table)
     total, pcs = summary["total"], summary["pcs"]
-    row = [Cell("合计", WHITE, True, family="jhenghei")]
+    row = [Cell("合计", WHITE, True, color=XL_TEXT, size=p24)]
     for kind, key in columns[1:]:
         if kind == "hour":
-            row.append(Cell(_num(total["hours"][key], True), WHITE, True))
+            row.append(Cell(_num(total["hours"][key], True), WHITE, True, color=XL_TEXT, size=p24))
         else:
             fill = FILL_GOLD_LIGHT if kind == "A" else (FILL_BLUE_LIGHT if kind == "B" else WHITE)
-            row.append(Cell(_num(round(total[kind])), fill))
-    grid.add_row(20, row)
-    row = [Cell("PCS/Hr", WHITE, family="jhenghei")]
+            row.append(Cell(_num(round(total[kind])), fill, color=XL_TEXT, size=p24))
+    grid.add_row(_xl_row(33.75), row)
+    row = [Cell("PCS/Hr", WHITE, color=XL_TEXT, size=p24)]
     for kind, key in columns[1:]:
         if kind == "hour":
-            row.append(Cell(f"{pcs['hours'][key]:.0f}", WHITE))
+            row.append(Cell(f"{pcs['hours'][key]:.0f}", WHITE, color=XL_TEXT, size=p24))
         elif kind in ("A", "B", "total"):
             fill = FILL_GOLD_LIGHT if kind == "A" else (FILL_BLUE_LIGHT if kind == "B" else WHITE)
-            row.append(Cell(_num(pcs[kind]), fill))
+            row.append(Cell(_num(pcs[kind]), fill, color=XL_TEXT, size=p24))
         else:
             row.append(Cell("", WHITE))
-    grid.add_row(20, row)
-    return render_grid(grid, out_path, font_size=13, capture=capture)
+    grid.add_row(_xl_row(32.25), row)
+    return render_grid(grid, out_path, font_size=p24, scale=1, margin=4, capture=capture)
 
 
 def dws_station_paths(settings: "Settings") -> Dict[str, str]:
@@ -1325,6 +1387,7 @@ def autopack_summary(table: AutopackTable) -> Dict[str, Any]:
             "max": {k: max((s[k] for _, _, s in stats), default=0) for k in ("total", "effective", "avg", "peak")},
             "A": a_sum, "A_avg": a_sum / len(a_cells) if a_cells else 0,
             "B": b_sum, "B_avg": b_sum / len(b_cells) if b_cells else 0,
+            "A_hours": len(a_cells), "B_hours": len(b_cells),
             "sum_total": total, "sum_effective": effective,
             "sum_avg": total / effective if effective else 0,
             "sum_peak": max(sums.values()) if sums else 0,
@@ -1347,140 +1410,267 @@ def autopack_summary(table: AutopackTable) -> Dict[str, Any]:
     return out
 
 
-def render_autopack_table(table: AutopackTable, out_path: str, capture: Optional[list] = None) -> str:
+def autopack_error_counts(sheets: Sequence["RawSheet"], window: Window) -> Dict[str, Dict[int, int]]:
+    """ยอดพัสดุที่ตกช่อง Error ต่อสาย ต่อชั่วโมง = เลขพัสดุไม่ซ้ำในชีต Abnormal ของชั่วโมงนั้น
+    (สูตร Excel ชีตรายชั่วโมง O2/P2: COUNTA(UNIQUE(FILTER(Billcode, Pipeline=สาย))))"""
+    counts = {pipeline: {h: 0 for h in window.hours} for _, pipeline, _, _ in AUTOPACK_LINES}
+    sheet = next((sh for sh in sheets if sh.name == "AUTOPACKING Abnormal"), None)
+    if sheet is None or not sheet.header:
+        return counts
+    names = [str(x or "").strip().lower().replace(" ", "") for x in sheet.header]
+    if "billcode" not in names or "pipeline" not in names:
+        return counts
+    i_bill, i_line = names.index("billcode"), names.index("pipeline")
+    hour_of = {hour_label(h): h for h in window.hours}
+    seen: Dict[Tuple[str, int], set] = {}
+    for row in sheet.rows:
+        if len(row) <= max(i_bill, i_line):
+            continue
+        hour = hour_of.get(str(row[0] or "").strip())
+        pipeline = str(row[i_line] or "").strip()
+        bill = str(row[i_bill] or "").strip()
+        if hour is None or pipeline not in counts or not bill:
+            continue
+        seen.setdefault((pipeline, hour), set()).add(bill)
+    for (pipeline, hour), bills in seen.items():
+        counts[pipeline][hour] = len(bills)
+    return counts
+
+
+# ---------------------------------------------------------------------
+# ตาราง AutoPacking — ขนาดตามชีต Autoformat ของ 1_AUTOPACKING_BOT.xlsx (หน่วยพิกเซลที่ซูม 100%)
+# คอลัมน์ px = ความกว้าง Excel x 7 + 5, แถว px = point x 4/3, ฟอนต์ px = point x 4/3
+# ---------------------------------------------------------------------
+AP_TEXT = (0x1F, 0x23, 0x29)
+AP_DARK = (0x37, 0x3C, 0x43)
+AP_PANEL_TITLE = (0xF8, 0xF9, 0xFA)
+FILL_AP_ERROR_LABEL = (0xBA, 0xCE, 0xFD)
+FILL_AP_ERROR_HEADER = (0x8F, 0x95, 0x9E)
+
+
+def render_autopack_table(table: AutopackTable, out_path: str, capture: Optional[list] = None,
+                          errors: Optional[Dict[str, Dict[int, int]]] = None,
+                          title: Optional[str] = None) -> str:
+    """ตาราง AutoPacking แบบชีต Autoformat — title = แถวหัวเรื่องบนสุด (แถว 1 ของชีต)
+    errors = ยอด Error ต่อสาย (autopack_error_counts) ใส่มาแล้วจะมีตาราง Error และ
+    ยอดเฉลี่ยกะ A/B ต่อท้าย (แถว 33-39 ของชีต)"""
     window = table.window
     summary = autopack_summary(table)
     hours = window.hours
     n_hours = len(hours)
-    # คอลัมน์: 分区 | 供件台 | ชั่วโมง... | (ช่องว่าง) | 合计 | Effective | Avg | Peak | A | เครื่อง | Avg/Hr | B | เครื่อง | Avg/Hr
-    widths = [104, 58] + [66] * n_hours + [10, 76, 76, 70, 70, 76, 54, 68, 76, 54, 68]
+    # A | B | ชั่วโมง (C:Z) | AA ว่าง | AB 合计 | AC Effective | AD Avg | AE Peak | AF A | AG | AH | AI B | AJ | AK
+    widths = [_xl_col(21), _xl_col(14)] + [_xl_col(14)] * n_hours + [_xl_col(3)] + [_xl_col(15.7109375)] * 10
     c_gap = 2 + n_hours
     c_total, c_eff, c_avg, c_peak = c_gap + 1, c_gap + 2, c_gap + 3, c_gap + 4
     c_a, c_a_no, c_a_avg, c_b, c_b_no, c_b_avg = range(c_gap + 5, c_gap + 11)
     ncols = len(widths)
     grid = Grid(widths)
+    p10, p12, p14, p16, p18, p24, p30 = (_xl_pt(x) for x in (10, 12, 14, 16, 18, 24, 30))
 
     def blank(fill=WHITE) -> List[Optional[Cell]]:
-        return [Cell("", fill) for _ in range(ncols)]
+        row = [Cell("", fill) for _ in range(ncols)]
+        row[c_gap] = Cell("", WHITE, border=False)  # คอลัมน์ AA ไม่มีเส้น
+        return row
 
     def red_if(flag: bool, cell: Cell) -> Cell:
         if flag:
             cell.color = TEXT_AP_RED
         return cell
 
-    row = blank()
-    row[0] = Cell(window.business_date.isoformat(), WHITE, False, size=16)
-    row[c_a] = Cell("ยอดปล่อยพัสดุกะ A และ B", WHITE, True, size=15)
-    r = grid.add_row(32, row)
-    grid.merges += [(r, 0, r, c_peak), (r, c_a, r, c_b_avg)]
+    def num(value, fill=WHITE, size=p14, color=BLACK, align="center", bold=False) -> Cell:
+        return Cell(_num(value) if not isinstance(value, str) else value, fill, bold, align, color, size)
 
-    row = blank(FILL_AP_HEADER)
-    row[0] = Cell("分区", WHITE, True)
-    row[1] = Cell("供件台", FILL_AP_HEADER, True)
+    if title:  # แถว 1: หัวเรื่อง 30pt ชิดซ้าย ไม่มีเส้น
+        row = [Cell("", WHITE, border=False) for _ in range(ncols)]
+        row[0] = Cell(title, WHITE, False, "left", size=p30, border=False)
+        r = grid.add_row(_xl_row(71.1), row)
+        grid.merges.append((r, 0, r, ncols - 1))
+
+    row = blank()  # แถว 2: วันที่ | ยอดปล่อยพัสดุกะ A และ B
+    row[0] = Cell(window.business_date.isoformat(), WHITE, False, size=p24)
+    row[c_a] = Cell("ยอดปล่อยพัสดุกะ A และ B", WHITE, False, size=p24)
+    r = grid.add_row(_xl_row(45.95), row)
+    grid.merges += [(r, 0, r, c_gap - 1), (r, c_total, r, c_peak), (r, c_a, r, c_b_avg)]
+
+    row = blank(FILL_AP_HEADER)  # แถว 3: หัวคอลัมน์
+    row[0] = Cell("分区", WHITE, True, size=p14)
+    row[1] = Cell("供件台", FILL_AP_HEADER, True, size=p14)
     for i, h in enumerate(hours):
-        row[2 + i] = Cell(hour_label(h), FILL_AP_HEADER, True, size=10)
-    row[c_gap] = Cell("", WHITE)
-    for col, text in ((c_total, "合计"), (c_eff, "有效操作时长\nEffective Time"),
-                      (c_avg, "平均效率\nAvg."), (c_peak, "峰值效率\nPeak")):
-        row[col] = Cell(text, FILL_AP_HEADER, True, size=9 if "\n" in text else None)
+        row[2 + i] = Cell(hour_label(h), FILL_AP_HEADER, True, size=p14)
+    row[c_gap] = Cell("", WHITE, border=False)
+    row[c_total] = Cell("合计", FILL_AP_HEADER, True, size=p14)
+    for col, text in ((c_eff, "有效操作时长\nEffective Time"), (c_avg, "平均效率\nAvg."), (c_peak, "峰值效率\nPeak")):
+        row[col] = Cell(text, FILL_AP_HEADER, True, color=AP_TEXT, size=p10)
     for col, text, fill in ((c_a, "A", FILL_AP_YELLOW), (c_a_no, "เครื่อง", FILL_AP_YELLOW),
                             (c_a_avg, "Avg/Hr", FILL_AP_YELLOW), (c_b, "B", FILL_AP_B_HEADER),
                             (c_b_no, "เครื่อง", FILL_AP_B_HEADER), (c_b_avg, "Avg/Hr", FILL_AP_B_HEADER)):
-        row[col] = Cell(text, fill, True)
-    grid.add_row(29, row)
+        row[col] = Cell(text, fill, True, size=p18)
+    grid.add_row(_xl_row(24.75), row)
 
     best_a_total = max((s["A"] for line in summary["lines"] for _, _, s in line["feeders"]), default=0)
     best_b_total = max((s["B"] for line in summary["lines"] for _, _, s in line["feeders"]), default=0)
+    last_line = len(summary["lines"]) - 1
     for index, line in enumerate(summary["lines"]):
         values_all = [v[h] for _, v, _ in line["feeders"] for h in hours]
         scale = color_scale(values_all)
         first = len(grid.rows)
         for no, values, stats in line["feeders"]:
             row = blank()
-            row[0] = Cell(line["label"], FILL_AP_LABEL)
-            row[1] = Cell(str(no), FILL_FEEDER)
+            row[0] = Cell(line["label"], FILL_AP_LABEL, size=p14)
+            row[1] = Cell(str(no), FILL_FEEDER, size=p12 if index == 0 else p14)
             for i, h in enumerate(hours):
-                row[2 + i] = Cell(_num(values[h]), scale(values[h]), align="right")
+                row[2 + i] = num(values[h], scale(values[h]), color=AP_TEXT if index == 0 else BLACK, align="right")
             m = line["max"]
             row[c_total] = red_if(stats["total"] == m["total"] and m["total"] > 0,
-                                  Cell(_num(stats["total"]), FILL_AP_TOTAL_COL, align="right"))
+                                  num(stats["total"], FILL_AP_TOTAL_COL, p12))
             row[c_eff] = red_if(stats["effective"] == m["effective"] and m["effective"] > 0,
-                                Cell(_num(stats["effective"]), FILL_AP_YELLOW))
+                                num(stats["effective"], FILL_AP_YELLOW))
             row[c_avg] = red_if(stats["avg"] == m["avg"] and m["avg"] > 0,
-                                Cell(_num(round(stats["avg"])), FILL_AP_YELLOW, align="right"))
+                                num(round(stats["avg"]), FILL_AP_YELLOW))
             row[c_peak] = red_if(stats["peak"] == m["peak"] and m["peak"] > 0,
-                                 Cell(_num(stats["peak"]), FILL_AP_YELLOW, align="right"))
-            row[c_a] = red_if(stats["A"] == best_a_total and best_a_total > 0,
-                              Cell(_num(stats["A"]), FILL_AP_A, align="right"))
-            row[c_a_no] = Cell(str(no), FILL_AP_A)
-            row[c_a_avg] = Cell(_num(round(stats["A_avg"])), FILL_AP_A, align="right")
-            row[c_b] = red_if(stats["B"] == best_b_total and best_b_total > 0,
-                              Cell(_num(stats["B"]), FILL_AP_B, align="right"))
-            row[c_b_no] = Cell(str(no), FILL_AP_B)
-            row[c_b_avg] = Cell(_num(round(stats["B_avg"])), FILL_AP_B, align="right")
-            grid.add_row(20, row)
+                                 num(stats["peak"], FILL_AP_YELLOW))
+            row[c_a] = red_if(stats["A"] == best_a_total and best_a_total > 0, num(stats["A"], FILL_AP_A))
+            row[c_a_no] = num(str(no), FILL_AP_A)
+            row[c_a_avg] = num(round(stats["A_avg"]), FILL_AP_A)
+            row[c_b] = red_if(stats["B"] == best_b_total and best_b_total > 0, num(stats["B"], FILL_AP_B))
+            row[c_b_no] = num(str(no), FILL_AP_B)
+            row[c_b_avg] = num(round(stats["B_avg"]), FILL_AP_B)
+            grid.add_row(_xl_row(20.25), row)
         grid.merges.append((first, 0, len(grid.rows) - 1, 0))
 
-        row = blank()
-        row[0] = Cell(f"Avg/Hr{line['label']}", WHITE, True, size=11)
+        row = blank()  # Avg/HrAP n (แถว 16 / 29)
+        row[0] = Cell(f"Avg/Hr{line['label']}", WHITE, index == last_line, size=p14)
         for i, h in enumerate(hours):
-            row[2 + i] = Cell(_num(round(line["avg_hr"][h])), WHITE, align="right")
+            row[2 + i] = num(round(line["avg_hr"][h]))
         for col, key in ((c_total, "total"), (c_eff, "effective"), (c_avg, "avg"), (c_peak, "peak")):
-            row[col] = Cell(_num(round(line["max"][key])), (0xF8, 0xF9, 0xFA), color=TEXT_AP_RED, align="right")
-        row[c_a] = Cell(_num(line["A"]), FILL_AP_HEADER, align="right")
-        row[c_a_avg] = Cell(_num(round(line["A_avg"])), FILL_AP_HEADER, align="right")
-        row[c_b] = Cell(_num(line["B"]), FILL_AP_HEADER, align="right")
-        row[c_b_avg] = Cell(_num(round(line["B_avg"])), FILL_AP_HEADER, align="right")
-        r = grid.add_row(22, row)
+            row[col] = num(round(line["max"][key]), AP_PANEL_TITLE, color=TEXT_AP_RED)
+        row[c_a] = num(line["A"], FILL_AP_HEADER, p18, AP_DARK if index == 0 else BLACK)
+        row[c_a_no] = Cell("", FILL_AP_HEADER)
+        row[c_a_avg] = num(round(line["A_avg"]), FILL_AP_HEADER, p18)
+        row[c_b] = num(line["B"], FILL_AP_HEADER, p18, AP_DARK if index == 0 else BLACK)
+        row[c_b_no] = Cell("", FILL_AP_HEADER)
+        row[c_b_avg] = num(round(line["B_avg"]), FILL_AP_HEADER, p18)
+        r = grid.add_row(_xl_row(24.95 if index == 0 else 23.1), row)
         grid.merges.append((r, 0, r, 1))
 
-        row = blank(FILL_AP_SUM)
-        row[0] = Cell("合计", FILL_AP_SUM, index == len(summary["lines"]) - 1)
+        row = blank(FILL_AP_SUM)  # 合计 (แถว 17 / 30)
+        row[0] = Cell("合计", FILL_AP_SUM, index == last_line, size=p14)
         for i, h in enumerate(hours):
-            row[2 + i] = Cell(_num(line["sums"][h]), FILL_AP_SUM, align="right")
-        row[c_gap] = Cell("", WHITE)
-        row[c_total] = Cell(_num(line["sum_total"]), FILL_AP_SUM, align="right")
-        row[c_eff] = Cell(_num(line["sum_effective"]), FILL_AP_SUM)
-        row[c_avg] = Cell(_num(round(line["sum_avg"])), FILL_AP_SUM, align="right")
-        row[c_peak] = Cell(_num(line["sum_peak"]), FILL_AP_SUM, align="right")
-        if index == len(summary["lines"]) - 1:
-            row[c_a] = Cell("เครื่องที่ปล่อยพัสดุได้เยอะสุด", FILL_AP_SUM, True, size=14)
-        r = grid.add_row(28, row)
+            row[2 + i] = num(line["sums"][h], FILL_AP_SUM)
+        row[c_gap] = Cell("", WHITE, border=False)
+        row[c_total] = num(line["sum_total"], FILL_AP_SUM)
+        row[c_eff] = num(line["sum_effective"], FILL_AP_SUM)
+        row[c_avg] = num(round(line["sum_avg"]), FILL_AP_SUM)
+        row[c_peak] = num(line["sum_peak"], FILL_AP_SUM)
+        if index == last_line:
+            row[c_a] = Cell("เครื่องที่ปล่อยพัสดุได้เยอะสุด", FILL_AP_SUM, True, size=p24)
+        r = grid.add_row(_xl_row(33 if index == 0 else 33.95), row)
         grid.merges += [(r, 0, r, 1), (r, c_a, r, c_b_avg)]
 
-    row = blank()
-    row[0] = Cell("Avg.", WHITE, True)
+    row = blank()  # Avg. (แถว 31)
+    row[0] = Cell("Avg.", WHITE, True, size=p18)
     for i, h in enumerate(hours):
-        row[2 + i] = Cell(_num(round(summary["avg"][h])), WHITE, align="right")
+        row[2 + i] = num(round(summary["avg"][h]), size=p16)
     for col, key in ((c_total, "total"), (c_eff, "effective"), (c_avg, "avg"), (c_peak, "peak")):
-        row[col] = Cell(_num(round(summary["avg_max"][key])), WHITE, color=TEXT_AP_RED, align="right")
+        row[col] = num(round(summary["avg_max"][key]), size=p16, color=TEXT_AP_RED)
     for col, text, fill in ((c_a, "A", FILL_AP_YELLOW), (c_a_no, "เครื่อง", FILL_AP_YELLOW),
                             (c_a_avg, "Avg/Hr.", FILL_AP_YELLOW), (c_b, "B", FILL_AP_B_HEADER),
                             (c_b_no, "เครื่อง", FILL_AP_B_HEADER), (c_b_avg, "Avg/Hr", FILL_AP_B_HEADER)):
-        row[col] = Cell(text, fill)
-    r = grid.add_row(22, row)
+        row[col] = Cell(text, fill, size=p18)
+    r = grid.add_row(_xl_row(24.95), row)
     grid.merges.append((r, 0, r, 1))
 
     grand = summary["grand"]
-    row = blank(FILL_AP_HEADER)
-    row[0] = Cell("ผลรวม", FILL_AP_HEADER, True)
+    row = blank(FILL_AP_HEADER)  # ผลรวม (แถว 32)
+    row[0] = Cell("ผลรวม", FILL_AP_HEADER, True, size=p18)
     for i, h in enumerate(hours):
-        row[2 + i] = Cell(_num(grand["hours"][h]), FILL_AP_HEADER, align="right")
-    row[c_gap] = Cell("", WHITE)
-    row[c_total] = Cell(_num(grand["total"]), FILL_AP_HEADER, align="right")
-    row[c_eff] = Cell(_num(grand["effective"]), FILL_AP_HEADER)
-    row[c_avg] = Cell(_num(round(grand["avg"])), FILL_AP_HEADER, align="right")
-    row[c_peak] = Cell(_num(grand["peak"]), FILL_AP_HEADER, align="right")
+        row[2 + i] = num(grand["hours"][h], FILL_AP_HEADER, p16)
+    row[c_gap] = Cell("", WHITE, border=False)
+    row[c_total] = num(grand["total"], FILL_AP_HEADER, p16)
+    row[c_eff] = num(grand["effective"], FILL_AP_HEADER, p16, AP_TEXT)
+    row[c_avg] = num(round(grand["avg"]), FILL_AP_HEADER, p16)
+    row[c_peak] = num(grand["peak"], FILL_AP_HEADER, p16)
     (a_total, a_no, a_avg), (b_total, b_no, b_avg) = summary["best"]["A"], summary["best"]["B"]
-    row[c_a] = Cell(_num(a_total), FILL_AP_A, align="right")
-    row[c_a_no] = Cell(str(a_no) if a_total else "-", FILL_AP_A)
-    row[c_a_avg] = Cell(_num(round(a_avg)), FILL_AP_A, align="right")
-    row[c_b] = Cell(_num(b_total), FILL_AP_B, align="right")
-    row[c_b_no] = Cell(str(b_no) if b_total else "-", FILL_AP_B)
-    row[c_b_avg] = Cell(_num(round(b_avg)), FILL_AP_B, align="right")
-    r = grid.add_row(32, row)
+    row[c_a] = num(a_total, FILL_AP_A, p16, AP_DARK)
+    row[c_a_no] = num(str(a_no) if a_total else "-", FILL_AP_A, p16, AP_DARK)
+    row[c_a_avg] = num(round(a_avg), FILL_AP_A, p16, AP_DARK)
+    row[c_b] = num(b_total, FILL_AP_B, p16, AP_DARK)
+    row[c_b_no] = num(str(b_no) if b_total else "-", FILL_AP_B, p16, AP_DARK)
+    row[c_b_avg] = num(round(b_avg), FILL_AP_B, p16, AP_DARK)
+    r = grid.add_row(_xl_row(42.95), row)
     grid.merges.append((r, 0, r, 1))
-    return render_grid(grid, out_path, font_size=13, capture=capture)
+
+    if errors is not None:
+        _add_autopack_error_rows(grid, window, summary, errors, blank, hours, c_gap,
+                                 (c_total, c_eff, c_avg, c_peak, c_a, c_a_no, c_a_avg, c_b, c_b_no, c_b_avg))
+    return render_grid(grid, out_path, font_size=p14, scale=1, margin=4, capture=capture)
+
+
+def _add_autopack_error_rows(grid: Grid, window: Window, summary: Dict[str, Any],
+                             errors: Dict[str, Dict[int, int]], blank, hours, c_gap: int,
+                             right: Tuple[int, ...]) -> None:
+    """แถว 33-39 ของชีต Autoformat: ตาราง Error ซ้าย, ยอดเฉลี่ยกะ A/B ขวา (AB:AK)"""
+    c_total, c_eff, c_avg, c_peak, c_a, c_a_no, c_a_avg, c_b, c_b_no, c_b_avg = right
+    p14, p18, p24, p30 = (_xl_pt(x) for x in (14, 18, 24, 30))
+    c_left_end = c_gap - 1
+    data_end = window.end
+    b_dt = next((window.start + timedelta(hours=i) for i, h in enumerate(hours)
+                 if h % 24 == window.shift_b_start), None)
+    a_end = min(data_end, b_dt) if b_dt else data_end
+    a_range = f"{window.start.hour:02d}:00 - {a_end.hour:02d}:00"
+    b_range = (f"{b_dt.hour:02d}:00 - {data_end.hour}:00"
+               if b_dt and data_end >= b_dt + timedelta(hours=1) else "-")
+    shift = {}
+    for key in ("A", "B"):
+        total = sum(line[key] for line in summary["lines"])
+        worked = sum(line[f"{key}_hours"] for line in summary["lines"])
+        shift[key] = (worked, total, total / worked if worked else 0)
+
+    grid.add_row(_xl_row(20.1), [Cell("", WHITE, border=False) for _ in grid.col_widths])  # แถว 33
+
+    row = [Cell("", WHITE, border=False) for _ in grid.col_widths]  # แถว 34
+    row[0] = Cell(f"พัสดุ Autopacking ที่วิ่งเกินจำนวนรอบทำให้ตก Error และพัสดุที่ตกช่อง Error "
+                  f"{window.business_date:%Y/%m/%d} เวลา {window.start.hour:02d}:00 - {data_end.hour}:00",
+                  WHITE, False, "left", size=p30, border=False)
+    row[c_total] = Cell("ยอดเฉลี่ยเครื่องปล่อยพัสดุกะ A และ B", AP_PANEL_TITLE, True, size=p30)
+    r = grid.add_row(_xl_row(71.1), row)
+    grid.merges += [(r, 0, r, c_left_end), (r, c_total, r, c_b_avg)]
+
+    row = blank()  # แถว 35
+    row[0] = Cell(window.business_date.isoformat(), WHITE, False, size=p24)
+    row[c_total] = Cell("กะ A", FILL_AP_YELLOW, True, size=p24)
+    row[c_a_no] = Cell("กะ B", FILL_AP_B_HEADER, True, size=p24)
+    r = grid.add_row(_xl_row(45.95), row)
+    grid.merges += [(r, 0, r, c_left_end), (r, c_total, r, c_a), (r, c_a_no, r, c_b_avg)]
+
+    panel = [("ช่วงเวลา", a_range, b_range),
+             ("ชั่วโมงรวม", _num(shift["A"][0]), _num(shift["B"][0])),
+             ("ยอดปล่อย", _num(shift["A"][1]), _num(shift["B"][1])),
+             ("ยอดเฉลี่ย / เครื่อง", _num(round(shift["A"][2])), _num(round(shift["B"][2])))]
+    lines = [(label.replace("AP ", "") + "号异常口", errors.get(pipeline, {}))
+             for label, pipeline, _, _ in AUTOPACK_LINES]
+    total = {h: sum(values.get(h, 0) for _, values in lines) for h in hours}
+    body = [(None, None)] + lines + [("合计", total)]
+    for index, (label, values) in enumerate(body):  # แถว 36-39
+        row = blank()
+        if label is None:
+            row[0] = Cell("", FILL_AP_ERROR_HEADER)
+            for i, h in enumerate(hours):
+                row[2 + i] = Cell(hour_label(h), FILL_AP_ERROR_HEADER, size=p14)
+        else:
+            row[0] = Cell(label, FILL_AP_ERROR_LABEL if label != "合计" else WHITE, size=p18)
+            for i, h in enumerate(hours):
+                row[2 + i] = Cell(_num(values.get(h, 0)), WHITE, size=p14)
+        for col in range(c_total, c_b_avg + 1):
+            row[col] = Cell("", WHITE)
+        name, a_value, b_value = panel[index]
+        row[c_total] = Cell(name, FILL_AP_HEADER, True, size=p18)
+        row[c_avg] = Cell(a_value, FILL_AP_A, size=p18)
+        row[c_a_no] = Cell(name, FILL_AP_HEADER, True, size=p18)
+        row[c_b] = Cell(b_value, FILL_AP_B, size=p18)
+        r = grid.add_row(_xl_row(24.75), row)
+        grid.merges += [(r, 0, r, 1), (r, c_total, r, c_eff), (r, c_avg, r, c_a),
+                        (r, c_a_no, r, c_a_avg), (r, c_b, r, c_b_avg)]
 
 
 # Sort Source ในไฟล์รายชั่วโมงเป็นภาษาจีน ส่วน Abnormal Detail เป็นภาษาอังกฤษ
@@ -2201,6 +2391,16 @@ def _build(settings: Settings, window: Window, work_dir: str, log: LogFunc, is_r
         return dws_pda_rows
 
     max_age = settings.opt_int("image_max_age_minutes")
+    # ตาราง Pillow รายชั่วโมง: มีแถวหัวเรื่องในรูปเหมือนชีตต้นฉบับ (+ ตาราง Error ใต้ AutoPacking)
+    hourly_layout = settings.opt_bool("autopack_error_table")
+
+    def sheet_title(prefix: str, table_window: Window) -> Optional[str]:
+        if not hourly_layout:
+            return None
+        d = table_window.business_date
+        return (f"{prefix} {d.year}/{d.month}/{d.day} เวลา {table_window.start.hour:02d}:00 - "
+                f"{table_window.end.hour}:00")
+
     for key in wanted:
         if not is_running():
             break
@@ -2219,21 +2419,28 @@ def _build(settings: Settings, window: Window, work_dir: str, log: LogFunc, is_r
                 if not throughput:
                     section.note = f"ไม่พบไฟล์ AutoPacking รายชั่วโมงของรอบนี้ใน {settings.autopacking_folder}"
                 else:
+                    errors = autopack_error_counts(load_ap_sheets(), ap_window) if hourly_layout else None
                     section.image = render_autopack_table(
                         autopack_feeder_counts(throughput, ap_window),
-                        os.path.join(work_dir, f"AUTOPACKING_{stamp}.png"), capture=captured)
+                        os.path.join(work_dir, f"AUTOPACKING_{stamp}.png"), capture=captured,
+                        errors=errors,
+                        title=(f"อัตราการปล่อยพัสดุ AutoPacking KKN 供包台 日期 ประจำวันที่ "
+                               f"{ap_window.business_date:%Y/%m/%d} เวลา {ap_window.start.hour:02d}:00 - "
+                               f"{ap_window.end.hour}:00") if hourly_layout else None)
             elif key == "dws":
                 table = load_dws_table()
                 warnings.extend(f"dws: {w}" for w in dws_table_warnings)
                 if dws_window is not window:
                     table = DwsTable(window=dws_window, rows=table.rows)
-                section.image = render_dws_table(table, os.path.join(work_dir, f"DWS_{stamp}.png"),
-                                                 capture=captured)
+                section.image = render_dws_table(
+                    table, os.path.join(work_dir, f"DWS_{stamp}.png"), capture=captured,
+                    title=sheet_title("อัตราการปล่อยพัสดุ DWS KKN 供包台 日期 ประจำวันที่", dws_window))
             elif key == "auto_pda":
                 names = machine_names(settings.opt("auto_pda_prefix"), settings.opt_int("auto_pda_count"))
                 section.image = render_hourly_table(
                     hourly_counts(load_auto(), names, ap_window), ap_window,
-                    os.path.join(work_dir, f"AUTO_PDA_{stamp}.png"), bold_values=True, capture=captured)
+                    os.path.join(work_dir, f"AUTO_PDA_{stamp}.png"), bold_values=True, capture=captured,
+                    title=sheet_title("ยอดบรรจุมือ 人工建包 日期 Autopacking ประจำวันที่", ap_window))
             elif key == "pda_bag":
                 names = machine_names(settings.opt("auto_pda_prefix"), settings.opt_int("auto_pda_count"))
                 section.image = render_bag_table(

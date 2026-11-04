@@ -420,6 +420,29 @@ class WcsDatabaseTests(unittest.TestCase):
                 self.assertEqual(db.call_count, expected)
 
 
+class AutopackErrorTableTests(unittest.TestCase):
+    def test_error_counts_are_unique_bills_per_line_per_hour(self) -> None:
+        window = ds.scope_window(datetime(2026, 11, 4, 13), datetime(2026, 11, 4, 15))
+        header = ["ชั่วโมงข้อมูล", "ไฟล์"] + ds.AUTOPACK_ABNORMAL_DB_HEADER
+        rows = [["13点-14点", "WCS DB", "JT1", "58987-001"], ["13点-14点", "WCS DB", "JT1", "58987-001"],
+                ["13点-14点", "WCS DB", "JT2", "58987-002"], ["14点-15点", "WCS DB", "JT3", "58987-001"]]
+        counts = ds.autopack_error_counts([ds.RawSheet("AUTOPACKING Abnormal", header, rows)], window)
+        self.assertEqual(counts["58987-001"], {13: 1, 14: 1})
+        self.assertEqual(counts["58987-002"], {13: 1, 14: 0})
+
+    def test_error_block_renders_under_the_table(self) -> None:
+        window = ds.scope_window(datetime(2026, 11, 4, 13), datetime(2026, 11, 4, 15))
+        table = ds.autopack_feeder_counts({13: [["58987-001", 1, 1500]]}, window)
+        captured = []
+        with tempfile.TemporaryDirectory() as tmp:
+            ds.render_autopack_table(table, os.path.join(tmp, "a.png"), capture=captured,
+                                     errors={"58987-001": {13: 5, 14: 0}, "58987-002": {13: 2, 14: 0}})
+        texts = [c.text for _, cells in captured[0].rows for c in cells if c]
+        self.assertIn("1号异常口", texts)
+        self.assertIn("ชั่วโมงรวม", texts)
+        self.assertIn("7", texts)  # 合计 ของ 13点
+
+
 class DwsApiTests(unittest.TestCase):
     def _response(self, payload):
         response = mock.MagicMock(status_code=200)
