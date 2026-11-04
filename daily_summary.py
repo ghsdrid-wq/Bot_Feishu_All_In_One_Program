@@ -71,6 +71,15 @@ DEFAULTS: Dict[str, str] = {
     # เวลาสิ้นสุดในหัวข้อ: ชั่วโมงท้าย ๆ ที่ยอด AutoPacking รวมกันไม่เกินนี้ถือเป็นยอดเกินมา
     # ตัดไปจบที่ชั่วโมงก่อนหน้า (0 = ไม่ตัด ใช้แค่ชั่วโมงที่มียอดตั้งแต่ 100)
     "title_end_trim_total": "1000",
+    # สรุป Manual: ยอด AutoPacking รายชั่วโมงอ่านจากฐานข้อมูล WCS ของเครื่อง AutoPacking ตามช่วงที่เลือก
+    # (ไฟล์ NN.xlsx ถูกเขียนทับได้ เช่นงานรัน 24 ชม. 13.xlsx ของเมื่อวานโดนของวันนี้ทับ) อ่านไม่ได้ = ใช้ไฟล์แทน
+    # user / password กรอกในหน้าสรุปรายวัน (เก็บใน config.ini) — ว่าง = ใช้ไฟล์ NN.xlsx
+    "autopack_from_db": "true",
+    "wcs_db_host": "10.30.32.44",
+    "wcs_db_port": "3306",
+    "wcs_db_user": "",
+    "wcs_db_password": "",
+    "wcs_db_name": "db_wcs",
     # หัวข้อ — ใช้ {date} {start} {end} ได้
     "title_post": "สรุปยอดประจำวันที่ {date} เวลา {start}-{end}",
     "title_autopacking": "อัตราการปล่อยพัสดุ AutoPacking KKN 供包台 日期 ประจำวันที่ {date} เวลา {start}-{end}",
@@ -1023,6 +1032,58 @@ def read_autopack_throughput(raw_dir: str, window: Window, file_hour_offset: int
     return result
 
 
+# ตารางพัสดุที่คัดแยกแล้วของ WCS — แถวละชิ้น: pipeline, inductNo (= feeder), sorttime (epoch ms)
+# ตารางหลักเก็บราว 3 วันล่าสุด ที่เก่ากว่านั้นย้ายไปตาราง hist (ราว 1 เดือน)
+# นับต่อ feeder ต่อชั่วโมงแล้วตรงกับ Loading Num ในไฟล์ NN.xlsx (ต่างกันไม่เกิน ~10 ชิ้น/ชั่วโมง)
+WCS_SORT_TABLE = "alreadysortinfo"
+WCS_SORT_HIST_TABLE = "alreadysortinfohist"
+
+
+def read_autopack_throughput_db(settings: "Settings", window: Window,
+                                log: LogFunc = _noop) -> Dict[int, List[list]]:
+    """ยอด AutoPacking ต่อ feeder ต่อช่อง จากฐานข้อมูล WCS — โครงเดียวกับ read_autopack_throughput"""
+    import pymysql
+
+    started = [hour for hour in window.hours if window.slot_started(hour)]
+    if not started:
+        return {}
+    start_ms = int(window.start.timestamp() * 1000)
+    end_ms = int((window.start + timedelta(hours=len(started))).timestamp() * 1000)
+    conn = pymysql.connect(
+        host=settings.opt("wcs_db_host"), port=settings.opt_int("wcs_db_port"),
+        user=settings.opt("wcs_db_user"), password=settings.opt("wcs_db_password"),
+        database=settings.opt("wcs_db_name"), charset="utf8mb4",
+        connect_timeout=10, read_timeout=900)
+    counts: Dict[Tuple[int, str, int], int] = {}
+    try:
+        with conn.cursor() as cur:
+            tables = [WCS_SORT_TABLE]
+            cur.execute(f"SELECT MIN(sorttime) FROM {WCS_SORT_TABLE}")
+            oldest = (cur.fetchone() or [None])[0]
+            if oldest is None or start_ms < int(oldest):
+                # ตาราง hist ไม่มี index ของ sorttime อย่างเดียว ค้นช่วงเวลาจึงช้า (ราวนาที) — ใช้เมื่อจำเป็น
+                _say(log, "Daily summary: ช่วงนี้เก่ากว่าตารางหลักของ WCS อ่านจากตารางย้อนหลังด้วย (อาจใช้เวลาสักครู่)")
+                tables.append(WCS_SORT_HIST_TABLE)
+            for table in tables:
+                cur.execute(
+                    f"SELECT pipeline, inductNo, FLOOR((sorttime - %s) / 3600000) AS slot, COUNT(*) "
+                    f"FROM {table} WHERE sorttime >= %s AND sorttime < %s GROUP BY 1, 2, 3",
+                    (start_ms, start_ms, end_ms))
+                for pipeline, feeder, slot, qty in cur.fetchall():
+                    feeder = str(feeder or "").strip()
+                    if not feeder.isdigit():
+                        continue
+                    key = (int(slot), str(pipeline or "").strip(), int(feeder))
+                    counts[key] = counts.get(key, 0) + int(qty)
+    finally:
+        conn.close()
+    result: Dict[int, List[list]] = {hour: [] for hour in started}
+    for (slot, pipeline, feeder), qty in sorted(counts.items()):
+        if 0 <= slot < len(started):
+            result[started[slot]].append([pipeline, feeder, qty])
+    return result
+
+
 def _ap_feeder_stats(values: Dict[int, int], window: Window) -> Dict[str, float]:
     hours_a, hours_b = _shift_hours(window, "A"), _shift_hours(window, "B")
     total = sum(values.values())
@@ -1810,7 +1871,15 @@ def build(settings: Settings, window: Window, work_dir: str,
     def load_autopack_throughput() -> Dict[int, List[list]]:
         nonlocal autopack_throughput
         if autopack_throughput is None:
-            autopack_throughput = read_autopack_throughput(settings.autopacking_folder, window)
+            if trim_to_activity and settings.opt_bool("autopack_from_db") and settings.opt("wcs_db_user"):
+                try:
+                    autopack_throughput = read_autopack_throughput_db(settings, window, log)
+                    total = sum(row[2] for rows in autopack_throughput.values() for row in rows)
+                    _say(log, f"Daily summary: ยอด AutoPacking จากฐานข้อมูล WCS {total:,} ชิ้น")
+                except Exception as exc:
+                    _say(log, f"Daily summary: อ่านฐานข้อมูล WCS ไม่ได้ ใช้ไฟล์ NN.xlsx แทน — {exc}", "WARN")
+            if autopack_throughput is None:
+                autopack_throughput = read_autopack_throughput(settings.autopacking_folder, window)
         return autopack_throughput
 
     # Use the complete populated AutoPacking columns for every title in the

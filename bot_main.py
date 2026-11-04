@@ -3582,7 +3582,19 @@ class App(ctk.CTk):
         self.ds_entry(advanced, 4, "จำนวนเครื่อง PDA ลงรถ", "dws_pda_count", width=90)
         self.ds_entry(advanced, 5, "รอบงานจบกี่โมง", "day_end_hour", "ตารางรายชั่วโมงแสดงถึงก่อนชั่วโมงนี้", width=90)
         self.ds_entry(advanced, 6, "กะ B เริ่มกี่โมง", "shift_b_start", width=90)
-        ctk.CTkLabel(advanced, text="").grid(row=7, column=0, pady=2)
+        # สรุป Manual อ่านยอด AutoPacking จากฐานข้อมูล WCS แทนไฟล์ NN.xlsx (ไฟล์ถูกเขียนทับได้)
+        self.ds_autopack_db_var = ctk.BooleanVar(value=as_bool(self.daily_summary_option("autopack_from_db"), True))
+        db_chk = ctk.CTkCheckBox(
+            advanced, text="สรุปแบบกดเอง: อ่านยอด AutoPacking จากฐานข้อมูล WCS (อ่านไม่ได้ = ใช้ไฟล์ NN.xlsx)",
+            variable=self.ds_autopack_db_var)
+        db_chk.grid(row=7, column=0, columnspan=3, padx=16, pady=(10, 4), sticky="w")
+        self.lockable_inputs.append(db_chk)
+        self.ds_entry(advanced, 8, "WCS DB Host", "wcs_db_host", width=200)
+        self.ds_entry(advanced, 9, "WCS DB Port", "wcs_db_port", width=90)
+        self.ds_entry(advanced, 10, "WCS DB User", "wcs_db_user", width=200)
+        self.ds_entry(advanced, 11, "WCS DB Password", "wcs_db_password", width=200).configure(show="*")
+        self.ds_entry(advanced, 12, "WCS DB Name", "wcs_db_name", width=200)
+        ctk.CTkLabel(advanced, text="").grid(row=13, column=0, pady=2)
         return page
 
     def daily_summary_shared_paths(self) -> Dict[str, str]:
@@ -3668,6 +3680,8 @@ class App(ctk.CTk):
         section["send_raw_file"] = str(bool(self.ds_send_raw_var.get())).lower()
         if "ds_custom_paths_var" in self.__dict__:
             section["custom_paths"] = str(bool(self.ds_custom_paths_var.get())).lower()
+        if "ds_autopack_db_var" in self.__dict__:
+            section["autopack_from_db"] = str(bool(self.ds_autopack_db_var.get())).lower()
         if "ds_send_hour_var" in self.__dict__:
             section["send_time"] = f"{self.ds_send_hour_var.get() or '12'}:{self.ds_send_minute_var.get() or '00'}"
             section["auto_send"] = str(bool(self.ds_auto_send_var.get())).lower()

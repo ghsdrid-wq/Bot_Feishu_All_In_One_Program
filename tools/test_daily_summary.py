@@ -308,6 +308,68 @@ class CountTests(unittest.TestCase):
         self.assertEqual(ds.color_scale([0, 0])(0), ds.SCALE_HIGH)
 
 
+class WcsDatabaseTests(unittest.TestCase):
+    def _settings(self, tmp: str, user: str = "reader") -> ds.Settings:
+        config = configparser.RawConfigParser()
+        config["PATH"] = {"output_dir": tmp, "autopacking_dir": tmp}
+        config["DWS_JMS"] = {"raw_path": tmp}
+        ds.ensure_defaults(config)
+        config[ds.SECTION]["wcs_db_user"] = user
+        with mock.patch("core.dws_mirror.plan", return_value=[]):
+            return ds.settings_from_config(config)
+
+    def test_counts_per_feeder_per_slot_including_hour_past_the_folder_roll(self) -> None:
+        # ช่วง 3 พ.ย. 13:00 -> 4 พ.ย. 13:00 ยาว 24 ช่อง — ช่องสุดท้าย 12点-13点 ไม่มีไฟล์ NN.xlsx แต่ DB มี
+        window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 4, 13))
+        cursor = mock.MagicMock()
+        cursor.fetchone.return_value = (int(datetime(2026, 11, 1, 20).timestamp() * 1000),)
+        cursor.fetchall.return_value = [
+            ("58987-001", "1", 0, 1501), ("58987-001", "1", 23, 1565),
+            ("58987-002", "3", 23, 1771), ("58987-001", "", 5, 9),
+        ]
+        conn = mock.MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cursor
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch("pymysql.connect", return_value=conn) as connect:
+            result = ds.read_autopack_throughput_db(self._settings(tmp), window)
+        self.assertEqual(connect.call_args.kwargs["host"], "10.30.32.44")
+        self.assertEqual(len(result), 24)
+        self.assertEqual(result[13], [["58987-001", 1, 1501]])
+        self.assertEqual(result[12], [["58987-001", 1, 1565], ["58987-002", 3, 1771]])
+        self.assertEqual(result[18], [])
+        # ตารางหลักมีข้อมูลถึงช่วงนี้แล้ว ไม่ต้องค้นตาราง hist ที่ช้า
+        queries = " ".join(str(c.args[0]) for c in cursor.execute.call_args_list)
+        self.assertNotIn(ds.WCS_SORT_HIST_TABLE, queries)
+
+    def test_manual_build_falls_back_to_files_when_database_fails(self) -> None:
+        window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 3, 15))
+        files = {13: [["58987-001", 1, 1_500]], 14: [["58987-001", 1, 1_400]]}
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = self._settings(tmp)
+            settings.options.update({"sections": "autopacking", "send_raw_file": "false"})
+            with mock.patch.object(ds, "read_autopack_throughput_db", side_effect=OSError("offline")) as db, \
+                    mock.patch.object(ds, "read_autopack_throughput", return_value=files) as read_files, \
+                    mock.patch.object(ds, "render_autopack_table", return_value="autopack.png"), \
+                    mock.patch.object(ds, "dws_station_paths", return_value={}):
+                ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None,
+                         trim_to_activity=True)
+        db.assert_called_once()
+        read_files.assert_called_once()
+
+    def test_database_needs_a_user_and_is_manual_only(self) -> None:
+        window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 3, 15))
+        with tempfile.TemporaryDirectory() as tmp:
+            for user, manual in (("", True), ("reader", False)):
+                settings = self._settings(tmp, user)
+                settings.options.update({"sections": "autopacking", "send_raw_file": "false"})
+                with mock.patch.object(ds, "read_autopack_throughput_db") as db, \
+                        mock.patch.object(ds, "read_autopack_throughput", return_value={}), \
+                        mock.patch.object(ds, "dws_station_paths", return_value={}):
+                    ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None,
+                             trim_to_activity=manual)
+                db.assert_not_called()
+
+
 class BuildTests(unittest.TestCase):
     def test_build_uses_populated_autopacking_columns_in_post_titles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
