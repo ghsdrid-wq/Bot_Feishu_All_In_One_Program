@@ -1,7 +1,6 @@
 """Stage report inputs locally without replacing a successful snapshot on failure."""
 
 import os
-import shutil
 import tempfile
 import zipfile
 from datetime import datetime, time, timedelta
@@ -26,14 +25,16 @@ def copy_snapshot(source, target, keep_running=lambda: True):
         with zipfile.ZipFile(temp) as archive:
             if archive.testzip() is not None:
                 raise OSError("Invalid XLSX snapshot")
-        shutil.copystat(source, temp)
+        os.utime(temp, ns=(before.st_atime_ns, before.st_mtime_ns))
         os.replace(temp, target)
     finally:
         if os.path.exists(temp):
             os.remove(temp)
 
 
-def stage(paths, config, business_date, now, start_hour, keep_running, log):
+def stage(
+    paths, config, business_date, now, start_hour, keep_running, log, window=None
+):
     from core import dws_mirror
 
     paths = dict(paths)
@@ -49,10 +50,46 @@ def stage(paths, config, business_date, now, start_hour, keep_running, log):
         paths[key] = target if os.path.isfile(target) else ""
         if not result["ok"]:
             log(f"[SOURCE] {key}: unreachable; retained snapshot may be incomplete")
-    root = config.get("REPORT_CALCULATION", "auto_cache", fallback="").strip()
-    root = root or os.path.join(
-        dws_mirror.core.PROJECT_ROOT, "out", "source_cache", "AutoPacking"
-    )
+    root = cache_root(config)
+    if window is not None:
+        for slot in window.slots:
+            key = f"{(slot.hour + 1) % 24:02d}"
+            target = (
+                Path(root)
+                / "slots"
+                / slot.strftime("%Y-%m-%d")
+                / f"{slot.hour:02d}.xlsx"
+            )
+            if not target.is_file():
+                source = Path(paths[key])
+                root_path = source.parent
+                try:
+                    datetime.strptime(root_path.name, "%Y-%m-%d")
+                    root_path = root_path.parent
+                except ValueError:
+                    pass
+                folder_date = (slot + timedelta(hours=1) - timedelta(hours=13)).date()
+                candidates = [
+                    root_path / folder_date.isoformat() / source.name,
+                    source,
+                    root_path / source.name,
+                ]
+                accepted = None
+                for candidate in candidates:
+                    try:
+                        modified = datetime.fromtimestamp(candidate.stat().st_mtime)
+                    except OSError:
+                        continue
+                    if slot <= modified <= slot + timedelta(hours=1, minutes=30):
+                        accepted = candidate
+                        break
+                if accepted is None:
+                    raise OSError(
+                        f"AutoPacking {slot}: no source with matching hour provenance and no dated snapshot"
+                    )
+                copy_snapshot(accepted, target, keep_running)
+            paths[slot.isoformat()] = str(target)
+        return paths
     reset = datetime.combine(business_date + timedelta(days=1), time(12))
     for key in paths:
         if not key.isdigit():
@@ -80,3 +117,13 @@ def stage(paths, config, business_date, now, start_hour, keep_running, log):
             log(f"[SOURCE] AutoPacking {key}: retained business-day snapshot ({error})")
         paths[key] = str(target)
     return paths
+
+
+def cache_root(config):
+    from core import dws_mirror
+
+    return config.get(
+        "REPORT_CALCULATION", "auto_cache", fallback=""
+    ).strip() or os.path.join(
+        dws_mirror.core.PROJECT_ROOT, "out", "source_cache", "AutoPacking"
+    )

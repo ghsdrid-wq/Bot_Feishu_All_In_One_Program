@@ -1,6 +1,7 @@
 # Local configuration and runtime output
 config.ini
 jms_user_policy.json
+sent_messages.json
 *.log
 build_log.txt
 __pycache__/
@@ -20,6 +21,7 @@ Handoff/
 _analysis_v7_extract/
 # Operator workbooks contain local source data; version query logic separately.
 Excel/
+report_delivery.json
 
 # ผลลัพธ์และข้อมูลของโหมด Dashboard
 out/

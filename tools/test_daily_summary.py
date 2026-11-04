@@ -93,6 +93,61 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(window.labels_for_hourly_totals(totals, trailing_total=1000)["end"], "11.00")
         self.assertEqual(window.labels_for_hourly_totals(totals, trailing_total=0)["end"], "11.00")
 
+    def test_window_extends_to_13_only_after_the_extra_hour_finishes(self) -> None:
+        start = datetime(2026, 10, 20, 13)
+        normal = ds.make_window(start, datetime(2026, 10, 21, 12, 20))
+        self.assertEqual((len(normal.hours), normal.hours[-1]), (23, 11))
+        extended = ds.make_window(start, datetime(2026, 10, 21, 13, 30))
+        self.assertEqual((len(extended.hours), extended.hours[-1]), (24, 12))
+        self.assertEqual(extended.end, datetime(2026, 10, 21, 13))
+        self.assertIsNone(extended.slot_of(datetime(2026, 10, 21, 13, 10)))
+        self.assertEqual(extended.slot_of(datetime(2026, 10, 21, 12, 40)), 12)
+        self.assertEqual(extended.labels_for_hourly_totals({**{h: 5_000 for h in extended.hours}})["end"],
+                         "13.00")
+
+    def test_autopack_extra_hour_reads_next_folders_13_file(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            for name in ("2026-10-20", "2026-10-21"):
+                os.makedirs(os.path.join(raw, name))
+            window = ds.make_window(datetime(2026, 10, 20, 13), datetime(2026, 10, 21, 13, 30))
+            self.assertEqual(ds.autopack_hour_path(raw, window, 11),
+                             os.path.join(raw, "2026-10-20", "12.xlsx"))
+            self.assertEqual(ds.autopack_hour_path(raw, window, 12),
+                             os.path.join(raw, "2026-10-21", "13.xlsx"))
+            self.assertEqual(ds.autopack_hour_path(raw, window, 13),
+                             os.path.join(raw, "2026-10-20", "14.xlsx"))
+
+    def test_scope_window_can_span_more_than_24_hours(self) -> None:
+        # Manual: 2026-10-28 12:00 ถึง 2026-10-29 13:00 = 25 ช่อง มี 12点-13点 สองช่อง
+        window = ds.scope_window(datetime(2026, 10, 28, 12), datetime(2026, 10, 29, 13))
+        self.assertEqual(len(window.hours), 25)
+        self.assertEqual((window.hours[0], window.hours[-1]), (12, 36))
+        self.assertEqual(len(set(window.hours)), 25)
+        self.assertEqual(window.slot_of(datetime(2026, 10, 28, 12, 30)), 12)
+        self.assertEqual(window.slot_of(datetime(2026, 10, 29, 12, 30)), 36)
+        self.assertEqual(ds.hour_label(36), "12点-13点")
+        self.assertEqual(window.shift_of(36), "B")
+        with tempfile.TemporaryDirectory() as raw:
+            for name in ("2026-10-28", "2026-10-29"):
+                os.makedirs(os.path.join(raw, name))
+            self.assertEqual(ds.autopack_hour_path(raw, window, 12), os.path.join(raw, "2026-10-28", "13.xlsx"))
+            self.assertEqual(ds.autopack_hour_path(raw, window, 11), os.path.join(raw, "2026-10-28", "12.xlsx"))
+            self.assertEqual(ds.autopack_hour_path(raw, window, 36), os.path.join(raw, "2026-10-29", "13.xlsx"))
+
+    def test_active_span_trims_columns_to_working_hours(self) -> None:
+        window = ds.scope_window(datetime(2026, 10, 28, 12), datetime(2026, 10, 29, 13))
+        totals = {h: 0 for h in window.hours}
+        for h in list(range(13, 24)) + list(range(0, 9)):
+            totals[h] = 5_000
+        totals[9] = 300  # ยอดเกินมาหลังจบงาน
+        span = window.active_span(totals, trailing_total=1000)
+        sub = window.sub(*span)
+        self.assertEqual((sub.hours[0], sub.hours[-1]), (13, 8))
+        self.assertEqual(sub.start, datetime(2026, 10, 28, 13))
+        self.assertEqual(sub.end, datetime(2026, 10, 29, 9))
+        self.assertEqual(window.labels_for_hourly_totals(totals, trailing_total=1000)["end"], "9.00")
+        self.assertIsNone(sub.slot_of(datetime(2026, 10, 29, 9, 10)))
+
     def test_title_labels_keep_configured_range_when_no_hour_reaches_100(self) -> None:
         window = ds.make_window(datetime(2026, 10, 18, 14), datetime(2026, 10, 19, 11))
         self.assertEqual(window.labels_for_hourly_totals({hour: 99 for hour in window.hours}),
@@ -118,11 +173,29 @@ class SendTimeTests(unittest.TestCase):
         self.assertTrue(reason.startswith(ds.LATE_REASON))
         self.assertIn("ส่งสรุปตอนนี้", reason)
 
+    def test_auto_send_never_catches_up_after_13(self) -> None:
+        start = datetime(2026, 10, 27, 15)
+        self.assertTrue(ds.due_to_send(start, datetime(2026, 10, 28, 12, 55), "12:20", "", 60, cutoff_hour=13)[0])
+        due, reason = ds.due_to_send(start, datetime(2026, 10, 28, 13, 5), "12:20", "", 60, cutoff_hour=13)
+        self.assertFalse(due)
+        self.assertTrue(reason.startswith(ds.LATE_REASON))
+        # ตั้งส่ง 12:58: ยังได้ช่วงเผื่อ 5 นาทีแม้เลย 13:00
+        self.assertTrue(ds.due_to_send(start, datetime(2026, 10, 28, 13, 2), "12:58", "", 30, cutoff_hour=13)[0])
+
     def test_catch_up_checkbox_controls_late_limit(self) -> None:
         self.assertEqual(ds.late_limit_minutes("true", "45"), 45)
         self.assertEqual(ds.late_limit_minutes("true", "2"), ds.ON_TIME_GRACE_MINUTES)  # ไม่ต่ำกว่าช่วงเผื่อ
         self.assertEqual(ds.late_limit_minutes("false", "45"), ds.ON_TIME_GRACE_MINUTES)
         self.assertEqual(ds.late_limit_minutes("true", ""), 30)
+
+    def test_round_starting_just_before_send_time_waits_for_next_day(self) -> None:
+        # 2026-10-27: เปลี่ยนเวลาเริ่มเป็น 12:00 (ส่ง 12:20) แล้วรอบใหม่ถูกส่งตอน 12:24 ทั้งที่เพิ่งเริ่ม
+        start = datetime(2026, 10, 27, 12)
+        self.assertEqual(ds.scheduled_send_at(start, "12:20"), datetime(2026, 10, 28, 12, 20))
+        self.assertFalse(ds.due_to_send(start, datetime(2026, 10, 27, 12, 24), "12:20", "2026-10-26", 30)[0])
+        # รอบก่อนหน้า (เริ่ม 26 12:00) ส่ง 27 12:20 ตามปกติ
+        self.assertTrue(ds.due_to_send(datetime(2026, 10, 26, 12), datetime(2026, 10, 27, 12, 21),
+                                       "12:20", "2026-10-25", 30)[0])
 
     def test_new_business_day_waits_for_its_own_send_time(self) -> None:
         start = datetime(2026, 10, 19, 14)  # รอบงานใหม่เริ่มแล้ว ต้องรอถึง 12:00 ของวันถัดไป
@@ -158,6 +231,12 @@ class CountTests(unittest.TestCase):
             names = ds.machine_names("Autopacking_pda", 2)
             self.assertEqual(ds.hourly_counts(actual, names, window), ds.hourly_counts(expected, names, window))
             self.assertEqual(ds.bag_counts(actual, names), ds.bag_counts(expected, names))
+
+    def test_waybill_header_accepts_jms_2026_10_23_name(self) -> None:
+        # JMS export 2026-10-23: 运单编号 แทน 运单号 (หัวจริงจากไฟล์ DWSXAUTOPDA.xlsx / DWSPDA.xlsx)
+        header = ["运单编号", "所属包号", "扫描类型", "扫描时间", "扫描网点", "上一站或下一站", "件数",
+                  "重量", "物品类型", "运输方式", "寄件网点", "寄件客户", "扫描员", "派件或收件员", "备注", "上传时间"]
+        self.assertEqual(ds._find_column(header, ds.COL_AWB, "scan.xlsx"), 0)
 
     def test_chinese_headers_take_priority_over_changed_thai_labels(self) -> None:
         header = ["เวลาที่สแกน", "扫描时间", "พนักงานสแกน", "扫描员"]

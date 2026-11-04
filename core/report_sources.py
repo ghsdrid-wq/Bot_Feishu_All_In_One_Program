@@ -93,6 +93,7 @@ class Inputs:
         ).replace(hour=start_hour)
         self.counters = {}
         self.hourly = {}
+        self.status = {}
         self.evidence = []
 
     def check(self):
@@ -150,9 +151,12 @@ class Inputs:
     def autopacking(self, key: str):
         if key in self.hourly:
             return self.hourly[key]
-        hour = (int(key) - 1) % 24
-        day = self.business_date + timedelta(days=hour < 12)
-        slot = datetime.combine(day, datetime.min.time()).replace(hour=hour)
+        if "T" in key:
+            slot = datetime.fromisoformat(key)
+        else:
+            hour = (int(key) - 1) % 24
+            day = self.business_date + timedelta(days=hour < 12)
+            slot = datetime.combine(day, datetime.min.time()).replace(hour=hour)
         if slot < self.window_start or slot + timedelta(hours=1) > self.now:
             self.hourly[key] = ({}, {})
             return self.hourly[key]
@@ -197,8 +201,15 @@ class Inputs:
         self.hourly[key] = values, {line: len(bills) for line, bills in errors.items()}
         return self.hourly[key]
 
+    def autopacking_slot(self, slot):
+        key = slot.isoformat()
+        if key not in self.paths:
+            self.paths[key] = self.paths.get(f"{(slot.hour + 1) % 24:02d}", "")
+        return self.autopacking(key)
+
     def counter(self, key: str):
         if key in {f"DWS{i}" for i in range(1, 9)} and self.paths.get(key) == "":
+            self.status[key] = "no local snapshot"
             self.log(f"[SOURCE] {key}: unavailable, no local snapshot; no recorded output")
             return Counter()
         if key in self.counters:
@@ -254,12 +265,7 @@ class Inputs:
                         invalid_times += 1
                     continue
                 dated_rows += 1
-                if timestamp.date() not in (
-                    self.business_date,
-                    date.fromordinal(self.business_date.toordinal() + 1),
-                ):
-                    continue
-                if not self.window_start <= timestamp <= self.now:
+                if not self.window_start <= timestamp < self.now:
                     continue
                 person = (
                     str(row[scanner] or "").strip().casefold()
@@ -267,6 +273,8 @@ class Inputs:
                     else ""
                 )
                 counter[(timestamp.date(), timestamp.hour, person)] += 1
+            if dated_rows and not counter and key in {f"DWS{i}" for i in range(1, 9)}:
+                self.status[key] = "snapshot has no rows in this cycle"
             if dated_rows and not counter and key not in {f"DWS{i}" for i in range(1, 9)}:
                 raise SourceUnavailable(
                     f"{key}: non-empty source has no rows in the requested report window"

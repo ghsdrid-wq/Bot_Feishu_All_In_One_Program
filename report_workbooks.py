@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import ExitStack, contextmanager
 from copy import copy
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import openpyxl
@@ -224,6 +224,7 @@ def prepare(
     now: datetime,
     keep_running=lambda: True,
     log=print,
+    window=None,
 ) -> dict:
     """Prepare all supported active templates before Excel can open any file."""
     if config.get("REPORT_CALCULATION", "enabled", fallback="true").lower() in (
@@ -247,7 +248,17 @@ def prepare(
         start_hour = config.getint("TIME", "start_hour", fallback=15)
         paths = runtime_paths(config, item.path, business_date)
         from core.report_staging import stage
-        paths = stage(paths, config, business_date, now, start_hour, keep_running, log)
+
+        paths = stage(
+            paths,
+            config,
+            business_date,
+            now,
+            start_hour,
+            keep_running,
+            log,
+            window=window,
+        )
         evidence = calculate(
             item.path,
             path,
@@ -257,6 +268,7 @@ def prepare(
             keep_running,
             log,
             start_hour=start_hour,
+            window=window,
         )
         evidence_path = path + ".evidence.json"
         with open(evidence_path + ".tmp", "w", encoding="utf-8") as handle:
@@ -388,6 +400,7 @@ def calculate(
     keep_running=lambda: True,
     log=print,
     start_hour=12,
+    window=None,
 ) -> dict:
     if os.path.normcase(os.path.abspath(template)) == os.path.normcase(
         os.path.abspath(output)
@@ -413,6 +426,18 @@ def calculate(
             source_paths, business_date, now, keep_running, log, start_hour=start_hour
         )
         overrides = {}
+        layouts = {}
+        if window is not None:
+            from core.report_layout import expand
+
+            inputs.window_start = window.start
+            inputs.now = (
+                window.slots[-1] + timedelta(hours=1) if window.slots else window.start
+            )
+            overrides, layouts = expand(book, inputs, window)
+            if inputs.status and "DWSREALTIME" in layouts:
+                overrides[("DWSREALTIME", "A1")] += " [ข้อมูลไม่ครบ: " + ", ".join(inputs.status) + "]"
+
         for name in ("Autoformat", "DWSREALTIME"):
             if name in names:
                 overrides[(name, "A2")] = to_excel(
@@ -425,7 +450,7 @@ def calculate(
             ("DWSREALTIME", 27),
             ("AUTO PDA", 51),
         ):
-            if name in names:
+            if name in names and window is None:
                 for hour in range(12, start_hour):
                     from openpyxl.utils.cell import get_column_letter
 
@@ -446,6 +471,9 @@ def calculate(
                         raise UnsupportedFormula(
                             f"Unknown hourly helper formula {formula}"
                         )
+                    if window is not None:
+                        overrides[(sheet.title, cell.coordinate)] = 0
+                        continue
                     values, errors = inputs.autopacking(sheet.title)
                     feeder = re.search(r"B:B=(\d+)", formula)
                     if feeder:
@@ -465,6 +493,10 @@ def calculate(
             c.data_type == "f" for sheet in book for row in sheet for c in row
         )
         values = calculator.calculate()
+        if window is not None:
+            expanded = snapshot.enter_context(tempfile.TemporaryDirectory())
+            snapshot_path = os.path.join(expanded, "expanded.xlsx")
+            book.save(snapshot_path)
         write_values(snapshot_path, output, book, values, keep_running)
         evidence = {
             "template": os.path.abspath(template),
@@ -473,6 +505,15 @@ def calculate(
             "calculated_at": now.isoformat(),
             "formulas_replaced": formula_count,
             "sources": inputs.evidence,
+            "source_status": inputs.status,
+            "layouts": layouts,
+            "cycle": {
+                "start": window.start.isoformat(),
+                "end": window.end.isoformat(),
+                "cutoff": inputs.now.isoformat(),
+            }
+            if window
+            else None,
             "excel_required": False,
             "power_query_required": False,
         }

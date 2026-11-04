@@ -3,6 +3,7 @@ import re
 import sys
 import json
 import time
+import contextlib
 import queue
 import threading
 import webbrowser
@@ -12,7 +13,7 @@ import hmac
 import zipfile
 import traceback
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 
@@ -45,6 +46,7 @@ from Createphoto import (
 import Botmessage
 import feishu_client
 import realtime_report
+import sent_messages
 import daily_summary
 from Botmessage import run_send
 
@@ -236,6 +238,9 @@ DEFAULT_FEISHU = {
     "BOT_NAME": "BOT_JMSKKN",
     "PLAN_DAY_NAME": "DWSA",
     "PLAN_NIGHT_NAME": "DWSB",
+    # START BOT ของ BOT DWS PLAN / BOT JMS USER เองตอนเปิดโปรแกรม
+    "bot_autostart": "true",
+    "jms_autostart": "true",
 }
 
 DEFAULT_PATH = {
@@ -831,6 +836,11 @@ def feishu_event():
     return jsonify({"success": True, "message": "ignored"})
 
 
+# Realtime DB: ไม่มีข้อมูลเข้ามาเลยนานเท่านี้ = ค้าง / ดาวน์โหลดทั้งไฟล์ได้ไม่เกินเท่านี้
+REALTIME_DOWNLOAD_STALL_SECONDS = 120
+REALTIME_DOWNLOAD_MAX_SECONDS = 900
+
+
 def as_bool(value: str, default: bool = False) -> bool:
     if value is None:
         return default
@@ -1410,6 +1420,8 @@ class App(ctk.CTk):
         self.after(30000, self.daily_summary_tick)
         # เปิดเว็บเองตอนโปรแกรมเริ่ม ปิดได้ที่ [DASHBOARD] web_autostart
         self.after(1500, self.dashboard_autostart_web)
+        # START BOT ของ BOT DWS PLAN / BOT JMS USER เองตอนเปิดโปรแกรม ปิดได้ที่ [FEISHU] bot_autostart / jms_autostart
+        self.after(2000, self.bots_autostart)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def ensure_config(self):
@@ -1640,6 +1652,18 @@ class App(ctk.CTk):
         """Compatibility display for the configured start/end hours."""
         return self.scheduler_start_hour, self.scheduler_end_hour
 
+    def scheduler_first_run_at(self, start_dt: datetime) -> datetime:
+        """รอบแรกของช่วง = ชั่วโมงหลังเวลาเริ่ม (เริ่ม 15:00 รันนาที 1 -> รอบแรก 16:01)
+
+        รอบตรงเวลาเริ่ม (15:01) มีข้อมูลรอบใหม่แค่นาทีเดียว ส่งไปก็ได้ตารางว่าง/ยอดค้าง
+        """
+        return (start_dt + timedelta(hours=1)).replace(
+            minute=self.scheduler_run_minute, second=0, microsecond=0)
+
+    def scheduler_last_run_at(self, end_dt: datetime) -> datetime:
+        """รอบสุดท้ายของช่วง = ชั่วโมงจบ + นาทีรัน (จบ 12:00 รันนาที 5 -> รอบสุดท้าย 12:05)"""
+        return end_dt.replace(minute=self.scheduler_run_minute, second=59, microsecond=0)
+
     def in_send_window(self, moment) -> bool:
         """Return whether an exact datetime is inside the configured run range.
 
@@ -1650,7 +1674,7 @@ class App(ctk.CTk):
         """
         if isinstance(moment, datetime):
             start_dt, end_dt = self.get_scheduler_time_range()
-            return start_dt <= moment <= end_dt
+            return self.scheduler_first_run_at(start_dt) <= moment <= self.scheduler_last_run_at(end_dt)
         hour = int(moment)
         first, last = self.send_window()
         if first <= last:
@@ -1661,7 +1685,7 @@ class App(ctk.CTk):
         """Compare the scheduled minute, not loop wake-up seconds, to the range."""
         start_dt, end_dt = self.get_scheduler_time_range()
         slot = moment.replace(second=0, microsecond=0)
-        return start_dt <= slot <= end_dt
+        return self.scheduler_first_run_at(start_dt) <= slot <= self.scheduler_last_run_at(end_dt)
 
     def get_next_scheduler_run_time(
             self, now: Optional[datetime] = None) -> Optional[datetime]:
@@ -1677,11 +1701,10 @@ class App(ctk.CTk):
             candidate = (now + timedelta(hours=1)).replace(
                 minute=minute, second=0, microsecond=0)
         start_dt, end_dt = self.get_scheduler_time_range()
-        if candidate < start_dt:
-            candidate = start_dt.replace(minute=minute, second=0, microsecond=0)
-            if candidate < start_dt:
-                candidate += timedelta(hours=1)
-        return candidate if candidate <= end_dt else None
+        first_run = self.scheduler_first_run_at(start_dt)
+        if candidate < first_run:
+            candidate = first_run
+        return candidate if candidate <= self.scheduler_last_run_at(end_dt) else None
 
     def format_next_scheduler_run(self, next_run: Optional[datetime] = None) -> str:
         candidate = next_run if next_run is not None else self.get_next_scheduler_run_time()
@@ -1775,6 +1798,7 @@ class App(ctk.CTk):
             # Filled immediately before each Run Now / automatic execution.
             # Scheduler lifetime and report data range are separate concerns.
             "time_range": None,
+            "cycle_range": tuple(value.isoformat() for value in self.get_scheduler_time_range()),
         }
 
     def sync_auto_run_settings_after_save(self):
@@ -1941,7 +1965,7 @@ class App(ctk.CTk):
                 end_dt = datetime.combine(self.end_date.get_date(), datetime.min.time()).replace(hour=end_hour)
                 if start_dt > end_dt:
                     start_dt, end_dt = end_dt, start_dt
-                return start_dt, end_dt
+                return self.normalize_cycle_range(start_dt, end_dt)
             except Exception:
                 pass
 
@@ -1955,7 +1979,7 @@ class App(ctk.CTk):
             end_dt = datetime.combine(end_date, datetime.min.time()).replace(hour=end_hour)
             if start_dt > end_dt:
                 start_dt, end_dt = end_dt, start_dt
-            return start_dt, end_dt
+            return self.normalize_cycle_range(start_dt, end_dt)
         except Exception:
             pass
 
@@ -1964,7 +1988,13 @@ class App(ctk.CTk):
         start_dt = datetime.combine(business_date, datetime.min.time()).replace(hour=start_hour)
         end_date = business_date + timedelta(days=1) if start_hour >= end_hour else business_date
         end_dt = datetime.combine(end_date, datetime.min.time()).replace(hour=end_hour)
-        return start_dt, end_dt
+        return self.normalize_cycle_range(start_dt, end_dt)
+
+    def normalize_cycle_range(self, start, end):
+        if (not getattr(self, "_dates_user_selected", False)
+                and self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True)):
+            return self.summary_ledger().align_recurring_start(start, end)
+        return start, end
 
     def get_report_time_range(self, moment: Optional[datetime] = None):
         """Return the current business-day window for one report execution.
@@ -2066,7 +2096,9 @@ class App(ctk.CTk):
         top.grid(row=0, column=0, padx=16, pady=(14, 6), sticky="ew")
         top.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(top, text="Live Log", font=ctk.CTkFont(size=16, weight="bold"), text_color="#e5e9f0").grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(top, text="Clear", width=70, fg_color="#4c566a", hover_color="#5e6779", command=lambda: self.clear_log_box("log_box")).grid(row=0, column=1, sticky="e")
+        ctk.CTkButton(top, text="↶ ถอนข้อความ", width=110, fg_color="#4c566a", hover_color="#5e6779",
+                      command=self.open_recall_dialog).grid(row=0, column=1, padx=(0, 8), sticky="e")
+        ctk.CTkButton(top, text="Clear", width=70, fg_color="#4c566a", hover_color="#5e6779", command=lambda: self.clear_log_box("log_box")).grid(row=0, column=2, sticky="e")
         self.log_box = ctk.CTkTextbox(log_card, fg_color="#252b36", text_color="#a3be8c", font=("Consolas", 12), corner_radius=12, height=150)
         self.log_box.grid(row=1, column=0, padx=16, pady=(0, 16), sticky="nsew")
         try:
@@ -2877,6 +2909,105 @@ class App(ctk.CTk):
                 command=lambda item=value: self.delete_policy_entry(item),
             ).grid(row=row_index, column=2, padx=(6, 12), pady=5)
 
+    def sent_messages_path(self) -> str:
+        return os.path.join(os.path.dirname(os.path.abspath(CONFIG_FILE)), sent_messages.FILE_NAME)
+
+    def open_recall_dialog(self):
+        """หน้าต่างถอนข้อความ: รายการรอบที่ส่งเข้ากลุ่ม (ใหม่สุดก่อน) กดถอนได้ทีละรอบ"""
+        old = self.__dict__.get("recall_dialog")
+        if old is not None:
+            try:
+                if old.winfo_exists():
+                    old.focus_force()
+                    return
+            except Exception:
+                pass
+        dialog = ctk.CTkToplevel(self)
+        self.recall_dialog = dialog
+        dialog.title("ถอนข้อความที่บอทส่ง")
+        dialog.geometry("760x520")
+        dialog.minsize(640, 420)
+        dialog.transient(self)
+        dialog.update_idletasks()
+        dialog_x = max(0, self.winfo_rootx() + (self.winfo_width() - 760) // 2)
+        dialog_y = max(0, self.winfo_rooty() + (self.winfo_height() - 520) // 2)
+        dialog.geometry(f"760x520+{dialog_x}+{dialog_y}")
+        dialog.grid_columnconfigure(0, weight=1)
+        dialog.grid_rowconfigure(2, weight=1)
+        ctk.CTkLabel(dialog, text="ถอนข้อความที่บอทส่ง", text_color="#eceff4",
+                     font=ctk.CTkFont(size=22, weight="bold")).grid(row=0, column=0, padx=24, pady=(20, 2), sticky="w")
+        ctk.CTkLabel(dialog, text="กดถอนแล้วจะลบทุกข้อความของรอบนั้น (การ์ด รูป ไฟล์) ออกจากกลุ่ม "
+                                  "— ถอนได้ภายในเวลาที่องค์กรตั้งไว้ใน Feishu เท่านั้น",
+                     text_color="#aeb8cc", anchor="w", justify="left", wraplength=700,
+                     ).grid(row=1, column=0, padx=24, pady=(0, 10), sticky="ew")
+        listing = ctk.CTkScrollableFrame(dialog, fg_color="#252b36", corner_radius=12)
+        listing.grid(row=2, column=0, padx=24, pady=(0, 12), sticky="nsew")
+        listing.grid_columnconfigure(1, weight=1)
+        status = ctk.CTkLabel(dialog, text="", text_color="#aeb8cc", anchor="w")
+        status.grid(row=3, column=0, padx=24, pady=(0, 4), sticky="ew")
+        ctk.CTkButton(dialog, text="ปิด", width=90, fg_color="#434c5e", hover_color="#4c566a",
+                      command=dialog.destroy).grid(row=4, column=0, padx=24, pady=(0, 18), sticky="e")
+
+        def fill():
+            for child in listing.winfo_children():
+                child.destroy()
+            rounds = sent_messages.load_rounds(self.sent_messages_path())[:30]
+            if not rounds:
+                ctk.CTkLabel(listing, text="ยังไม่มีข้อความที่บันทึกไว้ (บันทึกตั้งแต่เวอร์ชันนี้เป็นต้นไป)",
+                             text_color="#aeb8cc").grid(row=0, column=0, columnspan=4, padx=12, pady=12, sticky="w")
+                return
+            for row, entry in enumerate(rounds):
+                ctk.CTkLabel(listing, text=entry.get("sent_at", ""), text_color="#d8dee9",
+                             font=("Consolas", 13)).grid(row=row, column=0, padx=(12, 8), pady=4, sticky="w")
+                ctk.CTkLabel(listing, text=entry.get("label", ""), text_color="#eceff4",
+                             anchor="w").grid(row=row, column=1, padx=8, pady=4, sticky="ew")
+                state_text = sent_messages.round_status(entry)
+                finished = state_text == "ถอนแล้ว"
+                ctk.CTkLabel(listing, text=state_text,
+                             text_color="#7b8496" if finished else "#aeb8cc").grid(row=row, column=2, padx=8, pady=4)
+                ctk.CTkButton(listing, text="ถอน", width=64, height=28,
+                              fg_color="#4a3438", hover_color="#69434a",
+                              state="disabled" if finished else "normal",
+                              command=lambda item=entry: recall(item)).grid(row=row, column=3, padx=(8, 12), pady=4)
+
+        def recall(entry):
+            count = len(entry.get("messages") or []) - len(entry.get("recalled") or [])
+            if not messagebox.askyesno(
+                    "ยืนยันถอนข้อความ",
+                    f"ถอน {count} ข้อความของ\n{entry.get('label', '')} (ส่งเมื่อ {entry.get('sent_at', '')})\n"
+                    "ออกจากกลุ่ม Feishu ?", parent=dialog):
+                return
+            status.configure(text="กำลังถอน...", text_color="#88c0d0")
+
+            def worker():
+                try:
+                    token = self.get_tenant_access_token_for_file_send()
+                    done, errors = sent_messages.recall_round(
+                        self.sent_messages_path(), entry["id"], token, log=self.write_log)
+                    self.write_log(f"ถอนข้อความ {entry.get('label', '')}: สำเร็จ {done} ข้อความ"
+                                   + (f", ไม่สำเร็จ {len(errors)}" if errors else ""),
+                                   level="WARN" if errors else "SUCCESS")
+                    for error in errors:
+                        self.write_log(f"  ถอนไม่ได้ — {error}", level="WARN")
+                    text, color = (f"ถอนสำเร็จ {done} ข้อความ", "#a3be8c") if not errors else (
+                        f"ถอนสำเร็จ {done}, ไม่สำเร็จ {len(errors)} (เช่น เกินเวลาที่ถอนได้) ดูใน Live Log", "#ebcb8b")
+                except Exception as exc:
+                    self.write_log(f"ถอนข้อความไม่สำเร็จ — {exc}", level="ERROR")
+                    text, color = f"ถอนไม่สำเร็จ: {exc}", "#d3868e"
+
+                def done_ui():
+                    try:
+                        if dialog.winfo_exists():
+                            status.configure(text=text, text_color=color)
+                            fill()
+                    except Exception:
+                        pass
+                self.run_on_ui_thread(done_ui)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        fill()
+
     def open_policy_bulk_dialog(self):
         title = "เพิ่มรหัสละเว้น" if self.policy_mode == "exempt_codes" else "เพิ่มหัวรหัสที่บล็อก"
         dialog = ctk.CTkToplevel(self)
@@ -3316,6 +3447,36 @@ class App(ctk.CTk):
         btn_save.grid(row=0, column=3, padx=(8, 0), sticky="e")
         self.lockable_buttons += [self.btn_ds_preview, self.btn_ds_send, btn_save]
 
+        # ช่วงที่สรุปตอนกดเอง (Manual) — เลือกได้เกิน 24 ชม. เช่น 28 12:00 ถึง 29 13:00
+        # บอทหาเองว่า AutoPacking / DWS ทำงานถึงกี่โมง แล้วตัดตารางของแต่ละหน้างานตามนั้น
+        scope = ctk.CTkFrame(actions, fg_color="#3b4252", corner_radius=14)
+        scope.grid(row=1, column=0, columnspan=4, pady=(8, 0), sticky="ew")
+        ctk.CTkLabel(scope, text="ช่วงที่สรุป (กดเอง)", text_color="#eceff4",
+                     font=ctk.CTkFont(size=14, weight="bold")).grid(row=0, column=0, padx=(14, 10), pady=10)
+        hour_values = [f"{h:02d}:00" for h in range(24)]
+        self.ds_scope_start_date = DateEntry(scope, width=12, date_pattern="yyyy-mm-dd", state="readonly",
+                                             font=("Segoe UI", 11))
+        self.ds_scope_start_date.grid(row=0, column=1, padx=4)
+        self.ds_scope_start_hour = ctk.StringVar(value="13:00")
+        ctk.CTkComboBox(scope, values=hour_values, width=86, variable=self.ds_scope_start_hour,
+                        state="readonly").grid(row=0, column=2, padx=4)
+        ctk.CTkLabel(scope, text="ถึง", text_color="#d8dee9").grid(row=0, column=3, padx=6)
+        self.ds_scope_end_date = DateEntry(scope, width=12, date_pattern="yyyy-mm-dd", state="readonly",
+                                           font=("Segoe UI", 11))
+        self.ds_scope_end_date.grid(row=0, column=4, padx=4)
+        self.ds_scope_end_hour = ctk.StringVar(value="13:00")
+        ctk.CTkComboBox(scope, values=hour_values, width=86, variable=self.ds_scope_end_hour,
+                        state="readonly").grid(row=0, column=5, padx=4)
+        btn_scope_reset = ctk.CTkButton(scope, text="↺ รอบล่าสุด", width=100, fg_color="#4c566a",
+                                        hover_color="#5e6779", command=self.reset_daily_summary_scope)
+        btn_scope_reset.grid(row=0, column=6, padx=(8, 14))
+        ctk.CTkLabel(scope, text="ปุ่ม สร้างตัวอย่าง / ส่งสรุปตอนนี้ ใช้ช่วงนี้ — ดึงไฟล์ JMS ของช่วงนี้ใหม่ "
+                                 "แล้วหาเองว่า AutoPacking และ DWS ทำงานถึงกี่โมง (ส่งอัตโนมัติไม่ใช้ช่วงนี้)",
+                     text_color="#7b8496", anchor="w", justify="left", wraplength=900).grid(
+            row=1, column=0, columnspan=7, padx=14, pady=(0, 10), sticky="w")
+        self.lockable_buttons.append(btn_scope_reset)
+        self.reset_daily_summary_scope()
+
         # ---- การส่ง
         send = self.make_card(page, "#3b4252", 22)
         send.grid(row=2, column=0, padx=24, pady=8, sticky="ew")
@@ -3327,18 +3488,19 @@ class App(ctk.CTk):
         chat = self.ds_entry(send, 2, "Chat ID", "chat_id", "ว่าง = ใช้ Chat ID ในหน้า ตั้งค่า")
         self.bind_clean_entry(chat, collapse_internal_spaces=True)
         self.ds_auto_send_var = ctk.BooleanVar(value=as_bool(self.daily_summary_option("auto_send"), True))
-        auto_chk = ctk.CTkCheckBox(send, text="ส่งอัตโนมัติทุกวัน (ทำงานขณะเปิด Auto ในหน้า BOT REPORT)",
+        auto_chk = ctk.CTkCheckBox(send, text="สรุปอัตโนมัติหลังส่งยอดสุดท้ายสำเร็จ",
                                    variable=self.ds_auto_send_var, command=self.save_config)
         auto_chk.grid(row=19, column=0, columnspan=3, padx=16, pady=(8, 2), sticky="w")
         self.lockable_inputs.append(auto_chk)
-        ctk.CTkLabel(send, text="เวลาส่ง", text_color="#d8dee9", width=150, anchor="w").grid(
+        ctk.CTkLabel(send, text="ส่งหลังยอดสุดท้าย", text_color="#d8dee9", width=150, anchor="w").grid(
             row=20, column=0, padx=(16, 8), pady=6, sticky="w")
         time_row = ctk.CTkFrame(send, fg_color="transparent")
-        time_row.grid(row=20, column=1, padx=8, pady=6, sticky="w")
+        # Legacy clock variables remain for legacy configuration, but are not the new trigger.
         hour, minute = daily_summary.parse_send_time(self.daily_summary_option("send_time"))
         self.ds_send_hour_var = ctk.StringVar(value=f"{hour:02d}")
         self.ds_send_minute_var = ctk.StringVar(value=f"{minute:02d}")
-        hour_box = ctk.CTkComboBox(time_row, values=[f"{h:02d}" for h in range(24)], width=70,
+        # ส่งอัตโนมัติได้ไม่เกิน 13:00 (AUTO_SEND_CUTOFF_HOUR) — หลังจากนั้นใช้สรุปตามช่วงที่เลือกเอง
+        hour_box = ctk.CTkComboBox(time_row, values=[f"{h:02d}" for h in range(daily_summary.AUTO_SEND_CUTOFF_HOUR)], width=70,
                                    variable=self.ds_send_hour_var, state="readonly",
                                    command=lambda _value: self.save_config())
         hour_box.grid(row=0, column=0)
@@ -3347,11 +3509,11 @@ class App(ctk.CTk):
                                      variable=self.ds_send_minute_var, state="readonly",
                                      command=lambda _value: self.save_config())
         minute_box.grid(row=0, column=2)
-        self.lockable_inputs += [hour_box, minute_box]
+        hour_box.configure(state="disabled")
+        minute_box.configure(state="disabled")
         self.ds_last_sent_label = ctk.CTkLabel(send, text="", text_color="#7b8496", anchor="w")
         self.ds_last_sent_label.grid(row=20, column=2, padx=(4, 16), pady=6, sticky="w")
-        ctk.CTkLabel(send, text="ส่งวันละครั้งเมื่อถึงเวลานี้ — ตั้งนาทีให้หลังรอบรายชั่วโมงดึงไฟล์ดิบเสร็จ "
-                                "(รอบรายชั่วโมงยังรันอยู่จะรอให้เสร็จก่อน)",
+        ctk.CTkLabel(send, text="อิงวันเวลาจบใน BOT REPORT • ส่งยอดสุดท้ายสำเร็จแล้วจึงสรุปทั้งรอบ",
                      text_color="#7b8496", anchor="w").grid(row=21, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="w")
         catch_row = ctk.CTkFrame(send, fg_color="transparent")
         catch_row.grid(row=22, column=0, columnspan=3, padx=16, pady=(4, 2), sticky="w")
@@ -3477,6 +3639,15 @@ class App(ctk.CTk):
         self.ds_entry(advanced, 5, "รอบงานจบกี่โมง", "day_end_hour", "ตารางรายชั่วโมงแสดงถึงก่อนชั่วโมงนี้", width=90)
         self.ds_entry(advanced, 6, "กะ B เริ่มกี่โมง", "shift_b_start", width=90)
         ctk.CTkLabel(advanced, text="").grid(row=7, column=0, pady=2)
+        if self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True):
+            for widget in send.grid_slaves(row=22) + send.grid_slaves(row=23):
+                widget.grid_remove()
+            ctk.CTkLabel(send, text="ส่งไม่สำเร็จจะลองใหม่ได้สูงสุด 3 ครั้ง ห่างกัน 10 นาที • ถ้าไม่ทราบผลส่ง จะพักให้ตรวจประวัติข้อความก่อน",
+                         text_color="#7b8496", wraplength=850, justify="left").grid(row=22, column=0, columnspan=3, padx=16, pady=8, sticky="w")
+        else:
+            time_row.grid(row=20, column=1, padx=8, pady=6, sticky="w")
+            hour_box.configure(state="readonly")
+            minute_box.configure(state="readonly")
         return page
 
     def daily_summary_shared_paths(self) -> Dict[str, str]:
@@ -3594,32 +3765,144 @@ class App(ctk.CTk):
             return
         self.ds_status.configure(text=text, text_color=color)
 
+    def daily_summary_range(self, moment: Optional[datetime] = None):
+        """ช่วงของสรุปรายวัน (ปุ่มส่งเอง และตัวตั้งเวลา) — 2 ชั่วโมงแรกของรอบใหม่ยังหมายถึงรอบที่เพิ่งจบ
+
+        วันที่ยอดปล่อยเลยไปถึง 13:00 จะกดส่งเองหลัง 13:00 ซึ่งรอบใหม่เริ่มแล้ว
+        สรุปรอบใหม่ที่เพิ่งเริ่มไม่มีประโยชน์ จึงใช้รอบก่อนหน้าแทน (ตารางขยายถึง 12点-13点 ให้เอง)
+        """
+        start, end = self.get_report_time_range(moment or self.daily_summary_now())
+        start_dt, end_dt = datetime.fromisoformat(start), datetime.fromisoformat(end)
+        if end_dt - start_dt < timedelta(hours=daily_summary.MIN_ROUND_HOURS_BEFORE_SEND):
+            start = (start_dt - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+        return start, end
+
+    def daily_summary_now(self) -> datetime:
+        return datetime.now()
+
+    def export_raw_for_daily_summary(self, start: str, end: str) -> Optional[str]:
+        """ดึงไฟล์ JMS AUTO / JMS PDA / DWS9-11 ของช่วงสรุปใหม่ลงโฟลเดอร์ DailySummaryRaw
+
+        ไฟล์ในโฟลเดอร์ไฟล์ดิบเป็นของรอบรายชั่วโมง ซึ่งเริ่มตามเวลาเริ่มของ Auto และถูกเขียนทับ
+        ทุกชั่วโมง (เริ่ม 12:00 รอบ 12:01 ทับเป็นข้อมูลรอบใหม่ไปแล้ว / เริ่ม 14:00 ไม่มี 13-14)
+        คืนโฟลเดอร์ที่ดึงสำเร็จ หรือ None ถ้าถูกหยุด — ดึงไม่สำเร็จจะโยน error
+        """
+        folder = os.path.join(self.get_raw_export_folder() or ".", "DailySummaryRaw")
+        os.makedirs(folder, exist_ok=True)
+        generation = self.begin_run_request()
+        self.active_run_generation = generation
+        self.active_run_settings = {"raw_folder": folder, "time_range": (start, end)}
+        self.running = True
+        self.current_run_source = "daily_summary"
+        try:
+            for name, func in (("JMS AUTO", self.run_jms_auto), ("JMS PDA", self.run_jms_pda),
+                               ("DWS9-11", self.run_dws)):
+                if self.run_cancelled():
+                    return None
+                self.write_log(f"Daily summary: ดึง {name} ใหม่ ช่วง {start} -> {end}", level="START")
+                func()
+            return None if self.run_cancelled() else folder
+        finally:
+            self.running = False
+            self.active_run_settings = None
+            if self.__dict__.get("active_run_generation") == generation:
+                self.active_run_generation = None
+            self.current_run_source = None
+            self.raw_time_source = "manual"
+
+    def reset_daily_summary_scope(self):
+        """ตั้งช่วงที่สรุปเป็นรอบล่าสุด: ต้นรอบ (ตามเวลาเริ่มของ Auto) ถึงชั่วโมงถัดจากตอนนี้"""
+        try:
+            start, end = self.daily_summary_range()
+        except Exception:
+            return
+        start_dt = datetime.fromisoformat(start)
+        end_dt = (datetime.fromisoformat(end) + timedelta(minutes=59)).replace(minute=0, second=0)
+        for widget, value in ((self.ds_scope_start_date, start_dt.date()), (self.ds_scope_end_date, end_dt.date())):
+            self.set_locked_date(widget, value)
+        self.ds_scope_start_hour.set(f"{start_dt.hour:02d}:00")
+        self.ds_scope_end_hour.set(f"{end_dt.hour:02d}:00")
+
+    def daily_summary_scope(self) -> Tuple[datetime, datetime]:
+        """ช่วงที่เลือกในหน้าสรุปรายวัน — จุดจบเลยเวลาปัจจุบันจะตัดที่ตอนนี้"""
+        def read(date_widget, hour_var):
+            hour = int(str(hour_var.get() or "0").split(":")[0])
+            return datetime.combine(date_widget.get_date(), datetime.min.time()).replace(hour=hour)
+
+        start = read(self.ds_scope_start_date, self.ds_scope_start_hour)
+        end = min(read(self.ds_scope_end_date, self.ds_scope_end_hour), datetime.now().replace(microsecond=0))
+        return start, end
+
     def start_daily_summary_now(self, send: bool):
-        """ปุ่มในหน้าสรุปรายวัน: สร้างตัวอย่าง (ไม่ส่ง) หรือส่งทันที ด้วยช่วงเวลารายงานของตอนนี้"""
+        """ปุ่มในหน้าสรุปรายวัน: สร้างตัวอย่าง (ไม่ส่ง) หรือส่งทันที ตามช่วงที่เลือก (Manual)"""
         if self.running or self.ds_busy:
             self.set_daily_summary_status("มีงานอื่นกำลังรันอยู่ รอให้เสร็จก่อน", "#ebcb8b")
             return
+        try:
+            start_dt, end_dt = self.daily_summary_scope()
+        except Exception as exc:
+            self.set_daily_summary_status(f"ช่วงเวลาไม่ถูกต้อง: {exc}", "#d3868e")
+            return
+        if end_dt <= start_dt:
+            self.set_daily_summary_status("ช่วงเวลาไม่ถูกต้อง: เวลาจบต้องหลังเวลาเริ่ม (และไม่เลยเวลาปัจจุบัน)",
+                                          "#d3868e")
+            return
         self.save_all()
         settings = self.daily_summary_settings(entry_value(self.out_entry))
-        start, end = self.get_report_time_range()
+        cycle_start, cycle_end = self.get_scheduler_time_range()
+        if start_dt == cycle_start and end_dt < cycle_end:
+            for key, _ in self.DAILY_SUMMARY_SECTIONS:
+                settings.options[f"title_{key}"] = "สรุประหว่างรอบ · " + settings.opt(f"title_{key}")
+        start = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+        end = end_dt.strftime("%Y-%m-%d %H:%M:%S")
         if send:
             target = settings.chat_id or "(ไม่มี Chat ID)"
             if not messagebox.askyesno(
                     "ส่งสรุปตอนนี้",
                     f"ส่งสรุปยอดช่วง {start} -> {end}\nเข้ากลุ่ม {target} ?"):
                 return
-        self.run_daily_summary_in_background(settings, start, end, send)
+        cycle_key = f"{start_dt.isoformat()}__{end_dt.isoformat()}"
+        if not send or self.summary_ledger().read().get(cycle_key, {}).get("phase", "sent") == "sent":
+            cycle_key = None
+        self.run_daily_summary_in_background(settings, start, end, send, scope=True, cycle_key=cycle_key)
 
     def run_daily_summary_in_background(self, settings, start: str, end: str, send: bool,
-                                        mark_sent: bool = False):
+                                        mark_sent: bool = False, scope: bool = False, cycle_key=None):
         self.ds_busy = True
         self.set_daily_summary_status("กำลังส่ง..." if send else "กำลังสร้างตัวอย่าง...", "#88c0d0")
 
         def worker():
+            summary_messages = []
+            delivery_started = False
+            def note_delivery_start():
+                nonlocal delivery_started
+                delivery_started = True
             try:
-                result = daily_summary.run(
-                    settings, datetime.fromisoformat(start), datetime.fromisoformat(end),
-                    log=self.write_log, send_to_feishu=send)
+                from core.report_staging import cache_root
+                cache = cache_root(self.config)
+                if os.path.isdir(os.path.join(cache, "slots")):
+                    settings.options["runtime_autopacking_dir"] = cache
+                if as_bool(settings.opt("fresh_raw_export"), True):
+                    try:
+                        folder = self.export_raw_for_daily_summary(start, end)
+                    except Exception as exc:
+                        folder = None
+                        self.write_log(f"Daily summary: ดึงไฟล์ JMS ใหม่ไม่สำเร็จ ใช้ไฟล์ของรอบรายชั่วโมงแทน — {exc}",
+                                       level="WARN")
+                    if folder:
+                        settings.raw_dir = folder
+                with contextlib.ExitStack() as send_record:
+                    if send:
+                        summary_messages = send_record.enter_context(sent_messages.recording(
+                            self.sent_messages_path(), "daily_summary",
+                            f"สรุปรายวัน {datetime.fromisoformat(start):%Y-%m-%d}", log=self.write_log))
+                    result = daily_summary.run(
+                        settings, datetime.fromisoformat(start), datetime.fromisoformat(end),
+                        log=self.write_log, send_to_feishu=send, scope=scope, preserve_window=self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True), on_delivery_start=note_delivery_start)
+                if cycle_key:
+                    if not summary_messages:
+                        raise RuntimeError("Summary completed without a confirmed message")
+                    self.summary_ledger().finish(cycle_key, True)
                 if mark_sent:
                     self.mark_daily_summary_sent(datetime.fromisoformat(start).date().isoformat())
                 folder = os.path.dirname(result["sections"][0].image or "") if result["sections"] else ""
@@ -3635,6 +3918,8 @@ class App(ctk.CTk):
                     elif folder and os.path.isdir(folder):
                         os.startfile(folder)
             except Exception as exc:
+                if cycle_key:
+                    self.summary_ledger().finish(cycle_key, False, uncertain=delivery_started)
                 self.write_log(f"Daily summary failed — {exc}", level="ERROR")
                 self.set_daily_summary_status(f"ไม่สำเร็จ: {exc}", "#d3868e")
             finally:
@@ -3918,6 +4203,16 @@ class App(ctk.CTk):
         except Exception:
             roll = 13
         now = datetime.now()
+        cycle = (getattr(self, "auto_run_settings", None) or {}).get("cycle_range")
+        if getattr(self, "scheduler_running", False) and cycle and now <= datetime.fromisoformat(cycle[1]) + timedelta(minutes=self.scheduler_run_minute + 1):
+            return datetime.fromisoformat(cycle[0]).date(), datetime.fromisoformat(cycle[1]).date()
+        if self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True):
+            try:
+                recovered = self.summary_ledger().recover_cycle(now)
+                if recovered:
+                    return recovered
+            except (OSError, ValueError):
+                pass
         start = now.date() if now.hour >= roll else now.date() - timedelta(days=1)
         return start, start + timedelta(days=1)
 
@@ -3979,7 +4274,9 @@ class App(ctk.CTk):
     def check_shift_date_roll(self):
         """เช็คทุกนาทีว่าข้ามจุดตัดวันหรือยัง — โปรแกรมเปิดค้างข้ามวันได้"""
         try:
-            self.apply_shift_dates(reason="ข้ามรอบงานใหม่")
+            cycle = (getattr(self, "auto_run_settings", None) or {}).get("cycle_range")
+            if not cycle or datetime.now() > datetime.fromisoformat(cycle[1]) + timedelta(minutes=self.scheduler_run_minute + 1):
+                self.apply_shift_dates(reason="ข้ามรอบงานใหม่")
         except Exception:
             pass
         self.after(60000, self.check_shift_date_roll)
@@ -5048,8 +5345,8 @@ class App(ctk.CTk):
             self.raw_time_source = "manual"
             if is_current:
                 self.current_run_source = None
-            if is_current and not self.scheduler_running:
-                self.set_ui_running(False)
+            if is_current:
+                self.restore_ui_after_run()
             self.schedule_pipeline_reset(run_generation)
 
     def warn_if_range_misses_dashboard(self, steps):
@@ -5829,13 +6126,6 @@ class App(ctk.CTk):
             "REALTIME"
         )
 
-        file_resp = session.get(
-            download_url,
-            timeout=(30, 300)
-        )
-
-        file_resp.raise_for_status()
-
         raw_dir = self.get_raw_export_folder()
 
         os.makedirs(
@@ -5851,8 +6141,35 @@ class App(ctk.CTk):
         temp_path = self._download_temp_path(save_path)
         self._remove_partial_download(temp_path)
         try:
-            with open(temp_path, "wb") as f:
-                f.write(file_resp.content)
+            # stream ลงดิสก์ + log ทุก ~15 วินาที: ถ้าค้างจะเห็นว่า JMS ส่งมากี่ MB แล้ว
+            # (0 MB นาน ๆ = ฝั่ง JMS ไม่ส่งไฟล์) กด Stop Run หยุดได้ และตัดจบเมื่อเกินเวลา
+            written = 0
+            started = time.monotonic()
+            last_note = started
+            with session.get(download_url, timeout=(30, REALTIME_DOWNLOAD_STALL_SECONDS),
+                             stream=True) as file_resp:
+                file_resp.raise_for_status()
+                total = int(file_resp.headers.get("Content-Length") or 0)
+                with open(temp_path, "wb") as f:
+                    for chunk in file_resp.iter_content(chunk_size=262144):
+                        if self.run_cancelled():
+                            return None
+                        if chunk:
+                            f.write(chunk)
+                            written += len(chunk)
+                        self.mark_activity()
+                        now_t = time.monotonic()
+                        if now_t - started > REALTIME_DOWNLOAD_MAX_SECONDS:
+                            raise Exception(
+                                f"Realtime download took over {REALTIME_DOWNLOAD_MAX_SECONDS // 60} min "
+                                f"({written / 1048576:.1f} MB) — JMS ส่งไฟล์ช้าผิดปกติ ลองใหม่อีกครั้ง")
+                        if now_t - last_note >= 15:
+                            last_note = now_t
+                            size = f" / {total / 1048576:.1f}" if total else ""
+                            self.log(f"Downloading... {written / 1048576:.1f}{size} MB "
+                                     f"({int(now_t - started)}s)", "REALTIME")
+            if written < 1000:
+                raise Exception("Realtime download is empty — JMS ไม่ได้ส่งไฟล์มา")
             self._validate_xlsx_download(temp_path)
             if self.run_cancelled():
                 return None
@@ -6365,9 +6682,21 @@ class App(ctk.CTk):
             # execution time. Manual DATA EXPORT keeps its explicitly selected
             # range from prepare_dws_jms_settings().
             run_settings = dict(run_settings)
+            report_window = None
             if self.current_run_source in ("auto", "manual"):
-                run_settings["time_range"] = self.get_report_time_range()
+                from core.report_window import ReportWindow
+                cycle = run_settings.get("cycle_range")
+                if self.current_run_source == "auto":
+                    cycle = tuple(value.isoformat() for value in self.get_scheduler_time_range())
+                if cycle:
+                    start, end = map(datetime.fromisoformat, cycle)
+                    report_window = ReportWindow.capture(start, end, datetime.now())
+                    run_settings["time_range"] = (start.isoformat(sep=" "), report_window.cutoff.isoformat(sep=" "))
+                else:
+                    run_settings["time_range"] = self.get_report_time_range()
             self.active_run_settings = run_settings
+            if report_window is not None and self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True):
+                self.summary_ledger().remember_cycle(report_window, self.config.get("DAILY_SUMMARY", "chat_id", fallback="").strip() or run_settings.get("chat_id", ""))
             if run_generation is None:
                 run_generation = self.begin_run_request()
             else:
@@ -6440,7 +6769,7 @@ class App(ctk.CTk):
             if wanted("excel"):
                 pipeline_error_key = "excel"
                 self.set_pipeline_state("excel", "run")
-                run_create(out, log=self.write_log, is_running=lambda: self.running and self.is_run_generation_active(run_generation))
+                run_create(out, log=self.write_log, is_running=lambda: self.running and self.is_run_generation_active(run_generation), report_window=report_window)
                 if not self.is_run_generation_active(run_generation):
                     return
                 self.set_pipeline_state("excel", "ok")
@@ -6474,6 +6803,12 @@ class App(ctk.CTk):
                 pipeline_error_key = "feishu"
                 self.set_pipeline_state("feishu", "run")
                 self.set_progress(76)
+                # จำ message_id ทุกข้อความของรอบนี้ไว้ถอนทีหลัง (ปุ่ม ถอนข้อความ ในหน้า BOT REPORT)
+                send_record = contextlib.ExitStack()
+                hourly_messages = send_record.enter_context(sent_messages.recording(
+                    self.sent_messages_path(), "hourly",
+                    f"รายงาน{'อัตโนมัติ' if self.mode == 'auto' else 'รันเอง'} {datetime.now():%H:%M}",
+                    log=self.write_log))
                 try:
                     Botmessage.send_ui = lambda stage: self.set_status(stage.capitalize(), "#88c0d0", "#3b4252")
                     still_running = lambda: self.running and self.is_run_generation_active(run_generation)
@@ -6540,9 +6875,16 @@ class App(ctk.CTk):
                     pipeline_error_key = None
                 finally:
                     Botmessage.send_ui = None
+                    send_record.close()
             else:
                 self.set_pipeline_state("feishu", "skip")
 
+            if (report_window is not None and report_window.cutoff == report_window.end
+                    and self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True)
+                    and wanted("feishu") and wanted("excel") and not pipeline_had_warning
+                    and hourly_messages and still_running()):
+                self.summary_ledger().hourly_delivered(report_window, self.config.get("DAILY_SUMMARY", "chat_id", fallback="").strip() or run_settings.get("chat_id", ""))
+                self.write_log("Final hourly delivery complete; cycle summary queued", level="SUCCESS")
             self.set_progress(100)
             if pipeline_had_warning:
                 self.write_log(
@@ -6574,12 +6916,12 @@ class App(ctk.CTk):
             if is_current:
                 self.current_run_source = None
 
-            if is_current and not self.scheduler_running:
-                self.set_ui_running(False)
+            if is_current:
+                self.restore_ui_after_run()
 
             self.schedule_pipeline_reset(run_generation)
 
-    def daily_summary_tick(self):
+    def daily_summary_tick_legacy(self):
         """ตัวตั้งเวลาของสรุปรายวัน — เช็กทุก 30 วินาที ส่งวันละครั้งเมื่อถึงเวลาที่ตั้ง
 
         ทำงานเฉพาะตอนเปิด Auto และติ๊ก "ส่งอัตโนมัติทุกวัน" ไว้ ถ้ารอบรายชั่วโมงกำลังรัน
@@ -6589,13 +6931,14 @@ class App(ctk.CTk):
             if (getattr(self, "scheduler_running", False)
                     and as_bool(self.daily_summary_option("auto_send"), True)
                     and not self.running and not getattr(self, "ds_busy", False)):
-                start, end = self.get_report_time_range()
+                # ช่วง 2 ชั่วโมงแรกของรอบใหม่ = ยังเป็นเวลาส่งของรอบที่เพิ่งจบ (เช่นเริ่มรอบ 12:00 ส่ง 12:20)
+                start, end = self.daily_summary_range()
                 late_limit = daily_summary.late_limit_minutes(
                     self.daily_summary_option("send_catch_up"), self.daily_summary_option("send_late_minutes"))
                 due, reason = daily_summary.due_to_send(
                     datetime.fromisoformat(start), datetime.fromisoformat(end),
                     self.daily_summary_option("send_time"), self.daily_summary_option("last_sent_date"),
-                    max_late_minutes=late_limit)
+                    max_late_minutes=late_limit, cutoff_hour=daily_summary.AUTO_SEND_CUTOFF_HOUR)
                 business_date = datetime.fromisoformat(start).date().isoformat()
                 if reason.startswith(daily_summary.LATE_REASON):
                     # แจ้งครั้งเดียวต่อรอบงาน ไม่ต้องขึ้นซ้ำทุก 30 วินาที
@@ -6623,6 +6966,36 @@ class App(ctk.CTk):
         finally:
             self.after(30000, self.daily_summary_tick)
 
+    def summary_ledger(self):
+        from core.report_delivery import DeliveryLedger
+        return DeliveryLedger(os.path.join(os.path.dirname(os.path.abspath(CONFIG_FILE)), "report_delivery.json"))
+
+    def daily_summary_tick(self):
+        if not self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True):
+            return self.daily_summary_tick_legacy()
+        try:
+            if (as_bool(self.daily_summary_option("auto_send"), True)
+                    and not self.running and not getattr(self, "ds_busy", False)):
+                ledger = self.summary_ledger()
+                blocked = [item for item in ledger.read().values() if item["phase"] in ("sending", "uncertain") or item["phase"] == "ready" and item["attempts"] >= 3]
+                if blocked:
+                    self.set_daily_summary_status("มีสรุปค้าง/ไม่ทราบผลส่ง ตรวจประวัติข้อความก่อนกดสรุปเอง", "#ebcb8b")
+                pending = ledger.claim(self.daily_summary_now())
+                if pending:
+                    key, item = pending
+                    settings = self.daily_summary_settings(self.daily_summary_option_path("output_dir"))
+                    settings.chat_id = item["destination"]
+                    try:
+                        self.run_daily_summary_in_background(settings, item["start"], item["end"],
+                                                             send=True, scope=True, cycle_key=key)
+                    except Exception:
+                        self.summary_ledger().finish(key, False)
+                        raise
+        except Exception as exc:
+            self.write_log(f"Daily summary scheduler error — {exc}", level="ERROR")
+        finally:
+            self.after(30000, self.daily_summary_tick)
+
     def daily_summary_option_path(self, key: str) -> str:
         path_cfg = self.config["PATH"] if "PATH" in self.config else {}
         return clean_input_value(path_cfg.get(key, ""))
@@ -6635,6 +7008,18 @@ class App(ctk.CTk):
         save_config(self.config)
         if "ds_last_sent_label" in self.__dict__:
             self.run_on_ui_thread(self.refresh_daily_summary_last_sent)
+
+    def restore_ui_after_run(self):
+        """คืนปุ่มหลังรอบรันจบ — กด Run Now ระหว่างเปิด Auto ต้องกลับเป็นโหมด Auto
+
+        Run Now ตั้ง mode = manual (โชว์ปุ่ม Stop Run) ถ้า Auto ยังเปิดอยู่ตอนรันจบ
+        ต้องคืน mode = auto และวาดปุ่มใหม่ (Stop Auto + Run Now) ไม่งั้นค้างปุ่ม Stop Run
+        """
+        if self.scheduler_running:
+            self.mode = "auto"
+            self.set_ui_running(True)
+        else:
+            self.set_ui_running(False)
 
     def run_once(self):
         if self.running:
@@ -6709,7 +7094,7 @@ class App(ctk.CTk):
                     and self.last_run_minute != now_key
                     and self.scheduler_slot_in_range(now)
                 )
-                if now > range_end and not due_in_final_minute:
+                if now > self.scheduler_last_run_at(range_end) and not due_in_final_minute:
                     if self.scheduler_follows_shift_dates():
                         # วันที่ตั้งตามรอบงานอัตโนมัติ: ไม่หยุด รอให้วันที่เลื่อนเป็นรอบใหม่
                         # (date_roll_hour, ค่าเริ่มต้น 13:00) แล้วรันต่อเองตามเวลาเริ่ม
@@ -6794,6 +7179,11 @@ class App(ctk.CTk):
             self.cancel_pending_runs()
             self.stop_requested = False
             self.set_ui_running(False)
+        else:
+            # หยุด Auto ระหว่างรอบกำลังรัน: เดิมปุ่มช่องนี้หายไปจนรอบจบ
+            # รอบที่เหลือถือเป็นรอบรันเอง — วาดปุ่มใหม่ (Start Auto + Stop Run ไว้หยุดรอบนี้)
+            self.mode = "manual"
+            self.set_ui_running(True)
 
         self.write_log("Auto scheduler stopped", level="SUCCESS")
         self.log_scheduler_event("Auto stopped by user (กดปุ่มหยุด Auto)")
@@ -7057,7 +7447,22 @@ class App(ctk.CTk):
             return
         self.switch_plan(target_plan)
 
-    def start_jms_placeholder(self):
+    def bots_autostart(self):
+        """START BOT ของ BOT DWS PLAN (Feishu bot) และ BOT JMS USER ให้เองหลังเปิดโปรแกรม"""
+        feishu = self.config["FEISHU"] if "FEISHU" in self.config else {}
+        try:
+            if as_bool(feishu.get("bot_autostart", "true"), True) and not self.bot_running:
+                self.start_feishu_bot()
+                self.add_log("[SYSTEM] Feishu Bot auto-started on launch")
+        except Exception as e:
+            self.add_log(f"[ERROR] Feishu Bot auto-start failed -> {e}")
+        try:
+            if as_bool(feishu.get("jms_autostart", "true"), True) and not self.jms_running:
+                self.start_jms_placeholder(auto=True)
+        except Exception as e:
+            self.jms_log(f"[ERROR] JMS Bot auto-start failed -> {e}")
+
+    def start_jms_placeholder(self, auto: bool = False):
         self.save_config()
         if not self.get_jms_auth_token():
             self.jms_running = False
@@ -7068,7 +7473,8 @@ class App(ctk.CTk):
                 "JMS_TOKEN ยังไม่ได้ตั้งค่า",
                 "BOT JMS USER ไม่สามารถเริ่มทำงานได้ กรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า"
             )
-            messagebox.showwarning("JMS_TOKEN", "ยังไม่ได้ตั้งค่า JMS_TOKEN\nกรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า")
+            if not auto:  # ตอนเปิดโปรแกรมไม่เด้งกล่องค้างหน้าจอ แจ้งใน log/IT alert แทน
+                messagebox.showwarning("JMS_TOKEN", "ยังไม่ได้ตั้งค่า JMS_TOKEN\nกรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า")
             return
         if not self.bot_running:
             self.start_feishu_bot()

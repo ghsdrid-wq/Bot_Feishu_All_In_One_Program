@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.0 (test build)
+
+- Generate dated hourly columns through the selected cycle end, including 12-13 and 13-14, with matching totals, rates, shift totals and image ranges. Preserve threshold/error-count rules; include completed hours only and exclude events exactly at cycle end.
+- Preserve Auto snapshots by calendar hour across reset; missing uncaptured hours fail explicitly. Identify missing/out-of-window DWS snapshots in headings/evidence.
+- Queue automatic summaries after confirmed final hourly delivery, persist cycle/send state across restarts, hold ambiguous sends for manual review and retain manual controls. Legacy Excel mode retains the old timer. Avoid recounting extended hours in the next automatic cycle.
+- Verified 135 tests, real Tk settings, 2,742 baseline numeric cells and native Excel opening. Live share/reset/image/delivery acceptance remains pending.
+
 ## 2.2.0 (in development)
 
 - Calculate accepted AutoPacking and DWS/PDA report templates in Python and write separate numeric XLSX outputs without Power Query or Excel formula recalculation.
@@ -10,6 +17,21 @@
 
 ## 2.1.13
 
+- Daily Summary has two modes. Automatic sends keep the round from Auto's start hour and never send or catch up after 13:00 (`AUTO_SEND_CUTOFF_HOUR`), and the send-time hour list stops at 12. A manual send uses the range picked on the summary page ("ช่วงที่สรุป (กดเอง)": start date + hour to end date + hour). The range may exceed 24 hours, for example 2026-10-28 12:00 to 2026-10-29 13:00, giving 12点-13点 twice. The bot detects when AutoPacking and DWS actually worked and cuts each site's hourly tables to those hours (AutoPacking + PDA 人工建包 by AutoPacking totals, DWS + PDA unloading by the DWS 合计 row).
+- AutoPacking hourly files are matched to an hour only if they were written near that hour's end. A file left in the share root from a previous day (for example `13.xlsx` from 10/27 still there on 10/28) is no longer counted as today's. The date folder for each hour comes from the file's write time, so ranges spanning several days read the right folders.
+- Before each summary send or preview, JMS AUTO, JMS PDA and DWS9-11 are downloaded again for exactly the summary round into `<raw folder>/DailySummaryRaw` (`fresh_raw_export`, default true). The hourly files follow Auto's range and are overwritten every hour (a 12:00 start had already replaced them with the new round by 12:20). If the download fails, the summary falls back to the hourly files and logs a warning.
+- Fixed a duplicate, empty Daily Summary after changing the start hour to 12:00 with a 12:20 send time. 12:20 on the same day counted as the new round's send time, so on 2026-10-27 at 12:24 the bot sent a summary of a round that had started 24 minutes earlier. A round's send time is now at least 2 hours after its start, and in the first 2 hours of a new round the timer looks at the round that just ended (the same rule as the send-now button), so a 12:00 start with a 12:20 send works.
+- Added message recall. Every message sent during a report round (hourly card, images, Excel files, Dashboard card, Daily Summary post and file) is saved as one round in `sent_messages.json` next to `config.ini`, keeping the last 100 rounds. The "↶ ถอนข้อความ" button beside Live Log lists recent rounds and recalls a whole round after confirmation. Feishu only allows recalling the bot's own messages within the organization's recall time limit; failures (such as an expired limit) are listed in Live Log, and pressing recall again retries only the messages still in the group.
+- Pressing Stop Auto during a running cycle no longer leaves an empty button slot. The buttons are redrawn as Start Auto + Stop Run, and the rest of that cycle can be stopped like a manual run.
+- Daily Summary titles follow each site's own working hours. AutoPacking, PDA 人工建包 and red zip bags still use the AutoPacking totals. The DWS and PDA unloading titles now use the DWS table's hourly 合计 (DWS machines + DWS PDA) with the same rules: populated hours from 100, trailing hours totalling at most 1000 trimmed. On 2026-10-22 the DWS site ended at 9.00 while AutoPacking ran until 12.00.
+- Fixed the BOT REPORT buttons after Run Now while Auto is on. When the manual run finished, Stop Run stayed in place of Run Now because the mode stayed "manual". `restore_ui_after_run` now returns to Auto mode (Stop Auto + Run Now).
+- BOT DWS PLAN (Feishu bot) and BOT JMS USER start automatically 2 seconds after launch (`[FEISHU] bot_autostart` / `jms_autostart`, default true). A missing JMS_TOKEN at launch is logged and sent as an IT alert instead of opening a dialog.
+- The Realtime DB download now streams to disk instead of reading the whole file in one call. It logs progress (MB and seconds) every 15 seconds and can be stopped with Stop Run. It fails after 120 seconds with no data, or after 15 minutes in total. Before this, a slow JMS download sat silently on "Downloading JMS realtime file...".
+- Auto's first run is the hour after the start hour. A 15:00 start with run minute 1 now runs first at 16:01. The 15:01 run had only one minute of the new round, so it posted a `15:00 - 15:00` card with empty JMS tables and stale AutoPacking numbers.
+- Daily Summary accepts the waybill header `运单编号` used by JMS Chinese exports since 2026-10-23. Before this, the PDA 人工建包, red zip bag, PDA unloading and DWS tables failed with "ไม่พบคอลัมน์ 运单号".
+- Auto now runs the end hour at its run minute: an end of 12:00 with run minute 5 makes 12:05 the final hourly run. Before this, 12:05 counted as past the end, so the last report went out at 11:05.
+- Daily Summary tables extend to 12点-13点 (24 hourly columns) when the round's report time passes 13:00, for days when releases run until 13:00. The 12:20 automatic send still ends at 11点-12点. The extra hour is read from the next date folder's `13.xlsx`, which the AutoPacking export writes at 13:00 exactly.
+- In the first two hours of a new round, the send-now and preview buttons summarise the round that just finished, so a manual press after 13:00 sends the previous day's summary.
 - Daily Summary header matching falls back to ignoring spaces and the word "ที่" when no listed header matches exactly, and a missing-column error now lists the headers found in the file, so the next JMS rename shows up in the Feishu report. Fixes the 2026-10-22 report where DWSXAUTOPDA.xlsx and DWSPDA.xlsx came with the renamed Thai headers (`เวลาสแกน`, `ผู้สแกน`) on a bot still running 2.1.11.
 
 ## 2.1.12

@@ -5,6 +5,16 @@
 
 ## ภาพรวม
 
+### Extended report cycles (2.3.0)
+
+- `core/report_window.py`: immutable cycle start/end/cutoff and full datetime hourly slots, up to seven days. The program includes completed slots only and excludes records at the final end boundary.
+- `core/report_layout.py`: copies accepted report styles, maps column references and summary ranges, fills hourly raw counts using dated slots, extends columns beyond noon and adjusts merged headings/widths. The original threshold and special error-count rules stay in the audited formula evaluator. Realtime QC remains a snapshot.
+- `bot_main.build_run_settings_snapshot`/`run_pipeline` pass `cycle_range` through `Createphoto.run_create(report_window=...)` to `report_workbooks.prepare/calculate`. Generated layout evidence supplies exact mapped image bounds; old COM column trimming is bypassed for dynamic sheets. Explicit manual date ranges stay intact; automatic recurring start is aligned after prior final delivery to prevent overlap.
+- `core/report_staging.py` keeps immutable Auto calendar-hour snapshots under `[REPORT_CALCULATION] auto_cache` or `out/source_cache/AutoPacking/slots/YYYY-MM-DD/HH.xlsx`. It validates stable copies/ZIP integrity and source mtime plausibility. Dated/current exporter paths are searched; missing uncaptured hours fail. Timestamp plausibility is not proof of source content freshness.
+- `core/report_delivery.py`: ignored `report_delivery.json` stores cycle/destination/phase/attempts. A confirmed final hourly send releases a summary job; the timer claims it atomically, including after a restart. Preparation retries are bounded; ambiguous sends are held for operator review. The old fixed-clock timer remains in `daily_summary_tick_legacy` for legacy calculation mode.
+- `daily_summary.run(preserve_window=True)` keeps the exact selected columns/titles, including zero extra hours; its internal runtime Auto cache override is independent of the custom-path checkbox. An `on_delivery_start` hook separates retryable preparation from uncertain network delivery.
+- `tools/test_extended_report.py` covers extended/repeated slots, boundaries, cache/recovery, overlap and summary ordering. `tools/verify_extended_report.py --native-excel` verifies synthetic baseline parity and generated file opening. No live sending occurs in these checks.
+
 ### Python-calculated report workbooks (2.2.0)
 - `report_workbooks.py` recognizes the accepted AutoPacking and DWS/PDA templates, builds a lightweight snapshot without cached raw rows or unused shared strings, evaluates every report formula in Python, and atomically writes a separate values-only XLSX under `<output_dir>/calculated_workbooks/`. Original template files are never overwritten.
 - `core/report_formulas.py` implements only the audited template formula vocabulary with lazy IF/IFERROR, bounded references, exact-match VLOOKUP and explicit failure for unknown formulas. COUNTIF/COUNTIFS over raw sources use compact counters instead of materializing Excel columns.
@@ -78,7 +88,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - ตารางกระสอบซิปแดงเป็นแถวยาวแบบ manual แต่เติมพื้นขาวด้านขวาให้รูปไม่สูงเกิน 1.2 เท่าของความกว้าง เพราะ Feishu ตัดท้ายรูปที่สูงยาวใน post
 - รูป Excel ต้องสร้างในรอบเดียวกันหรือไม่เก่ากว่า `image_max_age_minutes`; ส่วนที่ขาดจะขึ้นในข้อความว่าไม่มีข้อมูลและสถานะเป็น WARNING
 - ไฟล์ดิบ: ชีตตาราง `TABLE_SHEETS` (AUTO, DWS = DWSREALTIME, DWS+DWSPDA = DWSREALTIME + ตารางลงรถ PDA, AUTOPDA, กระสอบ, ERROR — เขียนจาก grid เดียวกับรูปด้วย `write_grid_sheet`) แล้วตามด้วย `DATA_SHEETS` ครบทุกชีต ชีตที่ไม่มีข้อมูลของรอบนี้ปล่อยว่าง (`window_file_sheet` กรอง DWS1-8/DWS9-11 ตามรอบ)
-- `backup_dir` (หน้าเว็บเรียก "โฟลเดอร์บันทึกไฟล์ Excel"): ทุกครั้งที่ส่งจะ `save_excel_copy` บันทึกไฟล์ Excel ที่ใช้ส่งลงโฟลเดอร์นี้ตรง ๆ ก่อนส่ง (ไม่มีโฟลเดอร์ย่อย ไม่มีรูป) ชีตตารางมีสีแท็บ `TABLE_TAB_COLOR`
+- ส่งอัตโนมัติใช้รอบตามเวลาเริ่มของ Auto และไม่ส่ง/ไม่ส่งย้อนหลังหลัง 13:00 (`AUTO_SEND_CUTOFF_HOUR`), กดเองใช้ช่วงที่เลือกในหน้า (`daily_summary_scope` -> `run(scope=True)` -> `scope_window` เกิน 24 ชม. ได้ และ `build(trim_to_activity=True)` ตัดตารางตามชั่วโมงที่ทำงานจริง `Window.active_span` / `Window.sub`), `fresh_raw_export` (true = ดึง JMS AUTO/PDA/DWS9-11 ของช่วงสรุปใหม่ลง `DailySummaryRaw` ก่อนสรุป — `export_raw_for_daily_summary`), `backup_dir` (หน้าเว็บเรียก "โฟลเดอร์บันทึกไฟล์ Excel"): ทุกครั้งที่ส่งจะ `save_excel_copy` บันทึกไฟล์ Excel ที่ใช้ส่งลงโฟลเดอร์นี้ตรง ๆ ก่อนส่ง (ไม่มีโฟลเดอร์ย่อย ไม่มีรูป) ชีตตารางมีสีแท็บ `TABLE_TAB_COLOR`
 - ทดสอบนอกโปรแกรม: `python daily_summary.py --start "2026-10-18 15:00" --end "2026-10-19 10:00" --no-send`
 
 ### Scheduler / runtime
@@ -106,8 +116,9 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 
 ## Config (`config.ini`)
 - `[PATH]`: `output_dir`
-- `[FEISHU]`: `app_id`, `app_secret`, `chat_id`, `verify_token`, `bot_port` (7000), `ngrok_url`, `auth_token` (JMS), `bot_name` (default `BOT_JMSKKN`)
-- `[TIME]`: `run_minute` (5), `start_hour` (15), `end_hour` (12)
+- `[FEISHU]`: `app_id`, `app_secret`, `chat_id`, `verify_token`, `bot_port` (7000), `ngrok_url`, `auth_token` (JMS), `bot_name` (default `BOT_JMSKKN`), `bot_autostart` / `jms_autostart` (true = START BOT ของ BOT DWS PLAN / BOT JMS USER เองหลังเปิดโปรแกรม 2 วินาที, `bots_autostart`)
+- `sent_messages.json` (ข้าง `config.ini`, สร้างเอง): ข้อความที่บอทส่งเป็นรอบ ๆ ไว้ถอน — `feishu_client.capture_sends()` เก็บ message_id, `sent_messages.recording()` / `recall_round()`, ปุ่ม "↶ ถอนข้อความ" ข้าง Live Log (`open_recall_dialog`)
+- `[TIME]`: `run_minute` (5), `start_hour` (15), `end_hour` (12) — รอบแรกคือชั่วโมงหลัง `start_hour` (เริ่ม 15:00 -> 16:0x, `scheduler_first_run_at`) รอบสุดท้ายคือ `end_hour` ที่นาที `run_minute` (เช่น 12:05, `scheduler_last_run_at`)
 - `[DWS_JMS]`: `dws_url`, `dws_token`, `jms_token`, ชื่อไฟล์ export (`name_dws`, `name_auto`, `name_dwspda`, `name_realtime_db`), ช่วงเวลา (`start_hour`, `end_hour`; `start_date` / `end_date` ไม่บันทึกแล้ว — วันที่ตามรอบงานเสมอ เลือกเองได้เฉพาะตอนโปรแกรมเปิดอยู่), `raw_path`, `download_size`, flags `enabled` / `send_*_file`
 - `[DWS1]..[DWS9-11]`: `ip`, `port` ของเครื่อง agent (default subnet `10.30.32.x`, พอร์ต 4000/4001)
 - `[WORKBOOKS]` / `[EXPORTS]`: `items` — รายการไฟล์ Excel/ชีต ที่จัดการในหน้า Workbooks

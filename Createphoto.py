@@ -1001,7 +1001,7 @@ def _safe_delete(path: str) -> None:
         pass
 
 
-def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = None, is_running: Optional[RunFunc] = None) -> None:
+def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = None, is_running: Optional[RunFunc] = None, report_window=None) -> None:
     """Workbook Manager version compatible with bot_main_war_room_v7.
 
     Important fix:
@@ -1037,8 +1037,8 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
     import report_workbooks
     calculated_paths = report_workbooks.prepare(
         config, workbooks, items, out_dir,
-        date.fromisoformat(get_business_date(start_hour)), datetime.now(),
-        keep_running=keep_running, log=write)
+        report_window.start.date() if report_window else date.fromisoformat(get_business_date(start_hour)), datetime.now(),
+        keep_running=keep_running, log=write, window=report_window)
     if not keep_running():
         return
     pythoncom.CoInitialize()
@@ -1278,7 +1278,11 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                     continue
                 active_group.append(item)
 
-            delete_sheets = [x.sheet for x in active_group if x.delete_by_start]
+            dynamic_layouts = {}
+            if program_calculated and report_window is not None:
+                with open(workbook_path + ".evidence.json", encoding="utf-8") as handle:
+                    dynamic_layouts = json.load(handle).get("layouts", {})
+            delete_sheets = [x.sheet for x in active_group if x.delete_by_start and x.sheet not in dynamic_layouts]
             deleted_cols = delete_columns_by_start(wb, start_hour, delete_sheets, log=write) if delete_sheets else {}
             if delete_sheets:
                 validation_ranges = {
@@ -1309,6 +1313,13 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                 if not item.delete_by_start:
                     write(f"[SKIP DELETE] {item.name}")
 
+                if item.sheet in dynamic_layouts:
+                    from openpyxl.utils.cell import get_column_letter, range_boundaries
+                    left, top, right, bottom = range_boundaries(item.cell_range)
+                    column_map = dynamic_layouts[item.sheet]["column_map"]
+                    left = column_map.get(str(left), left)
+                    right = column_map.get(str(right), right)
+                    rng = f"{get_column_letter(left)}{top}:{get_column_letter(right)}{bottom}"
                 export_range_as_image(wb, item, rng)
 
             time.sleep(0.5)
