@@ -217,10 +217,14 @@ class Inputs:
         if key in {f"DWS{i}" for i in range(1, 9)} and self.paths.get(key):
             # เครื่อง DWS ปิด / แชร์ไฟล์เข้าไม่ได้ — ข้ามเครื่องนั้นไปเฉย ๆ (ไม่แตะหัวตาราง)
             # ไม่ให้เครื่องเดียวทำให้รายงานทั้งรอบหยุดส่ง; รอบหน้าเครื่องกลับมาก็อ่านตามปกติ
+            reason = None
             try:
                 Path(self.paths[key]).stat()
             except OSError as error:
-                self.log(f"[SOURCE] {key}: unreachable ({self.paths[key]}: {error}); skipped")
+                reason = error.strerror or str(error)
+            if reason is not None:
+                # log นอก except — ไม่งั้น runtime log บันทึกเป็น ERROR พร้อม traceback
+                self.log(f"[SOURCE] {key}: unreachable ({self.paths[key]}: {reason}); skipped")
                 self.counters[key] = Counter()
                 return self.counters[key]
         rows = self.read(key)
