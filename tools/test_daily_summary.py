@@ -16,6 +16,22 @@ sys.path.insert(0, str(ROOT))
 
 import daily_summary as ds  # noqa: E402
 
+_network_guards: list = []
+
+
+def setUpModule() -> None:
+    # เทสต์ห้ามต่อ MySQL / API จริง (ค่าเริ่มต้นของ DWS9-11, WCS, DWS1-8 ชี้ไปเครื่องจริงในโรงงาน)
+    # เทสต์ที่ต้องการผลจาก DB/API จะ mock ทับเองข้างใน
+    for target in ("pymysql.connect", "requests.get"):
+        guard = mock.patch(target, side_effect=OSError(f"{target} is blocked in tests"))
+        guard.start()
+        _network_guards.append(guard)
+
+
+def tearDownModule() -> None:
+    while _network_guards:
+        _network_guards.pop().stop()
+
 
 def _scan_file(path: str, rows: list) -> str:
     wb = openpyxl.Workbook()
@@ -370,7 +386,122 @@ class WcsDatabaseTests(unittest.TestCase):
                 db.assert_not_called()
 
 
+class DwsApiTests(unittest.TestCase):
+    def _response(self, payload):
+        response = mock.MagicMock(status_code=200)
+        response.json.return_value = payload
+        return response
+
+    def test_hourly_rows_map_to_window_slots(self) -> None:
+        window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 4, 13))
+        payload = {"success": True, "rows": [
+            {"date": "2026-11-03", "hour": 14, "qty": 572},
+            {"date": "2026-11-04", "hour": 12, "qty": 4},
+        ]}
+        with mock.patch("requests.get", return_value=self._response(payload)) as get:
+            counts = ds.dws_hourly_from_api("http://10.30.32.33:4000", window)
+        self.assertEqual(get.call_args.kwargs["params"],
+                         {"start": "2026-11-03 13:00:00", "end": "2026-11-04 13:00:00"})
+        self.assertEqual(counts[14], 572)
+        self.assertEqual(counts[12], 4)
+        self.assertEqual(sum(counts.values()), 576)
+
+    def test_failed_api_falls_back_to_realtime_file(self) -> None:
+        window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 3, 16))
+        with tempfile.TemporaryDirectory() as tmp:
+            config = configparser.RawConfigParser()
+            config["PATH"] = {"output_dir": tmp, "autopacking_dir": tmp}
+            config["DWS_JMS"] = {"raw_path": tmp}
+            ds.ensure_defaults(config)
+            with mock.patch("core.dws_mirror.plan", return_value=[]):
+                settings = ds.settings_from_config(config)
+            urls = {"DWS2": "http://a", "DWS3": "http://b"}
+            api = {"http://a": {13: 10, 14: 20, 15: 0}}
+
+            def fake_api(url, _window):
+                if url not in api:
+                    raise OSError("refused")
+                return dict(api[url])
+
+            paths = {f"DWS{i}": "" for i in range(1, 9)}
+            paths["DWS3"] = "dws3.xlsx"
+            with mock.patch.object(ds, "dws_api_urls", return_value=urls), \
+                    mock.patch.object(ds, "dws_hourly_from_api", side_effect=fake_api), \
+                    mock.patch.object(ds, "dws_station_paths", return_value=paths), \
+                    mock.patch("os.path.isfile", side_effect=lambda p: p == "dws3.xlsx"), \
+                    mock.patch.object(ds, "read_time_column",
+                                      side_effect=lambda path, *a: [datetime(2026, 11, 3, 15, 5)]
+                                      if path == "dws3.xlsx" else []):
+                table, _ = ds.build_dws_table(settings, window, [], log=lambda *a, **k: None)
+        rows = {name: values for name, _, values in table.rows}
+        self.assertEqual(rows["DWS_02"], {13: 10, 14: 20, 15: 0})
+        self.assertEqual(rows["DWS_03"], {13: 0, 14: 0, 15: 1})
+
+
+class Dws911DatabaseTests(unittest.TestCase):
+    def _settings(self, tmp: str) -> ds.Settings:
+        config = configparser.RawConfigParser()
+        config["PATH"] = {"output_dir": tmp, "autopacking_dir": tmp}
+        config["DWS_JMS"] = {"raw_path": tmp, "db_host": "10.30.32.10", "db_table": "sort_log"}
+        ds.ensure_defaults(config)
+        config[ds.SECTION]["dws_from_api"] = "false"
+        with mock.patch("core.dws_mirror.plan", return_value=[]):
+            return ds.settings_from_config(config)
+
+    def test_counts_per_machine_per_slot(self) -> None:
+        window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 4, 13))
+        cursor = mock.MagicMock()
+        cursor.fetchall.return_value = [
+            ("10.30.32.220", 1, 346), ("10.30.32.222", 23, 5), ("10.30.32.99", 2, 7), ("10.30.32.221", None, 1),
+        ]
+        conn = mock.MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cursor
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("pymysql.connect", return_value=conn):
+            counts = ds.dws911_hourly_from_db(self._settings(tmp), window)
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("FROM sort_log", sql)
+        self.assertEqual(params, ("2026-11-03 13:00:00", "2026-11-03 13:00:00", "2026-11-04 13:00:00"))
+        self.assertEqual(counts["DWS_09"][14], 346)
+        self.assertEqual(counts["DWS_11"][12], 5)
+        self.assertEqual(sum(counts["DWS_10"].values()), 0)
+
+    def test_database_failure_falls_back_to_export_file(self) -> None:
+        window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 3, 15))
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = self._settings(tmp)
+            with mock.patch.object(ds, "dws911_hourly_from_db", side_effect=OSError("down")), \
+                    mock.patch.object(ds, "dws_station_paths", return_value={}), \
+                    mock.patch.object(ds, "read_time_column",
+                                      side_effect=lambda path, col, fcol=None, ip=None:
+                                      [datetime(2026, 11, 3, 14, 1)] if ip == "10.30.32.221" else []) as read:
+                table, _ = ds.build_dws_table(settings, window, [], log=lambda *a, **k: None)
+        rows = {name: values for name, _, values in table.rows}
+        self.assertEqual(rows["DWS_10"], {13: 0, 14: 1})
+        self.assertEqual(read.call_count, 3)
+
+
 class BuildTests(unittest.TestCase):
+    def test_exact_window_titles_follow_populated_hours(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = configparser.RawConfigParser()
+            config["PATH"] = {"output_dir": tmp, "autopacking_dir": tmp}
+            config["DWS_JMS"] = {"raw_path": tmp}
+            ds.ensure_defaults(config)
+            config[ds.SECTION]["sections"] = "autopacking"
+            config[ds.SECTION]["send_raw_file"] = "false"
+            with mock.patch("core.dws_mirror.plan", return_value=[]):
+                settings = ds.settings_from_config(config)
+            window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 4, 13))
+            throughput = {14: [["58987-001", 1, 2_000]], 9: [["58987-001", 1, 2_000]]}
+            with mock.patch.object(ds, "read_autopack_throughput", return_value=throughput), \
+                    mock.patch.object(ds, "render_autopack_table", return_value="autopack.png") as render, \
+                    mock.patch.object(ds, "dws_station_paths", return_value={}):
+                result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None,
+                                  exact_window=True)
+        self.assertIn("เวลา 14.00-10.00", result["sections"][0].title)
+        # ตารางยังแสดงทุกชั่วโมงของช่วง (ไม่ตัดคอลัมน์)
+        self.assertEqual(len(render.call_args.args[0].window.hours), 24)
+
     def test_build_uses_populated_autopacking_columns_in_post_titles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = configparser.RawConfigParser()

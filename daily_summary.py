@@ -75,6 +75,13 @@ DEFAULTS: Dict[str, str] = {
     # (ไฟล์ NN.xlsx ถูกเขียนทับได้ เช่นงานรัน 24 ชม. 13.xlsx ของเมื่อวานโดนของวันนี้ทับ) อ่านไม่ได้ = ใช้ไฟล์แทน
     # user / password แก้ได้ในหน้าสรุปรายวัน (เก็บใน config.ini) — ว่าง = ใช้ไฟล์ NN.xlsx
     "autopack_from_db": "true",
+    # ยอด DWS1-8 ขอจาก DWS-Export-FastAPI-Controller ของแต่ละเครื่อง (GET /hourly พอร์ต 4000 อ่าน db_sds)
+    # ตามช่วงของสรุป — ไฟล์ realtime บน share เก็บแค่ช่วง export ล่าสุดของเครื่อง จึงไม่ครบรอบ
+    # ขอไม่สำเร็จ = ใช้ไฟล์ realtime แทน (ที่อยู่ API อยู่ใน metrics_config.yaml -> dws.machines.*.api_url)
+    "dws_from_api": "true",
+    # ยอด DWS9-11 นับจาก MySQL ตรง ๆ (ค่า DB เดียวกับหน้า DATA EXPORT) แทนการอ่านไฟล์ DWS9-11.xlsx
+    # ต่อไม่ได้ = อ่านไฟล์แทน
+    "dws911_from_db": "true",
     "wcs_db_host": "10.30.32.44",
     "wcs_db_port": "3306",
     "wcs_db_user": "wcs",
@@ -925,12 +932,93 @@ def dws_station_paths(settings: "Settings") -> Dict[str, str]:
     return result
 
 
+DWS_API_TIMEOUT_SECONDS = 15
+
+
+def dws_api_urls() -> Dict[str, str]:
+    """ที่อยู่ API ของ DWS1-8 จาก metrics_config.yaml (DWS_01 -> DWS1)"""
+    try:
+        from metrics import core as metrics_core
+        machines = metrics_core.load_config()["dws"]["machines"]
+    except Exception:
+        return {}
+    result: Dict[str, str] = {}
+    for key, spec in machines.items():
+        digits = "".join(ch for ch in str(key) if ch.isdigit())
+        url = str((spec or {}).get("api_url") or "").strip().rstrip("/")
+        # in_service: false = เครื่องยังไม่ได้ใช้งาน ไม่ต้องรอ API timeout
+        if digits and url and (spec or {}).get("in_service", True) is not False:
+            result[f"DWS{int(digits)}"] = url
+    return result
+
+
+def dws_hourly_from_api(base_url: str, window: Window) -> Dict[int, int]:
+    """ยอดรายชั่วโมงของเครื่อง DWS หนึ่งเครื่องจาก /hourly (start <= sortTime < end)"""
+    import requests
+
+    response = requests.get(
+        f"{base_url}/hourly",
+        params={"start": window.start.strftime("%Y-%m-%d %H:%M:%S"),
+                "end": window.end.strftime("%Y-%m-%d %H:%M:%S")},
+        timeout=DWS_API_TIMEOUT_SECONDS)
+    payload = response.json()
+    if not payload.get("success"):
+        raise Exception(payload.get("message") or payload.get("detail") or f"HTTP {response.status_code}")
+    counts = {h: 0 for h in window.hours}
+    for item in payload.get("rows") or []:
+        moment = datetime.strptime(f"{item['date']} {int(item['hour']):02d}:00:00", "%Y-%m-%d %H:%M:%S")
+        slot = window.slot_of(max(moment, window.start))
+        if slot is not None:
+            counts[slot] += int(item.get("qty") or 0)
+    return counts
+
+
+def dws911_hourly_from_db(settings: "Settings", window: Window) -> Dict[str, Dict[int, int]]:
+    """ยอดรายชั่วโมงของ DWS9-11 จาก MySQL — นับแบบเดียวกับไฟล์ export (คอลัมน์ dws序号 = DwsNo)"""
+    import pymysql
+
+    db = settings.dws_db
+    table = db.get("table") or "tab_assembly_dws_sorting_log"
+    if not re.match(r"^[A-Za-z0-9_]+$", table):
+        raise ValueError(f"ชื่อ table ไม่ถูกต้อง: {table}")
+    conn = pymysql.connect(
+        host=db["host"], port=int(db.get("port") or 3306), user=db.get("user", ""),
+        password=db.get("password", ""), database=db.get("database", ""), charset="utf8mb4",
+        connect_timeout=10, read_timeout=300)
+    by_ip = {ip: name for name, ip in DWS_SORT_IPS.items()}
+    counts = {name: {h: 0 for h in window.hours} for name in DWS_SORT_IPS}
+    start = window.start.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT DwsNo, FLOOR(TIMESTAMPDIFF(SECOND, %s, ScanTime) / 3600) AS slot, COUNT(*) "
+                f"FROM {table} WHERE ScanTime >= %s AND ScanTime < %s GROUP BY 1, 2",
+                (start, start, window.end.strftime("%Y-%m-%d %H:%M:%S")))
+            for dws_no, slot, qty in cur.fetchall():
+                name = by_ip.get(str(dws_no or "").strip())
+                if name is not None and slot is not None and 0 <= int(slot) < len(window.hours):
+                    counts[name][window.hours[int(slot)]] += int(qty)
+    finally:
+        conn.close()
+    return counts
+
+
 def build_dws_table(settings: "Settings", window: Window, dws_pda_rows: List[ScanRow],
                     log: LogFunc = _noop) -> Tuple[DwsTable, List[str]]:
     warnings: List[str] = []
     rows: List[Tuple[str, str, Dict[int, int]]] = []
+    api_urls = dws_api_urls() if settings.opt_bool("dws_from_api") else {}
     for station, path in dws_station_paths(settings).items():
         name = f"DWS_{station[3:].zfill(2)}"
+        url = api_urls.get(station)
+        if url:
+            try:
+                counts = dws_hourly_from_api(url, window)
+                _say(log, f"Daily summary: {name} จาก API {sum(counts.values()):,} ชิ้น")
+                rows.append((name, "dws", counts))
+                continue
+            except Exception as exc:
+                _say(log, f"Daily summary: {name} ขอยอดจาก API ไม่ได้ ใช้ไฟล์ realtime แทน — {exc}", "WARN")
         times: List[datetime] = []
         if path and os.path.isfile(path):
             try:
@@ -940,8 +1028,19 @@ def build_dws_table(settings: "Settings", window: Window, dws_pda_rows: List[Sca
         else:
             warnings.append(f"{name}: ไม่พบไฟล์ {path or '(ไม่ได้ตั้งค่า)'}")
         rows.append((name, "dws", count_by_hour(times, window)))
+    sort_counts: Dict[str, Dict[int, int]] = {}
+    if settings.opt_bool("dws911_from_db") and settings.dws_db.get("host"):
+        try:
+            sort_counts = dws911_hourly_from_db(settings, window)
+            _say(log, "Daily summary: DWS9-11 จากฐานข้อมูล "
+                      + " / ".join(f"{name} {sum(sort_counts[name].values()):,}" for name in DWS_SORT_IPS))
+        except Exception as exc:
+            _say(log, f"Daily summary: นับ DWS9-11 จากฐานข้อมูลไม่ได้ ใช้ไฟล์ {settings.name_dws} แทน — {exc}", "WARN")
     dws911 = settings.dws911_file
     for name, ip in DWS_SORT_IPS.items():
+        if name in sort_counts:
+            rows.append((name, "dws", sort_counts[name]))
+            continue
         times = []
         try:
             times = read_time_column(dws911, "扫描时间", "dws序号", ip)
@@ -1719,6 +1818,8 @@ class Settings:
     app_secret: str
     chat_id: str
     options: Dict[str, str]
+    # ค่าเชื่อมต่อ MySQL ของ DWS9-11 จาก [DWS_JMS] (host, port, user, password, database, table)
+    dws_db: Dict[str, str] = field(default_factory=dict)
 
     def opt(self, key: str) -> str:
         return str(self.options.get(key, DEFAULTS.get(key, ""))).strip()
@@ -1815,6 +1916,14 @@ def settings_from_config(config: configparser.RawConfigParser) -> Settings:
         app_secret=get("FEISHU", "APP_SECRET"),
         chat_id=_clean(options.get("chat_id")) or get("FEISHU", "CHAT_ID"),
         options=options,
+        dws_db={
+            "host": get("DWS_JMS", "db_host", "10.30.32.10"),
+            "port": get("DWS_JMS", "db_port", "3306"),
+            "user": get("DWS_JMS", "db_user", "root"),
+            "password": get("DWS_JMS", "db_password", "root"),
+            "database": get("DWS_JMS", "db_name", "dwsdb_thailand"),
+            "table": get("DWS_JMS", "db_table", "tab_assembly_dws_sorting_log"),
+        },
     )
 
 
@@ -1896,7 +2005,8 @@ def build(settings: Settings, window: Window, work_dir: str,
     ap_window = window  # คอลัมน์ของตารางหน้างาน AutoPacking (Manual = ตัดตามชั่วโมงที่ทำงานจริง)
     if "autopacking" in wanted:
         throughput = load_autopack_throughput()
-        if throughput and not exact_window:
+        # เวลาในหัวข้อตามชั่วโมงที่มียอดในตารางเสมอ (exact_window แค่ไม่ตัดคอลัมน์ตาราง)
+        if throughput:
             table = autopack_feeder_counts(throughput, window)
             ap_totals = autopack_summary(table)["grand"]["hours"]
             labels = window.labels_for_hourly_totals(ap_totals, trailing_total=trailing)
@@ -1920,8 +2030,6 @@ def build(settings: Settings, window: Window, work_dir: str,
 
     def dws_site_labels() -> Dict[str, str]:
         nonlocal dws_labels, dws_window
-        if exact_window:
-            return window.labels()
         if dws_labels is None:
             dws_labels = labels
             try:
