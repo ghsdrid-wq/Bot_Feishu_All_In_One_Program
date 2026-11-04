@@ -3751,7 +3751,7 @@ class App(ctk.CTk):
         return settings
 
     def send_program_hourly_tables(self, report_start, report_end, run_settings, is_running,
-                                   with_summary=True):
+                                   with_summary=True, with_realtime=False):
         """รายงานรายชั่วโมงแบบไม่ใช้ Excel: ทำตารางเหมือนสรุปรายวันทุกอย่าง (ต้นรอบถึงชั่วโมงที่จบล่าสุด
         คอลัมน์ยาวถึงจบรอบ) แต่ส่งแบบรายงานรายชั่วโมงเดิม — การ์ดเข้ากลุ่มรายชั่วโมง"""
         start = datetime.fromisoformat(str(report_start))
@@ -3788,7 +3788,32 @@ class App(ctk.CTk):
         if is_running():
             Botmessage.run_send_images(images, log=self.write_log, is_running=is_running,
                                        with_summary=with_summary)
+        if with_realtime and is_running():
+            self.send_program_realtime_table(start, work_dir, is_running)
         return result
+
+    def send_program_realtime_table(self, business_start, work_dir, is_running):
+        """ตารางพัสดุเกินเวลา 4-48 ชั่วโมง (Realtime DB) วาดด้วย Pillow ส่งเป็นการ์ดของตัวเอง
+        เหมือนการ์ดกลุ่มเดิมที่มาจาก Excel — ไฟล์ RealtimeDB.xlsx ยังส่งตามมาตามที่ตั้งไว้"""
+        raw = self.realtime_db_path()
+        if not os.path.isfile(raw):
+            self.write_log(f"ตารางพัสดุเกินเวลา: ไม่พบไฟล์ {raw}", level="WARN")
+            return
+        title = " ".join(realtime_report.TITLE.split())
+        try:
+            image = realtime_report.render_table_png(
+                raw, os.path.join(work_dir, "REALTIME_TABLE.png"), business_start.date(), log=self.log_realtime)
+            Botmessage.run_send_images([(title, image)], log=self.write_log, is_running=is_running,
+                                       with_summary=False, title=title)
+        except Exception as exc:
+            self.write_log(f"ตารางพัสดุเกินเวลา ส่งไม่สำเร็จ — {exc}", level="WARN")
+        if is_running():
+            # ไฟล์ต่อท้ายตารางเสมอเมื่อติ๊ก Realtime DB (โหมด Pillow)
+            self.send_selected_excel_files_to_feishu(is_running=is_running, files=[raw])
+
+    def realtime_db_path(self) -> str:
+        return os.path.join(self.get_raw_export_folder() or ".",
+                            self.get_dws_export_filename("name_realtime_db", "RealtimeDB.xlsx"))
 
     def set_daily_summary_status(self, text, color="#aeb8cc"):
         if not self.is_ui_thread():
@@ -6652,11 +6677,17 @@ class App(ctk.CTk):
         return feishu_client.send_file(token, chat_id, file_key, log=self.write_log)
 
     def send_selected_excel_files_to_feishu(self, is_running=None, group: str = "",
-                                            include_generated: Optional[bool] = None):
+                                            include_generated: Optional[bool] = None,
+                                            exclude=None, files=None):
+        """files = ส่งไฟล์ที่ระบุตรง ๆ / exclude = ไฟล์ที่ไม่ต้องส่งในก้อนนี้ (ส่งที่อื่นแล้ว)"""
         if is_running is None:
             is_running = lambda: self.running
-        files = self.get_selected_excel_files_for_feishu(
-            group=group, include_generated=include_generated)
+        if files is None:
+            files = self.get_selected_excel_files_for_feishu(
+                group=group, include_generated=include_generated)
+        if exclude:
+            skip = {os.path.normcase(os.path.abspath(path)) for path in exclude}
+            files = [path for path in files if os.path.normcase(os.path.abspath(path)) not in skip]
         if not files:
             return
 
@@ -6850,7 +6881,8 @@ class App(ctk.CTk):
                         self.set_pipeline_state("program", "run")
                         try:
                             self.send_program_hourly_tables(report_start, report_end, run_settings, still_running,
-                                                            with_summary=self.summary_header_enabled())
+                                                            with_summary=self.summary_header_enabled(),
+                                                            with_realtime=wanted("realtime"))
                             self.set_pipeline_state("program", "ok")
                         except Exception as exc:
                             pipeline_had_warning = True
@@ -6889,7 +6921,10 @@ class App(ctk.CTk):
                             # ที่ถือยอดสรุป ไม่ใช่ตกค้างอยู่ก้อนชื่อว่างที่อาจไม่มี
                             self.send_selected_excel_files_to_feishu(
                                 is_running=still_running, group=block,
-                                include_generated=is_primary)
+                                include_generated=is_primary,
+                                # โหมด Pillow: ไฟล์ Realtime DB ส่งต่อท้ายตารางพัสดุเกินเวลาแล้ว
+                                # (หรือไม่ส่งเลยถ้าไม่ได้ติ๊ก Realtime DB)
+                                exclude=[self.realtime_db_path()] if wanted("program") else None)
                         if is_primary and wanted("dashboard") and still_running():
                             dashboard_attempted = True
                             dashboard_sent = self.send_dashboard_to_feishu()

@@ -220,7 +220,8 @@ def run_send_group(folder: str, group: str, log: Optional[LogFunc] = None,
 
 
 def run_send_images(images: List[Tuple[str, str]], log: Optional[LogFunc] = None,
-                    is_running: Optional[RunFunc] = None, with_summary: bool = True) -> None:
+                    is_running: Optional[RunFunc] = None, with_summary: bool = True,
+                    title: Optional[str] = None) -> None:
     """ส่งรูปที่ระบุ [(คำบรรยาย, path)] แบบรายงานรายชั่วโมงเดิม — การ์ดใบเดียว (มียอดสรุปถ้าเปิดไว้)
     ใช้กับตารางที่คำนวณด้วยโปรแกรมตอนไม่ได้ติ๊ก Excel Image"""
     def write(msg: str) -> None:
@@ -256,7 +257,8 @@ def run_send_images(images: List[Tuple[str, str]], log: Optional[LogFunc] = None
     if card_report and send_as_card():
         summary = card_report.ensure_summary(log=write) if with_summary else None
         try:
-            card = card_report.build_card(uploaded, summary)
+            card = (card_report.build_card(uploaded, summary, title=title) if title
+                    else card_report.build_card(uploaded, summary))
             write(f"Card size: {card_report.card_size(card):,} bytes")
             card_report.send_card(token, cfg["CHAT_ID"], card)
             return

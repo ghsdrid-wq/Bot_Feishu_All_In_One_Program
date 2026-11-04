@@ -1343,6 +1343,31 @@ class ProgramHourlyTablesTests(unittest.TestCase):
         self.assertEqual(chat, "oc_hourly")
         self.assertIn("img_1", json.dumps(card))
 
+    def test_realtime_overdue_table_renders_with_pillow(self) -> None:
+        from datetime import date
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = os.path.join(tmp, "RealtimeDB.xlsx")
+            book = openpyxl.Workbook()
+            sheet = book.active
+            sheet.title = "DATA"
+            sheet.append(["最新操作类型", "超时类型"])
+            sheet.append(["Arrive Scan", "Exceed 4 hours"])
+            sheet.append(["Packing Scan", "Exceed 12 hours"])
+            book.save(raw)
+            out = realtime_report.render_table_png(raw, os.path.join(tmp, "t.png"), date(2026, 11, 4),
+                                                   log=lambda *a, **k: None)
+            self.assertTrue(os.path.getsize(out) > 1000)
+
+    def test_pillow_mode_holds_back_the_realtime_file_from_other_blocks(self) -> None:
+        fake = mock.MagicMock()
+        fake.get_selected_excel_files_for_feishu.return_value = [r"C:/raw/RealtimeDB.xlsx", r"C:/raw/DWS9-11.xlsx"]
+        fake.active_run_settings = {"chat_id": "oc_x"}
+        with mock.patch.object(bot_main.time, "sleep"):
+            bot_main.App.send_selected_excel_files_to_feishu(
+                fake, is_running=lambda: True, exclude=[r"C:/raw/RealtimeDB.xlsx"])
+        sent = [c.args[1] for c in fake.upload_excel_file_to_feishu.call_args_list]
+        self.assertEqual(sent, [r"C:/raw/DWS9-11.xlsx"])
+
     def test_no_finished_hour_skips_sending(self) -> None:
         fake = mock.MagicMock()
         import daily_summary as ds

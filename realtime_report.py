@@ -229,6 +229,38 @@ def _write_raw(sheet, header: Sequence[str], data: Sequence[tuple]) -> None:
         sheet.column_dimensions[get_column_letter(i)].width = min(max(width + 2, 10), 50)
 
 
+def render_table_png(raw_path: str, out_path: str, business_date, log: Optional[LogFunc] = None) -> str:
+    """วาดตารางพัสดุเกินเวลาเป็นรูปด้วย Pillow (โหมด Pillow ของรายงานรายชั่วโมง ไม่ใช้ Excel)
+
+    หน้าตาเหมือนรูป TABLE ที่ Excel export: หัวสีฟ้า ช่องแรกเป็นวันที่ แถวผลรวมสีฟ้าอ่อน
+    อ่านข้อมูลจากชีต DATA ของไฟล์ RealtimeDB.xlsx ที่ขั้นตอน Realtime DB เพิ่งดึงมา
+    """
+    import daily_summary as ds  # ใช้ตัววาดตารางเดียวกับสรุปรายวัน
+
+    header, data = read_raw(raw_path)
+    counts = build_matrix(header, data, log=log)
+    head_fill, sum_fill = (0x8E, 0xAA, 0xDB), (0xD9, 0xE2, 0xF3)
+    grid = ds.Grid([230] + [92] * len(OVERTIME_HOURS) + [92])
+    day = f"{business_date.day}/{business_date.month}/{business_date.year}"
+    grid.add_row(24, [ds.Cell(day, head_fill, True)]
+                 + [ds.Cell(f"{h} ชั่วโมง", head_fill, True) for h in OVERTIME_HOURS]
+                 + [ds.Cell("ผลรวม", head_fill, True)])
+    totals = {hour: 0 for hour in OVERTIME_HOURS}
+    for label, _source in OPERATE_ROWS:
+        row = [ds.Cell(label, align="left")]
+        for hour in OVERTIME_HOURS:
+            totals[hour] += counts[label][hour]
+            row.append(ds.Cell(f"{counts[label][hour]:,}", align="right"))
+        row.append(ds.Cell(f"{sum(counts[label].values()):,}", align="right"))
+        grid.add_row(22, row)
+    grid.add_row(22, [ds.Cell("ผลรวม", sum_fill, True)]
+                 + [ds.Cell(f"{totals[h]:,}", sum_fill, True, "right") for h in OVERTIME_HOURS]
+                 + [ds.Cell(f"{sum(totals.values()):,}", sum_fill, True, "right")])
+    ds.render_grid(grid, out_path, font_size=13)
+    _log(log, f"Realtime DB — วาดตารางพัสดุเกินเวลา {sum(totals.values()):,} ชิ้น")
+    return out_path
+
+
 def table_range() -> str:
     """ช่วงเซลล์ของตาราง ใช้ตั้งค่า Export รูปในหน้าไฟล์ Excel"""
     columns = len(OVERTIME_HOURS) + 2
