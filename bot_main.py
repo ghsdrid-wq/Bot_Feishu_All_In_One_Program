@@ -6267,8 +6267,14 @@ class App(ctk.CTk):
         except Exception:
             gen_data = {}
 
-        if self.is_token_error_text(self.extract_response_message(gen_data)):
+        message = self.extract_response_message(gen_data)
+        if self.is_token_error_text(message):
             raise Exception("JMS_TOKEN หมดอายุหรือไม่ถูกต้อง กรุณาอัปเดต JMS_TOKEN ที่หน้า ตั้งค่า")
+        # เซิร์ฟเวอร์ไม่รับงาน (ช่วงเวลาผิดรูปแบบ งานค้างเยอะ ฯลฯ) — แจ้งทันที
+        # ไม่งั้นบอทจะนั่งรอไฟล์ที่ไม่มีวันมาถึง 25 นาที
+        if isinstance(gen_data, dict) and gen_data.get("succ") is False:
+            raise Exception(f"JMS ไม่รับคำสั่ง export ({scanType} {start} -> {end}): {message or gen_data.get('code')}")
+        self.log(f"Server accepted export: {scanType} {start} -> {end}", "JMS")
 
         return export_start_time
 
@@ -6710,7 +6716,11 @@ class App(ctk.CTk):
                 if cycle:
                     start, end = map(datetime.fromisoformat, cycle)
                     report_window = ReportWindow.capture(start, end, datetime.now())
-                    run_settings["time_range"] = (start.isoformat(sep=" "), report_window.cutoff.isoformat(sep=" "))
+                    # ตัดเศษวินาทีทิ้ง — cutoff มาจาก datetime.now() ถ้าไม่ตัด จะได้
+                    # "2026-11-05 01:01:09.482113" ส่งให้ JMS / SQL ซึ่งรับแค่ "YYYY-MM-DD HH:MM:SS"
+                    run_settings["time_range"] = (
+                        start.strftime("%Y-%m-%d %H:%M:%S"),
+                        report_window.cutoff.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S"))
                 else:
                     run_settings["time_range"] = self.get_report_time_range()
             self.active_run_settings = run_settings
