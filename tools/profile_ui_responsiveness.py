@@ -27,6 +27,9 @@ class ProfileApp(bot_main.App):
     def dashboard_autostart_web(self) -> None:
         return None
 
+    def bots_autostart(self) -> None:
+        return None
+
     def refresh_status(self) -> None:
         return None
 

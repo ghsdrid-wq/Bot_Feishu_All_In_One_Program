@@ -1581,6 +1581,10 @@ def autopack_file_matches_slot(path: str, window: Window, hour: int) -> bool:
 def autopack_hour_path(raw_dir: str, window: Window, hour: int, file_hour_offset: int = -1,
                        folders: Optional[Dict[date, Optional[str]]] = None) -> Optional[str]:
     """ไฟล์ของชั่วโมงนี้ — ชั่วโมงที่เลยรอบของโฟลเดอร์ (12点-13点 ของวันถัดไป) อยู่ในโฟลเดอร์วันถัดไป"""
+    slot = window.slot_end(hour) - timedelta(hours=1)
+    cached = os.path.join(raw_dir, "slots", slot.strftime("%Y-%m-%d"), f"{slot.hour:02d}.xlsx")
+    if os.path.isfile(cached):
+        return cached
     # โฟลเดอร์วัน D เก็บไฟล์ที่เขียนตั้งแต่ D 13:00 ถึงก่อน D+1 13:00 (ไฟล์เขียนตอนจบช่อง)
     # 13.xlsx ที่เขียนตอน 13:00 พอดี = ไฟล์แรกของโฟลเดอร์วันนั้น
     folder_date = (window.slot_end(hour) - timedelta(hours=AUTOPACK_FOLDER_ROLL_HOUR)).date()
@@ -1748,7 +1752,7 @@ class Settings:
 
     @property
     def autopacking_folder(self) -> str:
-        return self.custom_path("autopacking_dir") or self.autopacking_dir
+        return self.opt("runtime_autopacking_dir") or self.custom_path("autopacking_dir") or self.autopacking_dir
 
 
 def _clean(value: Any) -> str:
@@ -1841,7 +1845,8 @@ DWS_SITE_SECTIONS = ("dws", "dws_pda")
 
 def build(settings: Settings, window: Window, work_dir: str,
           log: LogFunc = _noop, is_running: RunFunc = _always,
-          run_started: Optional[datetime] = None, trim_to_activity: bool = False) -> Dict[str, Any]:
+          run_started: Optional[datetime] = None, trim_to_activity: bool = False, exact_window: bool = False,
+          autopack_db: bool = False) -> Dict[str, Any]:
     """คำนวณ + วาดรูป + เขียนไฟล์ดิบ คืน {sections, raw_file, warnings}
 
     trim_to_activity (สรุป Manual ตามช่วงที่เลือกเอง): ตารางรายชั่วโมงของแต่ละหน้างานแสดงเฉพาะ
@@ -1871,7 +1876,8 @@ def build(settings: Settings, window: Window, work_dir: str,
     def load_autopack_throughput() -> Dict[int, List[list]]:
         nonlocal autopack_throughput
         if autopack_throughput is None:
-            if trim_to_activity and settings.opt_bool("autopack_from_db") and settings.opt("wcs_db_user"):
+            # autopack_db = สรุป Manual ตามช่วงที่เลือกเอง
+            if autopack_db and settings.opt_bool("autopack_from_db") and settings.opt("wcs_db_user"):
                 try:
                     autopack_throughput = read_autopack_throughput_db(settings, window, log)
                     total = sum(row[2] for rows in autopack_throughput.values() for row in rows)
@@ -1890,7 +1896,7 @@ def build(settings: Settings, window: Window, work_dir: str,
     ap_window = window  # คอลัมน์ของตารางหน้างาน AutoPacking (Manual = ตัดตามชั่วโมงที่ทำงานจริง)
     if "autopacking" in wanted:
         throughput = load_autopack_throughput()
-        if throughput:
+        if throughput and not exact_window:
             table = autopack_feeder_counts(throughput, window)
             ap_totals = autopack_summary(table)["grand"]["hours"]
             labels = window.labels_for_hourly_totals(ap_totals, trailing_total=trailing)
@@ -1914,6 +1920,8 @@ def build(settings: Settings, window: Window, work_dir: str,
 
     def dws_site_labels() -> Dict[str, str]:
         nonlocal dws_labels, dws_window
+        if exact_window:
+            return window.labels()
         if dws_labels is None:
             dws_labels = labels
             try:
@@ -2222,17 +2230,18 @@ def save_excel_copy(result: Dict[str, Any], folder: str, log: LogFunc = _noop) -
 def run(settings: Settings, start: datetime, end: datetime, log: LogFunc = _noop,
         is_running: RunFunc = _always, run_started: Optional[datetime] = None,
         send_to_feishu: bool = True, work_dir: Optional[str] = None,
-        scope: bool = False) -> Dict[str, Any]:
+        scope: bool = False, preserve_window: bool = False, on_delivery_start=None) -> Dict[str, Any]:
     """scope = สรุป Manual ตามช่วงที่เลือกเอง: ใช้ทุกชั่วโมงของช่วงนั้น (เกิน 24 ชม. ได้)
     แล้วตัดคอลัมน์ตารางของแต่ละหน้างานตามชั่วโมงที่ทำงานจริง"""
-    if scope:
+    if scope or preserve_window:
         window = scope_window(start, end, settings.opt_int("shift_b_start"))
     else:
         window = make_window(start, end, settings.opt_int("day_end_hour"), settings.opt_int("shift_b_start"))
     work_dir = work_dir or os.path.join(settings.output_dir or settings.raw_dir or ".", "DailySummary")
     _say(log, f"Daily summary: รอบ {window.start:%Y-%m-%d %H:%M} -> {window.end:%Y-%m-%d %H:%M}", "START")
     result = build(settings, window, work_dir, log=log, is_running=is_running, run_started=run_started,
-                   trim_to_activity=scope)
+                   trim_to_activity=scope and not preserve_window, exact_window=preserve_window,
+                   autopack_db=scope)
     # บันทึกไฟล์ Excel ก่อนส่ง — ส่ง Feishu ไม่สำเร็จไฟล์ก็ยังอยู่ (ปุ่มสร้างตัวอย่างไม่บันทึก)
     if send_to_feishu and settings.opt("backup_dir") and is_running():
         try:
@@ -2243,6 +2252,8 @@ def run(settings: Settings, start: datetime, end: datetime, log: LogFunc = _noop
     if send_to_feishu and is_running():
         if not any(s.image for s in result["sections"]):
             raise Exception("Daily summary: ไม่มีตารางให้ส่งเลย — " + "; ".join(result["warnings"]))
+        if on_delivery_start is not None:
+            on_delivery_start()
         send(settings, result, log=log, is_running=is_running)
     return result
 

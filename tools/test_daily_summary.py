@@ -352,7 +352,7 @@ class WcsDatabaseTests(unittest.TestCase):
                     mock.patch.object(ds, "render_autopack_table", return_value="autopack.png"), \
                     mock.patch.object(ds, "dws_station_paths", return_value={}):
                 ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None,
-                         trim_to_activity=True)
+                         exact_window=True, autopack_db=True)
         db.assert_called_once()
         read_files.assert_called_once()
 
@@ -366,7 +366,7 @@ class WcsDatabaseTests(unittest.TestCase):
                         mock.patch.object(ds, "read_autopack_throughput", return_value={}), \
                         mock.patch.object(ds, "dws_station_paths", return_value={}):
                     ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None,
-                             trim_to_activity=manual)
+                             autopack_db=manual)
                 db.assert_not_called()
 
 

@@ -1123,6 +1123,7 @@ class DailySummaryTimerTests(unittest.TestCase):
         app = bot_main.App.__new__(bot_main.App)
         app.config = configparser.RawConfigParser()
         app.config["DAILY_SUMMARY"] = {"auto_send": "true", "send_time": "12:20", "last_sent_date": last_sent}
+        app.config["REPORT_CALCULATION"] = {"enabled": "false"}
         app.config["TIME"] = {"start_hour": "14"}  # รอบสรุปแบบ Auto เริ่มตามเวลาเริ่มของ Auto
         app.ui_thread_id = -1
         app.scheduler_running = True
@@ -1155,6 +1156,7 @@ class DailySummaryTimerTests(unittest.TestCase):
     def test_timer_sends_finished_round_when_new_round_starts_before_send_time(self) -> None:
         # เริ่มรอบ 12:00 ส่ง 12:20: ตอน 12:20 รอบปัจจุบันเพิ่งเริ่ม ต้องส่งสรุปของรอบที่เพิ่งจบ
         app = self._app(last_sent="2026-10-25")
+        app.config["REPORT_CALCULATION"] = {"enabled": "false"}
         app.config["TIME"] = {"start_hour": "12"}
         app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-27 12:20:30")
         app.daily_summary_tick()
@@ -1162,6 +1164,7 @@ class DailySummaryTimerTests(unittest.TestCase):
         self.assertEqual(app.calls[0][0][1:3], ("2026-10-26 12:00:00", "2026-10-27 12:20:30"))
         # ส่งรอบ 26 ไปแล้ว: ตอน 12:24 ไม่ส่งรอบ 27 ที่เพิ่งเริ่ม
         app = self._app(last_sent="2026-10-26")
+        app.config["REPORT_CALCULATION"] = {"enabled": "false"}
         app.config["TIME"] = {"start_hour": "12"}
         app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-27 12:24:35")
         app.daily_summary_tick()

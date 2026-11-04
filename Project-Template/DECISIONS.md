@@ -1,5 +1,15 @@
 # Decisions
 
+## 2026-10-22 - Python report calculation migration
+
+- Preserve the 2.1.12 checkpoint (`47eb3c7`) and develop 2.2.0 on `feature/python-report-calculation`. Do not overwrite operator workbooks or automatically send test data.
+- Evaluate the actual formulas of both accepted templates using a small fail-closed Python interpreter instead of assuming Daily Summary models have identical rules. In particular, DWS SUMIF thresholds and the hourly AutoPacking `unique count = 1 -> 0` error rule differ and are intentionally preserved pending a separate business-rule change.
+- Generate separate numeric report copies with accepted styles/layouts and remove formula/query refresh dependencies. Keep raw input files external; retain compact hourly helper values. Sanitize template query caches and unused shared strings before loading workbook objects.
+- Follow existing local/UNC paths and DWS mirror destinations. Reject unavailable/changing inputs and out-of-window non-empty sources. Never weaken SMB signing policy or silently present cached data as a fresh report.
+- Honor the configured start hour before freezing totals, including headings after later image-column trimming. Read only completed AutoPacking hours; future source files are not required and are zeroed explicitly.
+- Keep Excel only for the existing screenshot path; expose an explicit UI switch for the legacy calculation mode. A later image-rendering migration is separate.
+- Native Excel parity uses deterministic synthetic source data; live acceptance is pending accessible shares and a coherent same-day source set. Host 10.30.32.44 responds but the current Windows SMB signing policy blocks its share; 10.30.32.32 did not respond. No security policies were changed.
+
 ## 2026-10-22 - Stable JMS scan export language
 
 - Checkpoint the bilingual-header release before starting the proposed full Excel calculation migration. Keep operator workbooks and source data local under ignored `Excel/`; preserve the reusable query, patch tools, tests, skills and continuity notes in Git.

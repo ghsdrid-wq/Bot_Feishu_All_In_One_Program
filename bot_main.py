@@ -1536,6 +1536,11 @@ class App(ctk.CTk):
                         self.config[section]["pull_folder"] = clean_input_value(row["folder_entry"].get())
                         self.config[section]["pull_file"] = clean_input_value(row["file_entry"].get(), collapse_internal_spaces=True)
                         self.config[section]["pull_enabled"] = str(row["pull_var"].get()).lower()
+                        self.config[section]["source_path"] = clean_input_value(row["source_entry"].get())
+            if hasattr(self, "auto_cache_entry"):
+                if "REPORT_CALCULATION" not in self.config:
+                    self.config["REPORT_CALCULATION"] = {}
+                self.config["REPORT_CALCULATION"]["auto_cache"] = entry_value(self.auto_cache_entry)
             for old_key in (("WEB" + chr(72) + "OOK"), "SECRET"):
                 self.config.remove_option("FEISHU", old_key)
             if "DWS_JMS" not in self.config:
@@ -1793,6 +1798,7 @@ class App(ctk.CTk):
             # Filled immediately before each Run Now / automatic execution.
             # Scheduler lifetime and report data range are separate concerns.
             "time_range": None,
+            "cycle_range": tuple(value.isoformat() for value in self.get_scheduler_time_range()),
         }
 
     def sync_auto_run_settings_after_save(self):
@@ -1857,6 +1863,7 @@ class App(ctk.CTk):
             "jms_user": ("👤  BOT JMS USER", "nav_jms_user"),
             "code_policy": ("🔐  สิทธิ์รหัส", "nav_code_policy"),
             "daily_summary": ("📋  สรุปรายวัน", "nav_daily_summary"),
+            "sources": ("▤  แหล่งข้อมูลรายงาน", "nav_sources"),
             "settings": ("⚙  ตั้งค่า", "nav_settings"),
         }
         self.render_nav_menu()
@@ -1882,6 +1889,7 @@ class App(ctk.CTk):
             "code_policy": self.build_code_policy_page(self.content),
             "daily_summary": self.build_daily_summary_page(self.content),
             "settings": self.build_settings_page(self.content),
+            "sources": self.build_sources_page(self.content),
         }
         self.show_page("home")
 
@@ -1957,7 +1965,7 @@ class App(ctk.CTk):
                 end_dt = datetime.combine(self.end_date.get_date(), datetime.min.time()).replace(hour=end_hour)
                 if start_dt > end_dt:
                     start_dt, end_dt = end_dt, start_dt
-                return start_dt, end_dt
+                return self.normalize_cycle_range(start_dt, end_dt)
             except Exception:
                 pass
 
@@ -1971,7 +1979,7 @@ class App(ctk.CTk):
             end_dt = datetime.combine(end_date, datetime.min.time()).replace(hour=end_hour)
             if start_dt > end_dt:
                 start_dt, end_dt = end_dt, start_dt
-            return start_dt, end_dt
+            return self.normalize_cycle_range(start_dt, end_dt)
         except Exception:
             pass
 
@@ -1980,7 +1988,13 @@ class App(ctk.CTk):
         start_dt = datetime.combine(business_date, datetime.min.time()).replace(hour=start_hour)
         end_date = business_date + timedelta(days=1) if start_hour >= end_hour else business_date
         end_dt = datetime.combine(end_date, datetime.min.time()).replace(hour=end_hour)
-        return start_dt, end_dt
+        return self.normalize_cycle_range(start_dt, end_dt)
+
+    def normalize_cycle_range(self, start, end):
+        if (not getattr(self, "_dates_user_selected", False)
+                and self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True)):
+            return self.summary_ledger().align_recurring_start(start, end)
+        return start, end
 
     def get_report_time_range(self, moment: Optional[datetime] = None):
         """Return the current business-day window for one report execution.
@@ -2113,10 +2127,29 @@ class App(ctk.CTk):
         self.btn_save_workspace = ctk.CTkButton(tools, text="💾 บันทึก", width=92, fg_color="#4c566a", hover_color="#5e6779", command=self.save_all)
         self.btn_save_workspace.grid(row=0, column=2, padx=14, pady=14)
 
+        self.report_calculation_var = ctk.BooleanVar(value=as_bool(
+            self.config.get("REPORT_CALCULATION", "enabled", fallback="true"), True))
+        ctk.CTkSwitch(
+            tools, text="คำนวณรายงานด้วยโปรแกรม", variable=self.report_calculation_var,
+            command=self.save_report_calculation_mode,
+        ).grid(row=1, column=0, columnspan=2, padx=14, pady=(0, 6), sticky="w")
+        ctk.CTkLabel(
+            tools, text="AutoPacking และ DWS/PDA: สร้างไฟล์ตัวเลขแยกจากต้นฉบับ ปิดเพื่อใช้ Excel คำนวณแบบเดิม",
+            text_color="#aeb8cc", anchor="w",
+        ).grid(row=2, column=0, columnspan=3, padx=14, pady=(0, 12), sticky="ew")
+
         self.workbook_scroll = ctk.CTkScrollableFrame(page, fg_color="#323847", corner_radius=18)
         self.workbook_scroll.grid(row=2, column=0, padx=24, pady=(8, 24), sticky="nsew")
         self.workbook_scroll.grid_columnconfigure(0, weight=1)
         return page
+
+    def save_report_calculation_mode(self):
+        """Persist an explicit, reversible calculation-engine choice."""
+        if "REPORT_CALCULATION" not in self.config:
+            self.config["REPORT_CALCULATION"] = {}
+        self.config["REPORT_CALCULATION"]["enabled"] = (
+            "true" if self.report_calculation_var.get() else "false")
+        self.save_all()
 
     def bind_clean_entry(self, ent, collapse_internal_spaces: bool = False, digits_only: bool = False):
         """Clean risky input at UI level and before saving.
@@ -3197,7 +3230,7 @@ class App(ctk.CTk):
             has_pull = client["name"] in DWS_PULL_CLIENTS
 
             ctk.CTkLabel(self.controller_client_frame, text=client["name"], text_color="#d8dee9").grid(
-                row=row, column=0, rowspan=2 if has_pull else 1, padx=8, pady=5, sticky="w")
+                row=row, column=0, rowspan=3 if has_pull else 1, padx=8, pady=5, sticky="w")
 
             ip_entry = ctk.CTkEntry(self.controller_client_frame, width=180)
             ip_entry.insert(0, client["ip"])
@@ -3239,10 +3272,42 @@ class App(ctk.CTk):
                 entry.update({"folder_entry": folder_entry, "file_entry": file_entry,
                               "pull_var": pull_var})
 
+            if has_pull:
+                from core import dws_mirror
+                source = ctk.CTkEntry(self.controller_client_frame, placeholder_text="พาธไฟล์ต้นทาง (share)")
+                value = self.config.get(client["name"], "source_path", fallback="") or dws_mirror._yaml_source(client["name"]).get("path", "")
+                source.insert(0, value)
+                source.grid(row=row + 2, column=1, columnspan=4, padx=8, pady=(0, 10), sticky="ew")
+                self.bind_clean_entry(source)
+                self.lockable_inputs.append(source)
+                entry["source_entry"] = source
             self.controller_client_rows.append(entry)
-            row += 2 if has_pull else 1
+            row += 3 if has_pull else 1
 
         self.controller_client_frame.grid_columnconfigure(1, weight=1)
+
+    def build_sources_page(self, master):
+        page = SmoothScrollableFrame(master, fg_color="#2e3440", corner_radius=0)
+        page.grid_columnconfigure(0, weight=1)
+        self.header(page, "แหล่งข้อมูลรายงาน", "ดึงสำเนามาเก็บในเครื่องก่อนคำนวณ • DWS ที่ติดต่อไม่ได้จะเก็บสำเนาล่าสุดไว้").grid(row=0, column=0, padx=24, pady=18, sticky="ew")
+        ctk.CTkButton(page, text="บันทึกการตั้งค่า", command=self.save_all).grid(row=1, column=0, padx=24, sticky="e")
+        auto = self.make_card(page, "#3b4252", 22)
+        auto.grid(row=2, column=0, padx=24, pady=12, sticky="ew")
+        auto.grid_columnconfigure(1, weight=1)
+        self.autopack_dir_entry = self.path_row(auto, 0, "AutoPacking ต้นทาง", self.browse_folder)
+        self.auto_cache_entry = self.path_row(auto, 1, "โฟลเดอร์สำเนา Auto", self.browse_folder)
+        self.auto_cache_entry.insert(0, self.config.get("REPORT_CALCULATION", "auto_cache", fallback=""))
+        ctk.CTkLabel(auto, text="เว้นต้นทางว่าง = ใช้พาธใน Excel • ไฟล์ Auto รีเซ็ต 12:00 จึงแยกสำเนาตามวันรายงาน", text_color="#aeb8cc").grid(row=2, column=0, columnspan=3, padx=16, pady=12)
+        clients = self.make_card(page, "#3b4252", 22)
+        clients.grid(row=3, column=0, padx=24, pady=(8, 24), sticky="ew")
+        clients.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(clients, text="ตั้งค่า DWS PLAN Clients", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 4), sticky="w")
+        ctk.CTkLabel(clients, text="IP/Port สำหรับหน้า DWS PLAN และ Controller API", text_color="#aeb8cc").grid(row=1, column=0, padx=16, pady=(0, 6), sticky="w")
+        self.controller_client_frame = ctk.CTkFrame(clients, fg_color="#252b36", corner_radius=12)
+        self.controller_client_frame.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
+        self.controller_client_rows = []
+        self.render_controller_client_settings()
+        return page
 
     def build_settings_page(self, master):
         page = SmoothScrollableFrame(master, fg_color="#2e3440", corner_radius=0)
@@ -3263,7 +3328,7 @@ class App(ctk.CTk):
         self.raw_path_entry = self.path_row(path, 2, "ตำแหน่งเก็บ Excel", self.browse_folder)
         # โฟลเดอร์ไฟล์ 00-23.xlsx ของ AutoPacking — มาจากโปรแกรม auto export คนละตัว
         # ปกติเป็น network share ของเครื่องที่รันโปรแกรมนั้น ไม่ใช่โฟลเดอร์ในเครื่องนี้
-        self.autopack_dir_entry = self.path_row(path, 3, "โฟลเดอร์ AutoPacking", self.browse_folder)
+
 
         # ชื่อไฟล์ดิบ — โปรแกรมใช้ค่าพวกนี้ทั้งตอน export และตอนอ่านเข้า Dashboard
         # (metrics/core.py เอา raw_path + ชื่อพวกนี้มาต่อกันเป็นพาธเต็ม)
@@ -3319,15 +3384,6 @@ class App(ctk.CTk):
         ).grid(row=10, column=0, columnspan=2, padx=16, pady=(0, 14), sticky="w")
 
 
-        clients = self.make_card(page, "#3b4252", 22)
-        clients.grid(row=6, column=0, padx=24, pady=(8, 24), sticky="ew")
-        clients.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(clients, text="ตั้งค่า DWS PLAN Clients", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(row=0, column=0, padx=16, pady=(16, 4), sticky="w")
-        ctk.CTkLabel(clients, text="IP/Port สำหรับหน้า DWS PLAN และ Controller API", text_color="#aeb8cc").grid(row=1, column=0, padx=16, pady=(0, 6), sticky="w")
-        self.controller_client_frame = ctk.CTkFrame(clients, fg_color="#252b36", corner_radius=12)
-        self.controller_client_frame.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
-        self.controller_client_rows = []
-        self.render_controller_client_settings()
         return page
 
     # ------------------------------------------------------------------
@@ -3432,14 +3488,14 @@ class App(ctk.CTk):
         chat = self.ds_entry(send, 2, "Chat ID", "chat_id", "ว่าง = ใช้ Chat ID ในหน้า ตั้งค่า")
         self.bind_clean_entry(chat, collapse_internal_spaces=True)
         self.ds_auto_send_var = ctk.BooleanVar(value=as_bool(self.daily_summary_option("auto_send"), True))
-        auto_chk = ctk.CTkCheckBox(send, text="ส่งอัตโนมัติทุกวัน (ทำงานขณะเปิด Auto ในหน้า BOT REPORT)",
+        auto_chk = ctk.CTkCheckBox(send, text="สรุปอัตโนมัติหลังส่งยอดสุดท้ายสำเร็จ",
                                    variable=self.ds_auto_send_var, command=self.save_config)
         auto_chk.grid(row=19, column=0, columnspan=3, padx=16, pady=(8, 2), sticky="w")
         self.lockable_inputs.append(auto_chk)
-        ctk.CTkLabel(send, text="เวลาส่ง", text_color="#d8dee9", width=150, anchor="w").grid(
+        ctk.CTkLabel(send, text="ส่งหลังยอดสุดท้าย", text_color="#d8dee9", width=150, anchor="w").grid(
             row=20, column=0, padx=(16, 8), pady=6, sticky="w")
         time_row = ctk.CTkFrame(send, fg_color="transparent")
-        time_row.grid(row=20, column=1, padx=8, pady=6, sticky="w")
+        # Legacy clock variables remain for legacy configuration, but are not the new trigger.
         hour, minute = daily_summary.parse_send_time(self.daily_summary_option("send_time"))
         self.ds_send_hour_var = ctk.StringVar(value=f"{hour:02d}")
         self.ds_send_minute_var = ctk.StringVar(value=f"{minute:02d}")
@@ -3453,11 +3509,11 @@ class App(ctk.CTk):
                                      variable=self.ds_send_minute_var, state="readonly",
                                      command=lambda _value: self.save_config())
         minute_box.grid(row=0, column=2)
-        self.lockable_inputs += [hour_box, minute_box]
+        hour_box.configure(state="disabled")
+        minute_box.configure(state="disabled")
         self.ds_last_sent_label = ctk.CTkLabel(send, text="", text_color="#7b8496", anchor="w")
         self.ds_last_sent_label.grid(row=20, column=2, padx=(4, 16), pady=6, sticky="w")
-        ctk.CTkLabel(send, text="ส่งวันละครั้งเมื่อถึงเวลานี้ — ตั้งนาทีให้หลังรอบรายชั่วโมงดึงไฟล์ดิบเสร็จ "
-                                "(รอบรายชั่วโมงยังรันอยู่จะรอให้เสร็จก่อน)",
+        ctk.CTkLabel(send, text="อิงวันเวลาจบใน BOT REPORT • ส่งยอดสุดท้ายสำเร็จแล้วจึงสรุปทั้งรอบ",
                      text_color="#7b8496", anchor="w").grid(row=21, column=0, columnspan=3, padx=16, pady=(0, 4), sticky="w")
         catch_row = ctk.CTkFrame(send, fg_color="transparent")
         catch_row.grid(row=22, column=0, columnspan=3, padx=16, pady=(4, 2), sticky="w")
@@ -3595,6 +3651,15 @@ class App(ctk.CTk):
         self.ds_entry(advanced, 11, "WCS DB Password", "wcs_db_password", width=200).configure(show="*")
         self.ds_entry(advanced, 12, "WCS DB Name", "wcs_db_name", width=200)
         ctk.CTkLabel(advanced, text="").grid(row=13, column=0, pady=2)
+        if self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True):
+            for widget in send.grid_slaves(row=22) + send.grid_slaves(row=23):
+                widget.grid_remove()
+            ctk.CTkLabel(send, text="ส่งไม่สำเร็จจะลองใหม่ได้สูงสุด 3 ครั้ง ห่างกัน 10 นาที • ถ้าไม่ทราบผลส่ง จะพักให้ตรวจประวัติข้อความก่อน",
+                         text_color="#7b8496", wraplength=850, justify="left").grid(row=22, column=0, columnspan=3, padx=16, pady=8, sticky="w")
+        else:
+            time_row.grid(row=20, column=1, padx=8, pady=6, sticky="w")
+            hour_box.configure(state="readonly")
+            minute_box.configure(state="readonly")
         return page
 
     def daily_summary_shared_paths(self) -> Dict[str, str]:
@@ -3798,6 +3863,10 @@ class App(ctk.CTk):
             return
         self.save_all()
         settings = self.daily_summary_settings(entry_value(self.out_entry))
+        cycle_start, cycle_end = self.get_scheduler_time_range()
+        if start_dt == cycle_start and end_dt < cycle_end:
+            for key, _ in self.DAILY_SUMMARY_SECTIONS:
+                settings.options[f"title_{key}"] = "สรุประหว่างรอบ · " + settings.opt(f"title_{key}")
         start = start_dt.strftime("%Y-%m-%d %H:%M:%S")
         end = end_dt.strftime("%Y-%m-%d %H:%M:%S")
         if send:
@@ -3806,15 +3875,27 @@ class App(ctk.CTk):
                     "ส่งสรุปตอนนี้",
                     f"ส่งสรุปยอดช่วง {start} -> {end}\nเข้ากลุ่ม {target} ?"):
                 return
-        self.run_daily_summary_in_background(settings, start, end, send, scope=True)
+        cycle_key = f"{start_dt.isoformat()}__{end_dt.isoformat()}"
+        if not send or self.summary_ledger().read().get(cycle_key, {}).get("phase", "sent") == "sent":
+            cycle_key = None
+        self.run_daily_summary_in_background(settings, start, end, send, scope=True, cycle_key=cycle_key)
 
     def run_daily_summary_in_background(self, settings, start: str, end: str, send: bool,
-                                        mark_sent: bool = False, scope: bool = False):
+                                        mark_sent: bool = False, scope: bool = False, cycle_key=None):
         self.ds_busy = True
         self.set_daily_summary_status("กำลังส่ง..." if send else "กำลังสร้างตัวอย่าง...", "#88c0d0")
 
         def worker():
+            summary_messages = []
+            delivery_started = False
+            def note_delivery_start():
+                nonlocal delivery_started
+                delivery_started = True
             try:
+                from core.report_staging import cache_root
+                cache = cache_root(self.config)
+                if os.path.isdir(os.path.join(cache, "slots")):
+                    settings.options["runtime_autopacking_dir"] = cache
                 if as_bool(settings.opt("fresh_raw_export"), True):
                     try:
                         folder = self.export_raw_for_daily_summary(start, end)
@@ -3826,12 +3907,16 @@ class App(ctk.CTk):
                         settings.raw_dir = folder
                 with contextlib.ExitStack() as send_record:
                     if send:
-                        send_record.enter_context(sent_messages.recording(
+                        summary_messages = send_record.enter_context(sent_messages.recording(
                             self.sent_messages_path(), "daily_summary",
                             f"สรุปรายวัน {datetime.fromisoformat(start):%Y-%m-%d}", log=self.write_log))
                     result = daily_summary.run(
                         settings, datetime.fromisoformat(start), datetime.fromisoformat(end),
-                        log=self.write_log, send_to_feishu=send, scope=scope)
+                        log=self.write_log, send_to_feishu=send, scope=scope, preserve_window=self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True), on_delivery_start=note_delivery_start)
+                if cycle_key:
+                    if not summary_messages:
+                        raise RuntimeError("Summary completed without a confirmed message")
+                    self.summary_ledger().finish(cycle_key, True)
                 if mark_sent:
                     self.mark_daily_summary_sent(datetime.fromisoformat(start).date().isoformat())
                 folder = os.path.dirname(result["sections"][0].image or "") if result["sections"] else ""
@@ -3847,6 +3932,8 @@ class App(ctk.CTk):
                     elif folder and os.path.isdir(folder):
                         os.startfile(folder)
             except Exception as exc:
+                if cycle_key:
+                    self.summary_ledger().finish(cycle_key, False, uncertain=delivery_started)
                 self.write_log(f"Daily summary failed — {exc}", level="ERROR")
                 self.set_daily_summary_status(f"ไม่สำเร็จ: {exc}", "#d3868e")
             finally:
@@ -4130,6 +4217,16 @@ class App(ctk.CTk):
         except Exception:
             roll = 13
         now = datetime.now()
+        cycle = (getattr(self, "auto_run_settings", None) or {}).get("cycle_range")
+        if getattr(self, "scheduler_running", False) and cycle and now <= datetime.fromisoformat(cycle[1]) + timedelta(minutes=self.scheduler_run_minute + 1):
+            return datetime.fromisoformat(cycle[0]).date(), datetime.fromisoformat(cycle[1]).date()
+        if self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True):
+            try:
+                recovered = self.summary_ledger().recover_cycle(now)
+                if recovered:
+                    return recovered
+            except (OSError, ValueError):
+                pass
         start = now.date() if now.hour >= roll else now.date() - timedelta(days=1)
         return start, start + timedelta(days=1)
 
@@ -4191,7 +4288,9 @@ class App(ctk.CTk):
     def check_shift_date_roll(self):
         """เช็คทุกนาทีว่าข้ามจุดตัดวันหรือยัง — โปรแกรมเปิดค้างข้ามวันได้"""
         try:
-            self.apply_shift_dates(reason="ข้ามรอบงานใหม่")
+            cycle = (getattr(self, "auto_run_settings", None) or {}).get("cycle_range")
+            if not cycle or datetime.now() > datetime.fromisoformat(cycle[1]) + timedelta(minutes=self.scheduler_run_minute + 1):
+                self.apply_shift_dates(reason="ข้ามรอบงานใหม่")
         except Exception:
             pass
         self.after(60000, self.check_shift_date_roll)
@@ -6597,9 +6696,21 @@ class App(ctk.CTk):
             # execution time. Manual DATA EXPORT keeps its explicitly selected
             # range from prepare_dws_jms_settings().
             run_settings = dict(run_settings)
+            report_window = None
             if self.current_run_source in ("auto", "manual"):
-                run_settings["time_range"] = self.get_report_time_range()
+                from core.report_window import ReportWindow
+                cycle = run_settings.get("cycle_range")
+                if self.current_run_source == "auto":
+                    cycle = tuple(value.isoformat() for value in self.get_scheduler_time_range())
+                if cycle:
+                    start, end = map(datetime.fromisoformat, cycle)
+                    report_window = ReportWindow.capture(start, end, datetime.now())
+                    run_settings["time_range"] = (start.isoformat(sep=" "), report_window.cutoff.isoformat(sep=" "))
+                else:
+                    run_settings["time_range"] = self.get_report_time_range()
             self.active_run_settings = run_settings
+            if report_window is not None and self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True):
+                self.summary_ledger().remember_cycle(report_window, self.config.get("DAILY_SUMMARY", "chat_id", fallback="").strip() or run_settings.get("chat_id", ""))
             if run_generation is None:
                 run_generation = self.begin_run_request()
             else:
@@ -6672,7 +6783,7 @@ class App(ctk.CTk):
             if wanted("excel"):
                 pipeline_error_key = "excel"
                 self.set_pipeline_state("excel", "run")
-                run_create(out, log=self.write_log, is_running=lambda: self.running and self.is_run_generation_active(run_generation))
+                run_create(out, log=self.write_log, is_running=lambda: self.running and self.is_run_generation_active(run_generation), report_window=report_window)
                 if not self.is_run_generation_active(run_generation):
                     return
                 self.set_pipeline_state("excel", "ok")
@@ -6708,7 +6819,7 @@ class App(ctk.CTk):
                 self.set_progress(76)
                 # จำ message_id ทุกข้อความของรอบนี้ไว้ถอนทีหลัง (ปุ่ม ถอนข้อความ ในหน้า BOT REPORT)
                 send_record = contextlib.ExitStack()
-                send_record.enter_context(sent_messages.recording(
+                hourly_messages = send_record.enter_context(sent_messages.recording(
                     self.sent_messages_path(), "hourly",
                     f"รายงาน{'อัตโนมัติ' if self.mode == 'auto' else 'รันเอง'} {datetime.now():%H:%M}",
                     log=self.write_log))
@@ -6782,6 +6893,12 @@ class App(ctk.CTk):
             else:
                 self.set_pipeline_state("feishu", "skip")
 
+            if (report_window is not None and report_window.cutoff == report_window.end
+                    and self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True)
+                    and wanted("feishu") and wanted("excel") and not pipeline_had_warning
+                    and hourly_messages and still_running()):
+                self.summary_ledger().hourly_delivered(report_window, self.config.get("DAILY_SUMMARY", "chat_id", fallback="").strip() or run_settings.get("chat_id", ""))
+                self.write_log("Final hourly delivery complete; cycle summary queued", level="SUCCESS")
             self.set_progress(100)
             if pipeline_had_warning:
                 self.write_log(
@@ -6818,7 +6935,7 @@ class App(ctk.CTk):
 
             self.schedule_pipeline_reset(run_generation)
 
-    def daily_summary_tick(self):
+    def daily_summary_tick_legacy(self):
         """ตัวตั้งเวลาของสรุปรายวัน — เช็กทุก 30 วินาที ส่งวันละครั้งเมื่อถึงเวลาที่ตั้ง
 
         ทำงานเฉพาะตอนเปิด Auto และติ๊ก "ส่งอัตโนมัติทุกวัน" ไว้ ถ้ารอบรายชั่วโมงกำลังรัน
@@ -6858,6 +6975,36 @@ class App(ctk.CTk):
                     self.run_daily_summary_in_background(
                         self.daily_summary_settings(self.daily_summary_option_path("output_dir")),
                         start, end, send=True, mark_sent=True)
+        except Exception as exc:
+            self.write_log(f"Daily summary scheduler error — {exc}", level="ERROR")
+        finally:
+            self.after(30000, self.daily_summary_tick)
+
+    def summary_ledger(self):
+        from core.report_delivery import DeliveryLedger
+        return DeliveryLedger(os.path.join(os.path.dirname(os.path.abspath(CONFIG_FILE)), "report_delivery.json"))
+
+    def daily_summary_tick(self):
+        if not self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True):
+            return self.daily_summary_tick_legacy()
+        try:
+            if (as_bool(self.daily_summary_option("auto_send"), True)
+                    and not self.running and not getattr(self, "ds_busy", False)):
+                ledger = self.summary_ledger()
+                blocked = [item for item in ledger.read().values() if item["phase"] in ("sending", "uncertain") or item["phase"] == "ready" and item["attempts"] >= 3]
+                if blocked:
+                    self.set_daily_summary_status("มีสรุปค้าง/ไม่ทราบผลส่ง ตรวจประวัติข้อความก่อนกดสรุปเอง", "#ebcb8b")
+                pending = ledger.claim(self.daily_summary_now())
+                if pending:
+                    key, item = pending
+                    settings = self.daily_summary_settings(self.daily_summary_option_path("output_dir"))
+                    settings.chat_id = item["destination"]
+                    try:
+                        self.run_daily_summary_in_background(settings, item["start"], item["end"],
+                                                             send=True, scope=True, cycle_key=key)
+                    except Exception:
+                        self.summary_ledger().finish(key, False)
+                        raise
         except Exception as exc:
             self.write_log(f"Daily summary scheduler error — {exc}", level="ERROR")
         finally:

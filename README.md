@@ -5,6 +5,7 @@
 ## ความสามารถ
 - **Data Export (ตัวดึงยอด)** — ดึงยอดจาก MySQL DB ของ DWS และจาก JMS J&T API ออกมาเป็นไฟล์ Excel แล้วส่งเข้า Feishu
 - **Workbook Manager** — เปิด Excel แคปภาพชีตตามช่วงเวลา แล้วส่งรูปเข้า Feishu chat
+- **Python Report Calculation (2.2.0)** — คำนวณแม่แบบ AutoPacking และ DWS/PDA ด้วยโปรแกรม แล้วสร้างไฟล์ตัวเลขแยกใน `calculated_workbooks` โดยไม่ Refresh Power Query; Excel ยังใช้แคปภาพ ปิดสวิตช์ “คำนวณรายงานด้วยโปรแกรม” ในหน้าไฟล์ Excel เพื่อใช้วิธีเดิมได้
 - **DWS Plan Controller** — สั่งเปลี่ยนแพลนการคัดแยก (sorting plan) ของเครื่อง DWS หลายเครื่องพร้อมกันผ่าน HTTP
 - **JMS User Bot** — รับคำสั่งภาษาไทยผ่าน Feishu แล้วไป reset รหัส / ปลดล็อก user บนระบบ JMS
 - **JMS Access Policy** — จัดการหัวรหัสที่บล็อกและรหัสละเว้นแบบวางหลายรายการ ค้นหา นำเข้า และส่งออก
