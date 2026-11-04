@@ -2057,7 +2057,16 @@ DWS_SITE_SECTIONS = ("dws", "dws_pda")
 
 def build(settings: Settings, window: Window, work_dir: str,
           log: LogFunc = _noop, is_running: RunFunc = _always,
-          run_started: Optional[datetime] = None, trim_to_activity: bool = False) -> Dict[str, Any]:
+          run_started: Optional[datetime] = None, trim_to_activity: bool = False,
+          trim_columns: Optional[bool] = None, data_until: Optional[datetime] = None) -> Dict[str, Any]:
+    """trim_columns=False = แสดงทุกคอลัมน์ของช่วง (รายงานรายชั่วโมงยาวถึงจบรอบ ชั่วโมงที่ยังไม่ถึงเป็น 0)
+    data_until ใช้ใน run() — build ไม่ใช้แล้ว เก็บไว้ให้เรียกแบบเดิมได้"""
+    return _build(settings, window, work_dir, log, is_running, run_started, trim_to_activity,
+                  trim_to_activity if trim_columns is None else trim_columns)
+
+
+def _build(settings: Settings, window: Window, work_dir: str, log: LogFunc, is_running: RunFunc,
+           run_started: Optional[datetime], trim_to_activity: bool, trim_columns: bool) -> Dict[str, Any]:
     """คำนวณ + วาดรูป + เขียนไฟล์ดิบ คืน {sections, raw_file, warnings}
 
     trim_to_activity (สรุป Manual ตามช่วงที่เลือกเอง): ตารางรายชั่วโมงของแต่ละหน้างานแสดงเฉพาะ
@@ -2127,7 +2136,7 @@ def build(settings: Settings, window: Window, work_dir: str,
             ap_totals = autopack_summary(table)["grand"]["hours"]
             labels = window.labels_for_hourly_totals(ap_totals, trailing_total=trailing)
             ap_span = window.active_span(ap_totals, trailing_total=trailing)
-            if trim_to_activity and ap_span:
+            if trim_columns and ap_span:
                 ap_window = window.sub(*ap_span)
                 _say(log, f"Daily summary: AutoPacking ทำงาน {labels['start']}-{labels['end']}")
 
@@ -2154,7 +2163,7 @@ def build(settings: Settings, window: Window, work_dir: str,
                 if any(totals.values()):
                     dws_labels = window.labels_for_hourly_totals(totals, trailing_total=trailing)
                     dws_span = window.active_span(totals, trailing_total=trailing)
-                    if trim_to_activity and dws_span:
+                    if trim_columns and dws_span:
                         dws_window = window.sub(*dws_span)
                         _say(log, f"Daily summary: DWS ทำงาน {dws_labels['start']}-{dws_labels['end']}")
             except Exception as exc:
@@ -2468,17 +2477,22 @@ def save_excel_copy(result: Dict[str, Any], folder: str, log: LogFunc = _noop) -
 def run(settings: Settings, start: datetime, end: datetime, log: LogFunc = _noop,
         is_running: RunFunc = _always, run_started: Optional[datetime] = None,
         send_to_feishu: bool = True, work_dir: Optional[str] = None,
-        scope: bool = False) -> Dict[str, Any]:
+        scope: bool = False, data_until: Optional[datetime] = None,
+        trim_columns: Optional[bool] = None) -> Dict[str, Any]:
     """scope = สรุป Manual ตามช่วงที่เลือกเอง: ใช้ทุกชั่วโมงของช่วงนั้น (เกิน 24 ชม. ได้)
     แล้วตัดคอลัมน์ตารางของแต่ละหน้างานตามชั่วโมงที่ทำงานจริง"""
     if scope:
         window = scope_window(start, end, settings.opt_int("shift_b_start"))
+        if data_until is not None and window.start < data_until < window.end:
+            # คอลัมน์ยาวถึง end แต่อ่านข้อมูลแค่ถึง data_until (ช่องหลังจากนั้น = ยังมาไม่ถึง)
+            window = Window(start=window.start, end=data_until, hours=window.hours,
+                            shift_b_start=window.shift_b_start)
     else:
         window = make_window(start, end, settings.opt_int("day_end_hour"), settings.opt_int("shift_b_start"))
     work_dir = work_dir or os.path.join(settings.output_dir or settings.raw_dir or ".", "DailySummary")
     _say(log, f"Daily summary: รอบ {window.start:%Y-%m-%d %H:%M} -> {window.end:%Y-%m-%d %H:%M}", "START")
     result = build(settings, window, work_dir, log=log, is_running=is_running, run_started=run_started,
-                   trim_to_activity=scope)
+                   trim_to_activity=scope, trim_columns=trim_columns, data_until=data_until)
     # บันทึกไฟล์ Excel ก่อนส่ง — ส่ง Feishu ไม่สำเร็จไฟล์ก็ยังอยู่ (ปุ่มสร้างตัวอย่างไม่บันทึก)
     if send_to_feishu and settings.opt("backup_dir") and is_running():
         try:

@@ -311,12 +311,34 @@ PIPELINE_STEPS = [
     ("jms_auto", "PDA AUTO", "\U0001F4E6", True),
     ("jms_pda", "PDA DWS", "\U0001F4F2", True),
     ("realtime", "Realtime DB", "\U0001F9ED", True),
-    ("excel", "Excel Image", "\U0001F5BC", True),
-    ("dashboard", "Dashboard", "\U0001F4CA", False),
+    # ช่องเดียวสำหรับทำตาราง เลือกแบบได้ 1 ใน 3 (REPORT_MODES) — แทนช่อง Excel Image + Dashboard เดิม
+    ("report", "ตาราง", "\U0001F5BC", True),
     ("feishu", "Feishu", "\U0001F680", True),
 ]
 
+# แบบของตารางในช่อง "ตาราง" (key ภายใน, ชื่อใน Combobox) — key ใช้เป็นชื่อขั้นตอนใน steps
+REPORT_MODES = (
+    ("excel", "Excel Image"),
+    ("dashboard", "Dashboard"),
+    ("program", "Pillow"),  # คำนวณยอดด้วย Python แล้ววาดตารางเป็นรูปด้วย Pillow (PIL) ตัวเดียวกับสรุปรายวัน
+)
+REPORT_MODE_KEYS = tuple(key for key, _ in REPORT_MODES)
+
+
+def report_mode_steps(enabled: bool, mode: str) -> Dict[str, bool]:
+    """excel / dashboard / program อันไหนทำในรอบนี้ (ทำได้อย่างเดียว)"""
+    mode = mode if mode in REPORT_MODE_KEYS else "excel"
+    return {key: bool(enabled) and key == mode for key in REPORT_MODE_KEYS}
+
+
 # ขั้นตอนที่ต้องมีไฟล์ดิบพร้อมก่อน (ใช้ตัดสินว่าต้องเช็ค config DWS/JMS ไหม)
+# ตารางของรายงานรายชั่วโมงแบบคำนวณด้วยโปรแกรม (ตอนไม่ได้ติ๊ก Excel Image) และชื่อกำกับรูปในการ์ด
+HOURLY_PROGRAM_TABLES = {
+    "autopacking": "ยอดพัสดุ AutoPacking",
+    "dws": "ยอดพัสดุ DWS และ ยอด PDA แสกนพัสดุลงรถ",
+    "auto_pda": "ยอด PDA แสกนบรรจุกระสอบพัสดุกรงแดง",
+}
+
 RAW_STEP_KEYS = ("dws_mirror", "dws", "jms_auto", "jms_pda", "realtime")
 
 
@@ -1546,6 +1568,8 @@ class App(ctk.CTk):
             if getattr(self, "step_vars", None):
                 for key, var in self.step_vars.items():
                     self.config["DWS_JMS"][f"step_{key}"] = str(var.get()).lower()
+            if "report_mode_var" in self.__dict__:
+                self.config["DWS_JMS"]["report_mode"] = self.report_mode()
             for _attr, _key in [
                 ("db_host_entry", "db_host"),
                 ("db_port_entry", "db_port"),
@@ -1769,9 +1793,7 @@ class App(ctk.CTk):
 
         return {
             "out": out,
-            "steps": {key: (self.step_vars[key].get()
-                            if key in self.step_vars else default_on)
-                      for key, _, _, default_on in PIPELINE_STEPS},
+            "steps": self.selected_steps(),
             "raw_folder": raw_folder,
             "db_config": self.get_dws_db_config(),
             "dws_names": {
@@ -1907,11 +1929,25 @@ class App(ctk.CTk):
 
     def make_stage(self, parent, col, key, title, icon, default_on=True):
         stage = ctk.CTkFrame(parent, fg_color="#323847", corner_radius=18, border_width=1, border_color="#434c5e", height=118)
-        stage.grid(row=0, column=col, padx=8, pady=8, sticky="ew")
+        # แถว 0 ของ parent เว้นไว้ให้ Combobox เลือกแบบตารางที่อยู่เหนือช่อง "ตาราง"
+        stage.grid(row=1, column=col, padx=8, pady=(0, 8), sticky="ew")
         stage.grid_propagate(False)
         stage.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(stage, text=icon, font=ctk.CTkFont(size=22)).grid(row=0, column=0, padx=12, pady=(10, 0))
-        ctk.CTkLabel(stage, text=title, text_color="#d8dee9", font=ctk.CTkFont(size=13, weight="bold")).grid(row=1, column=0, padx=12, pady=(0, 2))
+        if key == "report":
+            # เลือกแบบตาราง 1 ใน 3 ที่ Combobox เหนือช่อง — ชื่อในช่องเปลี่ยนตามที่เลือก
+            self.report_mode_var = ctk.StringVar(value=dict(REPORT_MODES)["excel"])
+            mode_box = ctk.CTkOptionMenu(
+                parent, variable=self.report_mode_var, values=[text for _, text in REPORT_MODES],
+                height=26, font=ctk.CTkFont(size=12, weight="bold"),
+                dropdown_font=ctk.CTkFont(size=12),
+                dynamic_resizing=False, command=lambda _value: self.save_config())
+            mode_box.grid(row=0, column=col, padx=8, pady=(0, 6), sticky="ew")
+            self.lockable_inputs.append(mode_box)
+            ctk.CTkLabel(stage, textvariable=self.report_mode_var, text_color="#d8dee9",
+                         font=ctk.CTkFont(size=13, weight="bold")).grid(row=1, column=0, padx=12, pady=(0, 2))
+        else:
+            ctk.CTkLabel(stage, text=title, text_color="#d8dee9", font=ctk.CTkFont(size=13, weight="bold")).grid(row=1, column=0, padx=12, pady=(0, 2))
         status = ctk.CTkLabel(stage, text="READY", text_color="#aeb8cc", font=ctk.CTkFont(size=11, weight="bold"))
         status.grid(row=2, column=0, padx=12, pady=(0, 4))
 
@@ -1937,6 +1973,12 @@ class App(ctk.CTk):
             "error": ("#4a3438", "#bf616a", "ERROR", "#d3868e"),
             "skip": ("#434c5e", "#5e6779", "SKIP", "#d8dee9"),
         }
+        if key in REPORT_MODE_KEYS:
+            # excel / dashboard / program แสดงที่ช่อง "ตาราง" ช่องเดียว
+            active = self.__dict__.get("active_report_mode")
+            if state == "skip" and active is not None and active != key:
+                return
+            key = "report"
         targets = [key] if key else list(getattr(self, "pipeline_widgets", {}).keys())
         for k in targets:
             w = self.pipeline_widgets.get(k)
@@ -3708,6 +3750,46 @@ class App(ctk.CTk):
             settings.chat_id = clean_input_value(active["chat_id"], collapse_internal_spaces=True)
         return settings
 
+    def send_program_hourly_tables(self, report_start, report_end, run_settings, is_running,
+                                   with_summary=True):
+        """รายงานรายชั่วโมงแบบไม่ใช้ Excel: ทำตารางเหมือนสรุปรายวันทุกอย่าง (ต้นรอบถึงชั่วโมงที่จบล่าสุด
+        คอลัมน์ยาวถึงจบรอบ) แต่ส่งแบบรายงานรายชั่วโมงเดิม — การ์ดเข้ากลุ่มรายชั่วโมง"""
+        start = datetime.fromisoformat(str(report_start))
+        end = datetime.fromisoformat(str(report_end)).replace(minute=0, second=0, microsecond=0)
+        if end <= start:
+            self.write_log("ตารางรายชั่วโมง: ยังไม่มีชั่วโมงที่จบในรอบนี้ ข้ามการส่ง", level="WARN")
+            return None
+        settings = self.daily_summary_settings(self.daily_summary_option_path("output_dir"))
+        options = dict(settings.options)
+        for key in daily_summary.DEFAULTS:
+            if key.endswith("_image"):
+                options[key] = ""  # ไม่ใช้รูปจาก Excel
+        # 3 ตารางเหมือนการ์ดรายชั่วโมงเดิม เรียงตามเดิม
+        options["sections"] = ",".join(HOURLY_PROGRAM_TABLES)
+        settings.options = options
+        # คอลัมน์ยาวจนจบรอบงาน (เช่นถึง 11点-12点) ชั่วโมงที่ยังมาไม่ถึงเว้นว่างไว้
+        cycle_end = end
+        try:
+            scheduled_end = self.get_scheduler_time_range()[1]
+            if end < scheduled_end <= start + timedelta(days=2):
+                cycle_end = scheduled_end
+        except Exception:
+            pass
+        work_dir = os.path.join(settings.output_dir or settings.raw_dir or ".", "HourlyTables")
+        self.write_log(f"ตารางรายชั่วโมง (คำนวณด้วยโปรแกรม): {start:%Y-%m-%d %H:%M} -> {end:%Y-%m-%d %H:%M} "
+                       f"(ตารางถึง {cycle_end:%H:%M})", level="START")
+        result = daily_summary.run(settings, start, cycle_end, log=self.write_log, is_running=is_running,
+                                   send_to_feishu=False, work_dir=work_dir, scope=True,
+                                   data_until=end, trim_columns=False)
+        images = [(HOURLY_PROGRAM_TABLES.get(section.key, section.title.split("|")[0].strip()), section.image)
+                  for section in result["sections"] if section.image]
+        if not images:
+            raise Exception("ไม่มีตารางให้ส่งเลย — " + "; ".join(result["warnings"]))
+        if is_running():
+            Botmessage.run_send_images(images, log=self.write_log, is_running=is_running,
+                                       with_summary=with_summary)
+        return result
+
     def set_daily_summary_status(self, text, color="#aeb8cc"):
         if not self.is_ui_thread():
             self.run_on_ui_thread(self.set_daily_summary_status, text, color)
@@ -4054,13 +4136,21 @@ class App(ctk.CTk):
             for key, _, _, default_on in PIPELINE_STEPS:
                 if key in RAW_STEP_KEYS:
                     fallback = legacy_export and default_on
-                elif key == "dashboard":
-                    fallback = legacy_dash
                 else:
                     fallback = legacy_chat
                 raw = dws.get(f"step_{key}")
                 value = as_bool(raw, fallback) if raw not in (None, "") else fallback
                 self.step_vars[key].set(value)
+            mode = str(dws.get("report_mode", "")).strip()
+            if mode not in REPORT_MODE_KEYS:
+                # เครื่องที่ยังเป็นสองช่องเดิม: Excel ติ๊ก = Excel, ไม่งั้น Dashboard ติ๊ก = Dashboard,
+                # ไม่ติ๊กทั้งคู่ = ตารางโปรแกรม (พฤติกรรมเดิมตอนไม่ติ๊ก Excel Image)
+                raw_excel, raw_dash = dws.get("step_excel"), dws.get("step_dashboard")
+                old_excel = as_bool(raw_excel, legacy_chat) if raw_excel not in (None, "") else legacy_chat
+                old_dash = as_bool(raw_dash, legacy_dash) if raw_dash not in (None, "") else legacy_dash
+                mode = "excel" if old_excel else ("dashboard" if old_dash else "program")
+            if "report_mode_var" in self.__dict__:
+                self.report_mode_var.set(dict(REPORT_MODES)[mode])
         for _attr, _key, _default in [
             ("db_host_entry", "db_host", "10.30.32.10"),
             ("db_port_entry", "db_port", "3306"),
@@ -4726,8 +4816,22 @@ class App(ctk.CTk):
 
     def selected_steps(self):
         """ขั้นตอนที่ติ๊กไว้ตอนนี้ — key -> True/False"""
-        return {key: (self.step_vars[key].get() if key in self.step_vars else default_on)
-                for key, _, _, default_on in PIPELINE_STEPS}
+        steps = {key: (self.step_vars[key].get() if key in self.step_vars else default_on)
+                 for key, _, _, default_on in PIPELINE_STEPS}
+        steps.update(report_mode_steps(steps.get("report", True), self.report_mode()))
+        return steps
+
+    def report_mode(self) -> str:
+        """แบบตารางที่เลือกใน Combobox ของช่อง "ตาราง" (excel / dashboard / program)"""
+        var = self.__dict__.get("report_mode_var")
+        if var is not None and self.is_ui_thread():
+            label = var.get()
+            for key, text in REPORT_MODES:
+                if text == label:
+                    return key
+        dws = self.config["DWS_JMS"] if "DWS_JMS" in self.config else {}
+        mode = str(dws.get("report_mode", "")).strip()
+        return mode if mode in REPORT_MODE_KEYS else "excel"
 
     def validate_run_selection(self):
         steps = self.selected_steps()
@@ -6627,8 +6731,11 @@ class App(ctk.CTk):
                 f"Report data range: {report_start} -> {report_end}",
                 level="INFO")
 
-            steps = run_settings.get("steps") or {
-                key: default_on for key, _, _, default_on in PIPELINE_STEPS}
+            steps = run_settings.get("steps") or dict(
+                {key: default_on for key, _, _, default_on in PIPELINE_STEPS},
+                **report_mode_steps(True, "excel"))
+            # ช่อง "ตาราง" มีแบบเดียวต่อรอบ — สถานะของแบบอื่นไม่ต้องไปทับช่องนี้
+            self.active_report_mode = next((k for k in REPORT_MODE_KEYS if steps.get(k)), None)
             pipeline_had_warning = False
 
             def wanted(key):
@@ -6738,7 +6845,18 @@ class App(ctk.CTk):
 
                     # เงียบหายไปเฉย ๆ ตอนไม่มีอะไรให้ส่งทำให้หาสาเหตุยาก
                     # ต้องบอกว่าทำไม ไม่ใช่ขึ้นแค่ว่าเริ่มส่งแล้วจบ
-                    if not blocks and not wanted("dashboard"):
+                    # ไม่ได้ติ๊ก Excel Image = ใช้ตารางที่คำนวณด้วยโปรแกรม (ตัวเดียวกับสรุปรายวัน) แทนรูปจาก Excel
+                    if wanted("program") and still_running():
+                        self.set_pipeline_state("program", "run")
+                        try:
+                            self.send_program_hourly_tables(report_start, report_end, run_settings, still_running,
+                                                            with_summary=self.summary_header_enabled())
+                            self.set_pipeline_state("program", "ok")
+                        except Exception as exc:
+                            pipeline_had_warning = True
+                            self.set_pipeline_state("program", "error")
+                            self.write_log(f"ตารางรายชั่วโมง (คำนวณด้วยโปรแกรม) ส่งไม่สำเร็จ — {exc}", level="ERROR")
+                    elif not blocks and not wanted("dashboard"):
                         self.write_log(
                             "ไม่มีอะไรให้ส่ง — รูปตารางมาจากขั้นตอน Excel Image "
                             "ถ้าไม่ติ๊กไว้จะไม่มีรูปใหม่ให้ส่ง",
@@ -6792,6 +6910,8 @@ class App(ctk.CTk):
                     send_record.close()
             else:
                 self.set_pipeline_state("feishu", "skip")
+                if wanted("program"):
+                    self.set_pipeline_state("program", "skip")  # ตารางโปรแกรมส่งพร้อมขั้นตอน Feishu
 
             self.set_progress(100)
             if pipeline_had_warning:

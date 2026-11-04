@@ -226,7 +226,15 @@ class SchedulerRegressionTests(unittest.TestCase):
         )
 
     def test_dashboard_pipeline_step_remains_available_on_bot_report(self) -> None:
-        self.assertIn("dashboard", [step[0] for step in bot_main.PIPELINE_STEPS])
+        self.assertIn("dashboard", bot_main.REPORT_MODE_KEYS)
+        self.assertIn("report", [step[0] for step in bot_main.PIPELINE_STEPS])
+
+    def test_report_tile_runs_exactly_one_mode(self) -> None:
+        self.assertEqual(bot_main.report_mode_steps(True, "program"),
+                         {"excel": False, "dashboard": False, "program": True})
+        self.assertEqual(bot_main.report_mode_steps(True, "bogus"),
+                         {"excel": True, "dashboard": False, "program": False})
+        self.assertFalse(any(bot_main.report_mode_steps(False, "dashboard").values()))
 
     def test_data_export_backend_remains_available(self) -> None:
         self.assertTrue(callable(bot_main.App.run_dws_jms_task))
@@ -1290,6 +1298,58 @@ class ReportHourAlignmentTests(unittest.TestCase):
             Createphoto.validate_hour_formula_alignment(
                 Workbook(Worksheet(UsedRange(), AuditRange())),
                 ["DWSREALTIME"], 16)
+
+
+class ProgramHourlyTablesTests(unittest.TestCase):
+    def test_hourly_tables_use_summary_engine_without_excel_images(self) -> None:
+        import daily_summary as ds
+        settings = ds.Settings(output_dir="out", raw_dir="raw", name_auto="a.xlsx", name_dwspda="b.xlsx",
+                               name_dws="c.xlsx", autopacking_dir="ap", dws_files=[], abnormal_file="",
+                               app_id="id", app_secret="secret", chat_id="oc_summary",
+                               options={"autopacking_image": "AP.png"})
+        fake = mock.MagicMock()
+        fake.daily_summary_settings.return_value = settings
+        fake.get_scheduler_time_range.return_value = (datetime(2026, 11, 4, 13), datetime(2026, 11, 5, 12))
+        sections = [ds.Section("autopacking", "AutoPacking 13.00-2.00", image="ap.png"),
+                    ds.Section("dws", "DWS", image="dws.png"),
+                    ds.Section("auto_pda", "PDA", note="no file")]
+        with mock.patch.object(ds, "run", return_value={"sections": sections, "warnings": []}) as run,                 mock.patch.object(bot_main.Botmessage, "run_send_images") as send:
+            bot_main.App.send_program_hourly_tables(
+                fake, "2026-11-04 13:00:00", "2026-11-05 02:01:09", {}, lambda: True, with_summary=False)
+        args, kwargs = run.call_args
+        # ตารางยาวถึงจบรอบ 12:00 ยอดจริงถึงชั่วโมงที่จบล่าสุด (02:00) ที่เหลือเว้นว่าง
+        self.assertEqual(args[1:3], (datetime(2026, 11, 4, 13), datetime(2026, 11, 5, 12)))
+        self.assertEqual(kwargs["data_until"], datetime(2026, 11, 5, 2))
+        self.assertFalse(kwargs["trim_columns"])
+        self.assertTrue(kwargs["scope"])
+        self.assertFalse(kwargs["send_to_feishu"])  # ไม่ส่งแบบโพสต์สรุป
+        self.assertEqual(args[0].opt("autopacking_image"), "")
+        self.assertEqual(args[0].opt("sections"), "autopacking,dws,auto_pda")
+        # ส่งแบบการ์ดรายชั่วโมงเดิม เฉพาะตารางที่มีรูป
+        self.assertEqual(send.call_args.args[0], [("ยอดพัสดุ AutoPacking", "ap.png"),
+                                                  ("ยอดพัสดุ DWS และ ยอด PDA แสกนพัสดุลงรถ", "dws.png")])
+        self.assertFalse(send.call_args.kwargs["with_summary"])
+
+    def test_program_tables_go_out_as_one_hourly_card(self) -> None:
+        import Botmessage
+        with tempfile.TemporaryDirectory() as tmp:
+            image = os.path.join(tmp, "ap.png")
+            open(image, "wb").write(b"png")
+            with mock.patch.object(Botmessage, "get_feishu",
+                                   return_value={"CHAT_ID": "oc_hourly", "APP_ID": "a", "APP_SECRET": "s"}),                     mock.patch.object(Botmessage, "get_token", return_value="t"),                     mock.patch.object(Botmessage, "upload_image", return_value="img_1"),                     mock.patch.object(Botmessage, "send_as_card", return_value=True),                     mock.patch.object(Botmessage.card_report, "send_card") as send_card:
+                Botmessage.run_send_images([("AutoPacking", image), ("missing", os.path.join(tmp, "x.png"))],
+                                           log=lambda *a, **k: None, with_summary=False)
+        token, chat, card = send_card.call_args.args
+        self.assertEqual(chat, "oc_hourly")
+        self.assertIn("img_1", json.dumps(card))
+
+    def test_no_finished_hour_skips_sending(self) -> None:
+        fake = mock.MagicMock()
+        import daily_summary as ds
+        with mock.patch.object(ds, "run") as run:
+            self.assertIsNone(bot_main.App.send_program_hourly_tables(
+                fake, "2026-11-04 13:00:00", "2026-11-04 13:01:00", {}, lambda: True))
+        run.assert_not_called()
 
 
 class DashboardRegressionTests(unittest.TestCase):

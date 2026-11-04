@@ -219,6 +219,55 @@ def run_send_group(folder: str, group: str, log: Optional[LogFunc] = None,
         send_image_chat(token, cfg["CHAT_ID"], key)
 
 
+def run_send_images(images: List[Tuple[str, str]], log: Optional[LogFunc] = None,
+                    is_running: Optional[RunFunc] = None, with_summary: bool = True) -> None:
+    """ส่งรูปที่ระบุ [(คำบรรยาย, path)] แบบรายงานรายชั่วโมงเดิม — การ์ดใบเดียว (มียอดสรุปถ้าเปิดไว้)
+    ใช้กับตารางที่คำนวณด้วยโปรแกรมตอนไม่ได้ติ๊ก Excel Image"""
+    def write(msg: str) -> None:
+        log(msg) if log else print(msg)
+
+    cfg = get_feishu()
+    if not cfg["CHAT_ID"]:
+        raise Exception("Missing CHAT_ID")
+    if not cfg["APP_ID"] or not cfg["APP_SECRET"]:
+        raise Exception("Missing APP_ID / APP_SECRET")
+    images = [(caption, path) for caption, path in images if path and os.path.exists(path)]
+    if not images:
+        raise Exception("No images found")
+    token = get_token(cfg["APP_ID"], cfg["APP_SECRET"])
+    uploaded: List[Tuple[str, str]] = []
+    for caption, path in images:
+        if is_running and not is_running():
+            return
+        write(f"Uploading: {path}")
+        if send_ui:
+            try:
+                send_ui("upload")
+            except Exception:
+                pass
+        uploaded.append((caption, upload_image(token, path, log=write)))
+    if is_running and not is_running():
+        return
+    if send_ui:
+        try:
+            send_ui("send")
+        except Exception:
+            pass
+    if card_report and send_as_card():
+        summary = card_report.ensure_summary(log=write) if with_summary else None
+        try:
+            card = card_report.build_card(uploaded, summary)
+            write(f"Card size: {card_report.card_size(card):,} bytes")
+            card_report.send_card(token, cfg["CHAT_ID"], card)
+            return
+        except Exception as e:
+            write(f"Card failed, falling back to plain images: {e}")
+    for _caption, key in uploaded:
+        if is_running and not is_running():
+            return
+        send_image_chat(token, cfg["CHAT_ID"], key)
+
+
 def run_send(folder: str, log: Optional[LogFunc] = None, is_running: Optional[RunFunc] = None,
              with_summary: bool = True) -> None:
     global token_logger
