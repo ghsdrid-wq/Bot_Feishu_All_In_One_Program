@@ -2091,11 +2091,12 @@ def _build(settings: Settings, window: Window, work_dir: str, log: LogFunc, is_r
     ap_db_tried = False
 
     def load_autopack_db() -> Optional[AutopackDbData]:
-        """ยอด + Abnormal จาก WCS (สรุปรายวันเท่านั้น) — อ่านครั้งเดียว ไม่ได้ = None ใช้ไฟล์ NN.xlsx"""
+        """ยอด + Abnormal จาก WCS ทุกแบบ (สรุปอัตโนมัติ / กดเอง / ตาราง Pillow รายชั่วโมง)
+        อ่านครั้งเดียว ต่อฐานข้อมูลไม่ได้ = None แล้วใช้ไฟล์ NN.xlsx แทน"""
         nonlocal ap_db, ap_db_tried
         if not ap_db_tried:
             ap_db_tried = True
-            if trim_to_activity and settings.opt_bool("autopack_from_db") and settings.opt("wcs_db_user"):
+            if settings.opt_bool("autopack_from_db") and settings.opt("wcs_db_user"):
                 try:
                     ap_db = read_autopack_db(settings, window, log)
                     total = sum(row[2] for rows in ap_db.throughput.values() for row in rows)

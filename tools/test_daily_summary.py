@@ -406,18 +406,18 @@ class WcsDatabaseTests(unittest.TestCase):
         db.assert_called_once()
         read_files.assert_called_once()
 
-    def test_database_needs_a_user_and_is_manual_only(self) -> None:
+    def test_database_needs_a_user_and_serves_automatic_summaries_too(self) -> None:
         window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 3, 15))
         with tempfile.TemporaryDirectory() as tmp:
-            for user, manual in (("", True), ("reader", False)):
+            for user, manual, expected in (("", True, 0), ("reader", False, 1)):
                 settings = self._settings(tmp, user)
                 settings.options.update({"sections": "autopacking", "send_raw_file": "false"})
-                with mock.patch.object(ds, "read_autopack_db") as db, \
+                with mock.patch.object(ds, "read_autopack_db", side_effect=OSError("offline")) as db, \
                         mock.patch.object(ds, "read_autopack_throughput", return_value={}), \
                         mock.patch.object(ds, "dws_station_paths", return_value={}):
                     ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None,
                              trim_to_activity=manual)
-                db.assert_not_called()
+                self.assertEqual(db.call_count, expected)
 
 
 class DwsApiTests(unittest.TestCase):
