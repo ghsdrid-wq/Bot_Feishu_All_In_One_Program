@@ -8,7 +8,7 @@ import ctypes
 import threading
 import configparser
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, cast
 
 import pythoncom
@@ -1002,7 +1002,7 @@ def _safe_delete(path: str) -> None:
         pass
 
 
-def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = None, is_running: Optional[RunFunc] = None, report_window=None) -> None:
+def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = None, is_running: Optional[RunFunc] = None) -> None:
     """Workbook Manager version compatible with bot_main_war_room_v7.
 
     Important fix:
@@ -1033,15 +1033,6 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
         raise Exception("No enabled export sheets")
 
     start_hour = int(get_time_config().get("start_hour", 15))
-    # Compute accepted templates before starting Excel; originals stay untouched.
-    # Excel remains a renderer only for these values-only generated copies.
-    import report_workbooks
-    calculated_paths = report_workbooks.prepare(
-        config, workbooks, items, out_dir,
-        report_window.start.date() if report_window else date.fromisoformat(get_business_date(start_hour)), datetime.now(),
-        keep_running=keep_running, log=write, window=report_window)
-    if not keep_running():
-        return
     pythoncom.CoInitialize()
 
     excel: Any = None
@@ -1222,11 +1213,9 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
 
             write(f"[OPEN] {wb_item.display_name}")
 
-            program_calculated = wb_item.key in calculated_paths
-            workbook_path = calculated_paths.get(wb_item.key, wb_item.path)
             wb = cast(Any, excel_call(
-                lambda item_path=workbook_path: excel_app.Workbooks.Open(
-                    item_path,
+                lambda item=wb_item: excel_app.Workbooks.Open(
+                    item.path,
                     UpdateLinks=0,
                     ReadOnly=False,
                     IgnoreReadOnlyRecommended=True,
@@ -1245,14 +1234,10 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                 excel_app.ScreenUpdating = False
             except Exception as e:
                 write(f"[WARN] Could not enable low-load Excel mode: {e}")
-            if not program_calculated:
-                update_excel_date(wb, start_hour, log=write)
+            update_excel_date(wb, start_hour, log=write)
 
             excel_call(lambda workbook=wb: setattr(workbook, "Saved", True), write, f"mark workbook saved {wb_item.display_name}", timeout=60)
-            if program_calculated:
-                write(f"[REPORT] Values ready; skipping Power Query: {wb_item.display_name}")
-            else:
-                refresh_workbook_queries(wb, excel_app, keep_running, write)
+            refresh_workbook_queries(wb, excel_app, keep_running, write)
             if not keep_running():
                 return
 
@@ -1279,11 +1264,7 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                     continue
                 active_group.append(item)
 
-            dynamic_layouts = {}
-            if program_calculated and report_window is not None:
-                with open(workbook_path + ".evidence.json", encoding="utf-8") as handle:
-                    dynamic_layouts = json.load(handle).get("layouts", {})
-            delete_sheets = [x.sheet for x in active_group if x.delete_by_start and x.sheet not in dynamic_layouts]
+            delete_sheets = [x.sheet for x in active_group if x.delete_by_start]
             deleted_cols = delete_columns_by_start(wb, start_hour, delete_sheets, log=write) if delete_sheets else {}
             if delete_sheets:
                 validation_ranges = {
@@ -1294,10 +1275,9 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                     wb, delete_sheets, start_hour, log=write,
                     target_ranges=validation_ranges)
 
-            if not program_calculated:
-                write(f"[CALCULATE] Calculating {wb_item.display_name}")
-                excel_call(lambda: excel_app.CalculateFull(), write, f"calculate workbook {wb_item.display_name}", timeout=300)
-                wait_excel(excel_app, keep_running, write, timeout=300)
+            write(f"[CALCULATE] Calculating {wb_item.display_name}")
+            excel_call(lambda: excel_app.CalculateFull(), write, f"calculate workbook {wb_item.display_name}", timeout=300)
+            wait_excel(excel_app, keep_running, write, timeout=300)
             try:
                 excel_app.ScreenUpdating = True
             except Exception:
@@ -1314,13 +1294,6 @@ def run_create(*args, save_dir: Optional[str] = None, log: Optional[LogFunc] = N
                 if not item.delete_by_start:
                     write(f"[SKIP DELETE] {item.name}")
 
-                if item.sheet in dynamic_layouts:
-                    from openpyxl.utils.cell import get_column_letter, range_boundaries
-                    left, top, right, bottom = range_boundaries(item.cell_range)
-                    column_map = dynamic_layouts[item.sheet]["column_map"]
-                    left = column_map.get(str(left), left)
-                    right = column_map.get(str(right), right)
-                    rng = f"{get_column_letter(left)}{top}:{get_column_letter(right)}{bottom}"
                 export_range_as_image(wb, item, rng)
 
             time.sleep(0.5)

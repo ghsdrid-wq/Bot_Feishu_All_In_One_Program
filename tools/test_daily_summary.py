@@ -402,7 +402,7 @@ class WcsDatabaseTests(unittest.TestCase):
                     mock.patch.object(ds, "render_autopack_table", return_value="autopack.png"), \
                     mock.patch.object(ds, "dws_station_paths", return_value={}):
                 ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None,
-                         exact_window=True, autopack_db=True)
+                         trim_to_activity=True)
         db.assert_called_once()
         read_files.assert_called_once()
 
@@ -416,7 +416,7 @@ class WcsDatabaseTests(unittest.TestCase):
                         mock.patch.object(ds, "read_autopack_throughput", return_value={}), \
                         mock.patch.object(ds, "dws_station_paths", return_value={}):
                     ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None,
-                             autopack_db=manual)
+                             trim_to_activity=manual)
                 db.assert_not_called()
 
 
@@ -515,27 +515,6 @@ class Dws911DatabaseTests(unittest.TestCase):
 
 
 class BuildTests(unittest.TestCase):
-    def test_exact_window_titles_follow_populated_hours(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            config = configparser.RawConfigParser()
-            config["PATH"] = {"output_dir": tmp, "autopacking_dir": tmp}
-            config["DWS_JMS"] = {"raw_path": tmp}
-            ds.ensure_defaults(config)
-            config[ds.SECTION]["sections"] = "autopacking"
-            config[ds.SECTION]["send_raw_file"] = "false"
-            with mock.patch("core.dws_mirror.plan", return_value=[]):
-                settings = ds.settings_from_config(config)
-            window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 4, 13))
-            throughput = {14: [["58987-001", 1, 2_000]], 9: [["58987-001", 1, 2_000]]}
-            with mock.patch.object(ds, "read_autopack_throughput", return_value=throughput), \
-                    mock.patch.object(ds, "render_autopack_table", return_value="autopack.png") as render, \
-                    mock.patch.object(ds, "dws_station_paths", return_value={}):
-                result = ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None,
-                                  exact_window=True)
-        self.assertIn("เวลา 14.00-10.00", result["sections"][0].title)
-        # ตารางยังแสดงทุกชั่วโมงของช่วง (ไม่ตัดคอลัมน์)
-        self.assertEqual(len(render.call_args.args[0].window.hours), 24)
-
     def test_build_uses_populated_autopacking_columns_in_post_titles(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = configparser.RawConfigParser()

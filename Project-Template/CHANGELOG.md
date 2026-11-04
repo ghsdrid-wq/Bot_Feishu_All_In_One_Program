@@ -1,20 +1,5 @@
 # Changelog
 
-## 2.3.0 (test build)
-
-- Generate dated hourly columns through the selected cycle end, including 12-13 and 13-14, with matching totals, rates, shift totals and image ranges. Preserve threshold/error-count rules; include completed hours only and exclude events exactly at cycle end.
-- Preserve Auto snapshots by calendar hour across reset; missing uncaptured hours fail explicitly. Identify missing/out-of-window DWS snapshots in headings/evidence.
-- Queue automatic summaries after confirmed final hourly delivery, persist cycle/send state across restarts, hold ambiguous sends for manual review and retain manual controls. Legacy Excel mode retains the old timer. Avoid recounting extended hours in the next automatic cycle.
-- Verified 135 tests, real Tk settings, 2,742 baseline numeric cells and native Excel opening. Live share/reset/image/delivery acceptance remains pending.
-
-## 2.2.0 (in development)
-
-- Calculate accepted AutoPacking and DWS/PDA report templates in Python and write separate numeric XLSX outputs without Power Query or Excel formula recalculation.
-- Preserve template styles/layouts, business-day and start-hour rules, source-language aliases, strict missing/changing-source handling, cancellation and atomic output replacement.
-- Remove cached source rows/unused shared strings from temporary template snapshots and use compact source counters instead of full raw-row lists.
-- Add the Workbook Manager calculation-mode switch with an explicit legacy fallback. Excel image capture is retained.
-- Verify all 3,673 formula cells against native Excel using synthetic data and reopen generated reports with no refresh/formula dependencies. Live SMB/source acceptance remains pending.
-
 ## 2.1.13
 
 - Daily Summary has two modes. Automatic sends keep the round from Auto's start hour and never send or catch up after 13:00 (`AUTO_SEND_CUTOFF_HOUR`), and the send-time hour list stops at 12. A manual send uses the range picked on the summary page ("ช่วงที่สรุป (กดเอง)": start date + hour to end date + hour). The range may exceed 24 hours, for example 2026-10-28 12:00 to 2026-10-29 13:00, giving 12点-13点 twice. The bot detects when AutoPacking and DWS actually worked and cuts each site's hourly tables to those hours (AutoPacking + PDA 人工建包 by AutoPacking totals, DWS + PDA unloading by the DWS 合计 row).

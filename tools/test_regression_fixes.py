@@ -1021,23 +1021,6 @@ class MetricsRegressionTests(unittest.TestCase):
         self.assertEqual(rows, [("2026-09-27", "DWS2"),
                                 ("2026-09-28", "DWS1")])
 
-    def test_summary_ledger_releases_cycle_whose_final_run_never_happened(self) -> None:
-        from core.report_delivery import DeliveryLedger
-        from core.report_window import ReportWindow
-        with tempfile.TemporaryDirectory() as tmp:
-            ledger = DeliveryLedger(os.path.join(tmp, "delivery.json"))
-            window = ReportWindow(datetime(2026, 11, 3, 13), datetime(2026, 11, 4, 13),
-                                  datetime(2026, 11, 4, 12))
-            ledger.remember_cycle(window, "chat")
-            old = ReportWindow(datetime(2026, 10, 1, 13), datetime(2026, 10, 2, 13), datetime(2026, 10, 2, 12))
-            ledger.remember_cycle(old, "chat")
-            self.assertEqual(ledger.release_overdue(datetime(2026, 11, 4, 13, 30)), [])
-            released = ledger.release_overdue(datetime(2026, 11, 4, 13, 50))
-            self.assertEqual([item["end"] for item in released], ["2026-11-04T13:00:00"])
-            self.assertIsNotNone(ledger.claim(datetime(2026, 11, 4, 13, 50)))
-            # รอบเก่าที่ค้างมานานไม่ถูกปล่อย (กันส่งสรุปเก่ารัว ๆ หลังอัปเดต)
-            self.assertEqual(ledger.read()[old.key]["phase"], "awaiting_hourly")
-
     def test_card_stale_check_ignores_hours_left_from_another_start_hour(self) -> None:
         # 2026-10-28: รอบเริ่ม 12:00 เก็บแถว 12:00 ไว้ แล้วเปลี่ยนเป็นเริ่ม 15:00 — ทั้งคืนต้องยังเก็บใหม่
         self.assertTrue(card_report._lags_behind([12], 15, 5))
@@ -1140,7 +1123,6 @@ class DailySummaryTimerTests(unittest.TestCase):
         app = bot_main.App.__new__(bot_main.App)
         app.config = configparser.RawConfigParser()
         app.config["DAILY_SUMMARY"] = {"auto_send": "true", "send_time": "12:20", "last_sent_date": last_sent}
-        app.config["REPORT_CALCULATION"] = {"enabled": "false"}
         app.config["TIME"] = {"start_hour": "14"}  # รอบสรุปแบบ Auto เริ่มตามเวลาเริ่มของ Auto
         app.ui_thread_id = -1
         app.scheduler_running = True
@@ -1173,7 +1155,6 @@ class DailySummaryTimerTests(unittest.TestCase):
     def test_timer_sends_finished_round_when_new_round_starts_before_send_time(self) -> None:
         # เริ่มรอบ 12:00 ส่ง 12:20: ตอน 12:20 รอบปัจจุบันเพิ่งเริ่ม ต้องส่งสรุปของรอบที่เพิ่งจบ
         app = self._app(last_sent="2026-10-25")
-        app.config["REPORT_CALCULATION"] = {"enabled": "false"}
         app.config["TIME"] = {"start_hour": "12"}
         app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-27 12:20:30")
         app.daily_summary_tick()
@@ -1181,7 +1162,6 @@ class DailySummaryTimerTests(unittest.TestCase):
         self.assertEqual(app.calls[0][0][1:3], ("2026-10-26 12:00:00", "2026-10-27 12:20:30"))
         # ส่งรอบ 26 ไปแล้ว: ตอน 12:24 ไม่ส่งรอบ 27 ที่เพิ่งเริ่ม
         app = self._app(last_sent="2026-10-26")
-        app.config["REPORT_CALCULATION"] = {"enabled": "false"}
         app.config["TIME"] = {"start_hour": "12"}
         app.daily_summary_now = lambda: datetime.fromisoformat("2026-10-27 12:24:35")
         app.daily_summary_tick()
@@ -1310,19 +1290,6 @@ class ReportHourAlignmentTests(unittest.TestCase):
             Createphoto.validate_hour_formula_alignment(
                 Workbook(Worksheet(UsedRange(), AuditRange())),
                 ["DWSREALTIME"], 16)
-
-
-class ReportSourceOfflineTests(unittest.TestCase):
-    def test_unreachable_dws_machine_is_skipped_not_fatal(self) -> None:
-        from datetime import date
-        from core.report_sources import Inputs
-        logs = []
-        with tempfile.TemporaryDirectory() as tmp:
-            inputs = Inputs({"DWS1": os.path.join(tmp, "offline", "DWS1.xlsx")},
-                            date(2026, 11, 4), datetime(2026, 11, 5, 1), log=logs.append, start_hour=13)
-            self.assertEqual(sum(inputs.counter("DWS1").values()), 0)
-        self.assertNotIn("DWS1", inputs.status)  # ไม่ไปแก้หัวตาราง
-        self.assertTrue(any("skipped" in line for line in logs))
 
 
 class DashboardRegressionTests(unittest.TestCase):

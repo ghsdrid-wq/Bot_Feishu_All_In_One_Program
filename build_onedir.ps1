@@ -42,16 +42,11 @@ if (-not (Test-Path $ExistingDistDir) -and (Test-Path $DistRoot)) {
 $ConfigBackupDir = Join-Path ([System.IO.Path]::GetTempPath()) (
     "AutoReportFeishu-config-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $ConfigBackupDir | Out-Null
-foreach ($Name in @("config.ini", "metrics_config.yaml", "jms_user_policy.json", "store.db", "report_delivery.json", "sent_messages.json")) {
+foreach ($Name in @("config.ini", "metrics_config.yaml", "jms_user_policy.json", "store.db")) {
     $Existing = Join-Path $ExistingDistDir $Name
     if (Test-Path $Existing) {
         Copy-Item -LiteralPath $Existing -Destination (Join-Path $ConfigBackupDir $Name) -Force
     }
-}
-
-$ExistingSourceCache = Join-Path $ExistingDistDir "out\source_cache"
-if (Test-Path -LiteralPath $ExistingSourceCache -PathType Container) {
-    Copy-Item -LiteralPath $ExistingSourceCache -Destination (Join-Path $ConfigBackupDir "source_cache") -Recurse -Force
 }
 
 $PythonExe = (Get-Command python).Source
@@ -179,17 +174,6 @@ if (Test-Path $SavedPolicy) {
 $SavedDb = Join-Path $ConfigBackupDir "store.db"
 if (Test-Path $SavedDb) {
     Copy-Item -LiteralPath $SavedDb -Destination (Join-Path $DistDir "store.db") -Force
-}
-foreach ($Name in @("report_delivery.json", "sent_messages.json")) {
-    $SavedState = Join-Path $ConfigBackupDir $Name
-    if (Test-Path -LiteralPath $SavedState) {
-        Copy-Item -LiteralPath $SavedState -Destination (Join-Path $DistDir $Name) -Force
-    }
-}
-$SavedCache = Join-Path $ConfigBackupDir "source_cache"
-if (Test-Path -LiteralPath $SavedCache -PathType Container) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $DistDir "out") | Out-Null
-    Copy-Item -LiteralPath $SavedCache -Destination (Join-Path $DistDir "out\source_cache") -Recurse -Force
 }
 Assert-ChildPath $ConfigBackupDir ([System.IO.Path]::GetTempPath())
 Remove-Item -LiteralPath $ConfigBackupDir -Recurse -Force

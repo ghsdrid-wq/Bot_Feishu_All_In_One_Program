@@ -81,9 +81,7 @@ def plan() -> list:
 
         folder = (section.get("pull_folder") or "").strip().replace('"', "")
         filename = (section.get("pull_file") or "").strip().replace('"', "")
-        spec = dict(_yaml_source(station))
-        if section.get("source_path", "").strip():
-            spec = {"path": section["source_path"].strip()}
+        spec = _yaml_source(station)
 
         # ไม่ได้ตั้งชื่อไฟล์ก็ใช้ชื่อเดิมของเครื่องนั้น
         if not filename:
