@@ -802,6 +802,7 @@ def read_time_column(path: str, column: str, filter_column: Optional[str] = None
 class DwsTable:
     window: Window
     rows: List[Tuple[str, str, Dict[int, int]]]  # (ชื่อ, กลุ่ม "dws"/"pda", ยอดรายชั่วโมง)
+    sources: Dict[str, str] = field(default_factory=dict)  # ชื่อ -> "api" / "db" / "file"
 
 
 def _shift_hours(window: Window, shift: str) -> List[int]:
@@ -1008,6 +1009,7 @@ def build_dws_table(settings: "Settings", window: Window, dws_pda_rows: List[Sca
     warnings: List[str] = []
     rows: List[Tuple[str, str, Dict[int, int]]] = []
     api_urls = dws_api_urls() if settings.opt_bool("dws_from_api") else {}
+    sources: Dict[str, str] = {}
     for station, path in dws_station_paths(settings).items():
         name = f"DWS_{station[3:].zfill(2)}"
         url = api_urls.get(station)
@@ -1016,6 +1018,7 @@ def build_dws_table(settings: "Settings", window: Window, dws_pda_rows: List[Sca
                 counts = dws_hourly_from_api(url, window)
                 _say(log, f"Daily summary: {name} จาก API {sum(counts.values()):,} ชิ้น")
                 rows.append((name, "dws", counts))
+                sources[name] = "api"
                 continue
             except Exception as exc:
                 _say(log, f"Daily summary: {name} ขอยอดจาก API ไม่ได้ ใช้ไฟล์ realtime แทน — {exc}", "WARN")
@@ -1040,6 +1043,7 @@ def build_dws_table(settings: "Settings", window: Window, dws_pda_rows: List[Sca
     for name, ip in DWS_SORT_IPS.items():
         if name in sort_counts:
             rows.append((name, "dws", sort_counts[name]))
+            sources[name] = "db"
             continue
         times = []
         try:
@@ -1053,7 +1057,7 @@ def build_dws_table(settings: "Settings", window: Window, dws_pda_rows: List[Sca
         rows.append((name.replace("Dws_pda", "DWS_PDA"), "pda", pda_counts[name]))
     for message in warnings:
         _say(log, f"Daily summary: {message}", "WARN")
-    return DwsTable(window, rows), warnings
+    return DwsTable(window, rows, sources), warnings
 
 
 # =====================================================================
@@ -1134,18 +1138,73 @@ def read_autopack_throughput(raw_dir: str, window: Window, file_hour_offset: int
 # ตารางพัสดุที่คัดแยกแล้วของ WCS — แถวละชิ้น: pipeline, inductNo (= feeder), sorttime (epoch ms)
 # ตารางหลักเก็บราว 3 วันล่าสุด ที่เก่ากว่านั้นย้ายไปตาราง hist (ราว 1 เดือน)
 # นับต่อ feeder ต่อชั่วโมงแล้วตรงกับ Loading Num ในไฟล์ NN.xlsx (ต่างกันไม่เกิน ~10 ชิ้น/ชั่วโมง)
+# Abnormal = แถวที่ sortSource ไม่ใช่ 正常读码 (最大循环件 / 无分拣计划) ตรงกับชีต Abnormal ของไฟล์ทุกแถว
+# ตาราง hist ไม่เก็บ inductNo (feeder) — ชั่วโมงที่เก่ากว่าตารางหลักนับต่อ feeder จาก feedinginfo
+# (ยอดรายนาทีต่อ feeder ย้อนหลังราว 1 เดือน ต่างจากไฟล์ราว 0.2%) ส่วน Abnormal ยังอ่านจาก hist ได้
 WCS_SORT_TABLE = "alreadysortinfo"
+WCS_FEEDING_TABLE = "feedinginfo"
 WCS_SORT_HIST_TABLE = "alreadysortinfohist"
+WCS_NORMAL_SORT_SOURCE = "正常读码"
+# ตาราง hist ไม่มี index ของ sorttime อย่างเดียว (ค้นช่วงเวลาตรง ๆ ~1 นาที) แต่ FInterID เรียงตามเวลา
+# จึงหาช่วง FInterID ด้วย binary search ผ่าน primary key ก่อน แล้วเผื่อขอบไว้กันแถวที่เขียนสลับลำดับ
+WCS_HIST_ID_MARGIN = 50_000
+AUTOPACK_THROUGHPUT_DB_HEADER = ["Pipeline", "Feeder No", "Loading Num"]
+AUTOPACK_ABNORMAL_DB_HEADER = ["Billcode", "Pipeline", "Feeder No", "Tray Code", "Sort Time",
+                               "Sorting Port", "Weight", "Expect Chute Code", "Sort Source"]
+WCS_SOURCE_LABEL = "WCS DB"
 
 
-def read_autopack_throughput_db(settings: "Settings", window: Window,
-                                log: LogFunc = _noop) -> Dict[int, List[list]]:
-    """ยอด AutoPacking ต่อ feeder ต่อช่อง จากฐานข้อมูล WCS — โครงเดียวกับ read_autopack_throughput"""
+def _wcs_first_id_at(cur, table: str, moment_ms: int, lo: int, hi: int) -> int:
+    """FInterID แรกที่ sorttime >= moment_ms (ถือว่า FInterID เรียงตามเวลา)"""
+    hi += 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        cur.execute(f"SELECT sorttime FROM {table} WHERE FInterID >= %s ORDER BY FInterID LIMIT 1", (mid,))
+        row = cur.fetchone()
+        if row is None or row[0] is None or int(row[0]) >= moment_ms:
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+def _wcs_oldest_main_ms(cur) -> Optional[int]:
+    cur.execute(f"SELECT MIN(sorttime) FROM {WCS_SORT_TABLE}")
+    oldest = (cur.fetchone() or [None])[0]
+    return int(oldest) if oldest is not None else None
+
+
+def _wcs_sources(cur, start_ms: int, end_ms: int, log: LogFunc,
+                 oldest: Optional[int]) -> List[Tuple[str, str, tuple]]:
+    """(ตาราง, เงื่อนไขเพิ่ม, พารามิเตอร์) ที่ต้องค้นสำหรับช่วงนี้"""
+    sources: List[Tuple[str, str, tuple]] = [(WCS_SORT_TABLE, "", ())]
+    if oldest is not None and start_ms >= oldest:
+        return sources
+    cur.execute(f"SELECT MIN(FInterID), MAX(FInterID) FROM {WCS_SORT_HIST_TABLE}")
+    first, last = cur.fetchone() or (None, None)
+    if first is None:
+        return sources
+    lo = _wcs_first_id_at(cur, WCS_SORT_HIST_TABLE, start_ms, int(first), int(last))
+    hi = _wcs_first_id_at(cur, WCS_SORT_HIST_TABLE, end_ms, int(first), int(last))
+    _say(log, "Daily summary: ช่วงนี้เก่ากว่าตารางหลักของ WCS อ่านจากตารางย้อนหลังด้วย")
+    sources.append((WCS_SORT_HIST_TABLE, "FInterID >= %s AND FInterID < %s AND ",
+                    (lo - WCS_HIST_ID_MARGIN, hi + WCS_HIST_ID_MARGIN)))
+    return sources
+
+
+@dataclass
+class AutopackDbData:
+    throughput: Dict[int, List[list]]  # คีย์ช่อง -> [[Pipeline, Feeder No, Loading Num], ...]
+    sheets: List["RawSheet"]           # ชีต AUTOPACKING Throughput / Abnormal ของไฟล์ดิบ
+
+
+def read_autopack_db(settings: "Settings", window: Window, log: LogFunc = _noop) -> AutopackDbData:
+    """ยอดต่อ feeder ต่อช่อง + พัสดุ Abnormal ของช่วงนี้ จากฐานข้อมูล WCS (โครงเดียวกับที่อ่านจากไฟล์)"""
     import pymysql
 
     started = [hour for hour in window.hours if window.slot_started(hour)]
     if not started:
-        return {}
+        return AutopackDbData({}, [])
     start_ms = int(window.start.timestamp() * 1000)
     end_ms = int((window.start + timedelta(hours=len(started))).timestamp() * 1000)
     conn = pymysql.connect(
@@ -1154,33 +1213,80 @@ def read_autopack_throughput_db(settings: "Settings", window: Window,
         database=settings.opt("wcs_db_name"), charset="utf8mb4",
         connect_timeout=10, read_timeout=900)
     counts: Dict[Tuple[int, str, int], int] = {}
+    abnormal_rows: List[list] = []
+    seen_ids: set = set()
+
+    def add_count(slot: int, pipeline: Any, feeder: Any, qty: Any) -> None:
+        feeder = str(feeder or "").strip()
+        if not feeder.isdigit():
+            return
+        key = (int(slot), str(pipeline or "").strip(), int(feeder))
+        counts[key] = counts.get(key, 0) + int(qty or 0)
+
     try:
         with conn.cursor() as cur:
-            tables = [WCS_SORT_TABLE]
-            cur.execute(f"SELECT MIN(sorttime) FROM {WCS_SORT_TABLE}")
-            oldest = (cur.fetchone() or [None])[0]
-            if oldest is None or start_ms < int(oldest):
-                # ตาราง hist ไม่มี index ของ sorttime อย่างเดียว ค้นช่วงเวลาจึงช้า (ราวนาที) — ใช้เมื่อจำเป็น
-                _say(log, "Daily summary: ช่วงนี้เก่ากว่าตารางหลักของ WCS อ่านจากตารางย้อนหลังด้วย (อาจใช้เวลาสักครู่)")
-                tables.append(WCS_SORT_HIST_TABLE)
-            for table in tables:
+            oldest = _wcs_oldest_main_ms(cur)
+            # ช่องแรกที่ตารางหลักมีครบทั้งชั่วโมง — ช่องก่อนหน้านั้นนับจาก feedinginfo
+            main_slot = 0
+            if oldest is None:
+                main_slot = len(started)
+            elif oldest > start_ms:
+                main_slot = min(len(started), int(-(-(oldest - start_ms) // 3_600_000)))
+            if main_slot < len(started):
+                main_start = start_ms + main_slot * 3_600_000
                 cur.execute(
                     f"SELECT pipeline, inductNo, FLOOR((sorttime - %s) / 3600000) AS slot, COUNT(*) "
-                    f"FROM {table} WHERE sorttime >= %s AND sorttime < %s GROUP BY 1, 2, 3",
-                    (start_ms, start_ms, end_ms))
+                    f"FROM {WCS_SORT_TABLE} WHERE sorttime >= %s AND sorttime < %s GROUP BY 1, 2, 3",
+                    (start_ms, main_start, end_ms))
                 for pipeline, feeder, slot, qty in cur.fetchall():
-                    feeder = str(feeder or "").strip()
-                    if not feeder.isdigit():
+                    add_count(slot, pipeline, feeder, qty)
+            if main_slot > 0:
+                _say(log, f"Daily summary: {main_slot} ชั่วโมงแรกเก่ากว่าตารางหลักของ WCS "
+                          f"นับต่อ feeder จาก {WCS_FEEDING_TABLE} แทน")
+                fmt = "%Y/%m/%d %H:%M:%S"
+                cur.execute(
+                    f"SELECT pipeLine, feedingNo, sortTime, countNum FROM {WCS_FEEDING_TABLE} "
+                    f"WHERE sortTime >= %s AND sortTime < %s",
+                    (window.start.strftime(fmt), (window.start + timedelta(hours=main_slot)).strftime(fmt)))
+                for pipeline, feeder, minute, qty in cur.fetchall():
+                    try:
+                        moment = datetime.strptime(str(minute), fmt)
+                        add_count((moment - window.start).total_seconds() // 3600, pipeline, feeder,
+                                  int(float(qty or 0)))
+                    except (TypeError, ValueError):
                         continue
-                    key = (int(slot), str(pipeline or "").strip(), int(feeder))
-                    counts[key] = counts.get(key, 0) + int(qty)
+            for table, extra, extra_params in _wcs_sources(cur, start_ms, end_ms, log, oldest):
+                cur.execute(
+                    f"SELECT FInterID, billCode, pipeline, inductNo, trayCode, sorttime, sortPortCode, weight, "
+                    f"destcode, sortSource FROM {table} WHERE {extra}sorttime >= %s AND sorttime < %s "
+                    f"AND sortSource IS NOT NULL AND sortSource NOT IN ('', %s) ORDER BY sorttime",
+                    (*extra_params, start_ms, end_ms, WCS_NORMAL_SORT_SOURCE))
+                for row in cur.fetchall():
+                    if (table, row[0]) in seen_ids:
+                        continue
+                    seen_ids.add((table, row[0]))
+                    abnormal_rows.append(list(row[1:]))
     finally:
         conn.close()
-    result: Dict[int, List[list]] = {hour: [] for hour in started}
+
+    throughput: Dict[int, List[list]] = {hour: [] for hour in started}
     for (slot, pipeline, feeder), qty in sorted(counts.items()):
         if 0 <= slot < len(started):
-            result[started[slot]].append([pipeline, feeder, qty])
-    return result
+            throughput[started[slot]].append([pipeline, feeder, qty])
+
+    through_sheet = RawSheet("AUTOPACKING Throughput", ["ชั่วโมงข้อมูล", "ไฟล์"] + AUTOPACK_THROUGHPUT_DB_HEADER, [])
+    for hour in started:
+        for record in throughput[hour]:
+            through_sheet.rows.append([hour_label(hour), WCS_SOURCE_LABEL] + record)
+    abnormal_sheet = RawSheet("AUTOPACKING Abnormal", ["ชั่วโมงข้อมูล", "ไฟล์"] + AUTOPACK_ABNORMAL_DB_HEADER, [])
+    for bill, pipeline, feeder, tray, sorted_ms, port, weight, dest, source in abnormal_rows:
+        slot = int((int(sorted_ms) - start_ms) // 3_600_000)
+        if not 0 <= slot < len(started):
+            continue
+        sorted_at = datetime.fromtimestamp(int(sorted_ms) / 1000)
+        abnormal_sheet.rows.append([hour_label(started[slot]), WCS_SOURCE_LABEL, bill, pipeline, feeder, tray,
+                                    sorted_at, port, weight, dest, source])
+    return AutopackDbData(throughput, [through_sheet, abnormal_sheet])
 
 
 def _ap_feeder_stats(values: Dict[int, int], window: Window) -> Dict[str, float]:
@@ -1416,7 +1522,8 @@ def abnormal_from_rows(rows: List[list], window: Window, source_name: str = "") 
     i_bill = _find_column(header, ("Billcode",), path)
     i_time = _find_column(header, ("Sort Time",), path)
     i_source = _find_column(header, ("Sort Source",), path)
-    day_end = window.start + timedelta(days=1)
+    # ช่วงที่เลือกเองยาวเกิน 24 ชม. ได้ — ไม่ตัดที่ 1 วัน
+    day_end = max(window.start + timedelta(days=1), window.end)
 
     kept: List[list] = []
     seen: set = set()
@@ -1976,25 +2083,39 @@ def build(settings: Settings, window: Window, work_dir: str,
     ap_sheets: Optional[List[RawSheet]] = None
     autopack_throughput: Optional[Dict[int, List[list]]] = None
 
+    ap_db: Optional[AutopackDbData] = None
+    ap_db_tried = False
+
+    def load_autopack_db() -> Optional[AutopackDbData]:
+        """ยอด + Abnormal จาก WCS (สรุปรายวันเท่านั้น) — อ่านครั้งเดียว ไม่ได้ = None ใช้ไฟล์ NN.xlsx"""
+        nonlocal ap_db, ap_db_tried
+        if not ap_db_tried:
+            ap_db_tried = True
+            if autopack_db and settings.opt_bool("autopack_from_db") and settings.opt("wcs_db_user"):
+                try:
+                    ap_db = read_autopack_db(settings, window, log)
+                    total = sum(row[2] for rows in ap_db.throughput.values() for row in rows)
+                    abnormal_count = len(ap_db.sheets[1].rows) if len(ap_db.sheets) > 1 else 0
+                    _say(log, f"Daily summary: AutoPacking จากฐานข้อมูล WCS {total:,} ชิ้น "
+                              f"Abnormal {abnormal_count:,} รายการ")
+                except Exception as exc:
+                    _say(log, f"Daily summary: อ่านฐานข้อมูล WCS ไม่ได้ ใช้ไฟล์ NN.xlsx แทน — {exc}", "WARN")
+        return ap_db
+
     def load_ap_sheets() -> List[RawSheet]:
         nonlocal ap_sheets
         if ap_sheets is None:
-            ap_sheets = autopacking_sheets(settings.autopacking_folder, window, log=log)
+            db = load_autopack_db()
+            ap_sheets = db.sheets if db is not None else autopacking_sheets(
+                settings.autopacking_folder, window, log=log)
         return ap_sheets
 
     def load_autopack_throughput() -> Dict[int, List[list]]:
         nonlocal autopack_throughput
         if autopack_throughput is None:
-            # autopack_db = สรุป Manual ตามช่วงที่เลือกเอง
-            if autopack_db and settings.opt_bool("autopack_from_db") and settings.opt("wcs_db_user"):
-                try:
-                    autopack_throughput = read_autopack_throughput_db(settings, window, log)
-                    total = sum(row[2] for rows in autopack_throughput.values() for row in rows)
-                    _say(log, f"Daily summary: ยอด AutoPacking จากฐานข้อมูล WCS {total:,} ชิ้น")
-                except Exception as exc:
-                    _say(log, f"Daily summary: อ่านฐานข้อมูล WCS ไม่ได้ ใช้ไฟล์ NN.xlsx แทน — {exc}", "WARN")
-            if autopack_throughput is None:
-                autopack_throughput = read_autopack_throughput(settings.autopacking_folder, window)
+            db = load_autopack_db()
+            autopack_throughput = db.throughput if db is not None else read_autopack_throughput(
+                settings.autopacking_folder, window)
         return autopack_throughput
 
     # Use the complete populated AutoPacking columns for every title in the
@@ -2119,7 +2240,7 @@ def build(settings: Settings, window: Window, work_dir: str,
                     source, abnormal = find_abnormal(settings.abnormal_file, window)
                 else:
                     # รวมชีต Abnormal รายชั่วโมง (คอลัมน์ 2 ช่องแรกเป็นชั่วโมง/ชื่อไฟล์ที่เติมเอง)
-                    source = "AutoPacking Abnormal รายชั่วโมง"
+                    source = WCS_SOURCE_LABEL if load_autopack_db() is not None else "AutoPacking Abnormal รายชั่วโมง"
                     hourly = next((sh for sh in load_ap_sheets() if sh.name == "AUTOPACKING Abnormal"), None)
                     abnormal = abnormal_from_rows(
                         [hourly.header] + hourly.rows if hourly else [], window, source)
@@ -2188,7 +2309,21 @@ def build(settings: Settings, window: Window, work_dir: str,
                                             [r.as_list() for r in load_dws_pda() if r.scanner.lower() in dws_names])
         except Exception as exc:
             _say(log, f"Daily summary: ไม่มีข้อมูล DWS PDA — {exc}", "WARN")
+        dws_sources: Dict[str, str] = {}
+        dws_counts: Dict[str, Dict[int, int]] = {}
+        try:
+            table = load_dws_table()
+            dws_sources = table.sources
+            dws_counts = {name: values for name, _, values in table.rows}
+        except Exception:
+            pass
         for station, path in dws_station_paths(settings).items():
+            name = f"DWS_{station[3:].zfill(2)}"
+            if dws_sources.get(name) == "api":
+                # API ให้แค่ยอดรวมรายชั่วโมง (MySQL ของเครื่อง DWS ไม่รับการต่อจากเครื่องอื่น)
+                data[station] = RawSheet(station, ["ชั่วโมงข้อมูล", "จำนวน (DWS API /hourly)"],
+                                         [[hour_label(h), dws_counts[name].get(h, 0)] for h in window.hours])
+                continue
             data[station] = window_file_sheet(station, path, "出秤时间", window, log)
         data["DWS9-11"] = window_file_sheet("DWS9-11", settings.dws911_file, "扫描时间", window, log)
         for name in DATA_SHEETS:

@@ -6893,12 +6893,16 @@ class App(ctk.CTk):
             else:
                 self.set_pipeline_state("feishu", "skip")
 
+            # รอบสุดท้ายของรอบงาน: ส่งสรุปต่อเสมอ แม้รอบนี้มีคำเตือน (Dashboard / ส่งไฟล์ไม่ครบ)
+            # สรุปอ่านข้อมูลจากแหล่งเองอยู่แล้ว — เดิมรอบสุดท้ายมีคำเตือนเมื่อไหร่ สรุปของรอบนั้นไม่ถูกส่งเลย
             if (report_window is not None and report_window.cutoff == report_window.end
                     and self.config.getboolean("REPORT_CALCULATION", "enabled", fallback=True)
-                    and wanted("feishu") and wanted("excel") and not pipeline_had_warning
-                    and hourly_messages and still_running()):
+                    and still_running()):
                 self.summary_ledger().hourly_delivered(report_window, self.config.get("DAILY_SUMMARY", "chat_id", fallback="").strip() or run_settings.get("chat_id", ""))
-                self.write_log("Final hourly delivery complete; cycle summary queued", level="SUCCESS")
+                if pipeline_had_warning or not hourly_messages:
+                    self.write_log("Final hourly run had warnings — cycle summary queued anyway", level="WARN")
+                else:
+                    self.write_log("Final hourly delivery complete; cycle summary queued", level="SUCCESS")
             self.set_progress(100)
             if pipeline_had_warning:
                 self.write_log(
@@ -6991,6 +6995,12 @@ class App(ctk.CTk):
             if (as_bool(self.daily_summary_option("auto_send"), True)
                     and not self.running and not getattr(self, "ds_busy", False)):
                 ledger = self.summary_ledger()
+                # รอบที่รายงานรอบสุดท้ายไม่ได้รัน (หยุด Auto / ปิดเครื่อง) — ส่งสรุปเองหลังจบรอบ 45 นาที
+                for item in ledger.release_overdue(self.daily_summary_now()):
+                    message = (f"Daily summary: รายงานรอบสุดท้ายของ {item['start']} -> {item['end']} "
+                               f"ไม่ได้รัน ส่งสรุปโดยไม่รอรอบสุดท้าย")
+                    self.write_log(message, level="WARN")
+                    self.log_scheduler_event(message)
                 blocked = [item for item in ledger.read().values() if item["phase"] in ("sending", "uncertain") or item["phase"] == "ready" and item["attempts"] >= 3]
                 if blocked:
                     self.set_daily_summary_status("มีสรุปค้าง/ไม่ทราบผลส่ง ตรวจประวัติข้อความก่อนกดสรุปเอง", "#ebcb8b")

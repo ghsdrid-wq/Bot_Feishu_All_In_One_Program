@@ -1021,6 +1021,23 @@ class MetricsRegressionTests(unittest.TestCase):
         self.assertEqual(rows, [("2026-09-27", "DWS2"),
                                 ("2026-09-28", "DWS1")])
 
+    def test_summary_ledger_releases_cycle_whose_final_run_never_happened(self) -> None:
+        from core.report_delivery import DeliveryLedger
+        from core.report_window import ReportWindow
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = DeliveryLedger(os.path.join(tmp, "delivery.json"))
+            window = ReportWindow(datetime(2026, 11, 3, 13), datetime(2026, 11, 4, 13),
+                                  datetime(2026, 11, 4, 12))
+            ledger.remember_cycle(window, "chat")
+            old = ReportWindow(datetime(2026, 10, 1, 13), datetime(2026, 10, 2, 13), datetime(2026, 10, 2, 12))
+            ledger.remember_cycle(old, "chat")
+            self.assertEqual(ledger.release_overdue(datetime(2026, 11, 4, 13, 30)), [])
+            released = ledger.release_overdue(datetime(2026, 11, 4, 13, 50))
+            self.assertEqual([item["end"] for item in released], ["2026-11-04T13:00:00"])
+            self.assertIsNotNone(ledger.claim(datetime(2026, 11, 4, 13, 50)))
+            # รอบเก่าที่ค้างมานานไม่ถูกปล่อย (กันส่งสรุปเก่ารัว ๆ หลังอัปเดต)
+            self.assertEqual(ledger.read()[old.key]["phase"], "awaiting_hourly")
+
     def test_card_stale_check_ignores_hours_left_from_another_start_hour(self) -> None:
         # 2026-10-28: รอบเริ่ม 12:00 เก็บแถว 12:00 ไว้ แล้วเปลี่ยนเป็นเริ่ม 15:00 — ทั้งคืนต้องยังเก็บใหม่
         self.assertTrue(card_report._lags_behind([12], 15, 5))

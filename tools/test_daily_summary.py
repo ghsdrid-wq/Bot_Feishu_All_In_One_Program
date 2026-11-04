@@ -339,16 +339,26 @@ class WcsDatabaseTests(unittest.TestCase):
         window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 4, 13))
         cursor = mock.MagicMock()
         cursor.fetchone.return_value = (int(datetime(2026, 11, 1, 20).timestamp() * 1000),)
-        cursor.fetchall.return_value = [
-            ("58987-001", "1", 0, 1501), ("58987-001", "1", 23, 1565),
-            ("58987-002", "3", 23, 1771), ("58987-001", "", 5, 9),
+        sorted_ms = int(datetime(2026, 11, 4, 12, 30).timestamp() * 1000)
+        cursor.fetchall.side_effect = [
+            [("58987-001", "1", 0, 1501), ("58987-001", "1", 23, 1565),
+             ("58987-002", "3", 23, 1771), ("58987-001", "", 5, 9)],
+            [(7, "JT1", "58987-001", "9", "291", sorted_ms, "352", "0.36", "S1", "最大循环件")],
         ]
         conn = mock.MagicMock()
         conn.cursor.return_value.__enter__.return_value = cursor
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch("pymysql.connect", return_value=conn) as connect:
-            result = ds.read_autopack_throughput_db(self._settings(tmp), window)
+            data = ds.read_autopack_db(self._settings(tmp), window, log=lambda *a, **k: None)
+        result = data.throughput
         self.assertEqual(connect.call_args.kwargs["host"], "10.30.32.44")
+        throughput_sheet, abnormal_sheet = data.sheets
+        self.assertEqual(throughput_sheet.rows[0], ["13点-14点", "WCS DB", "58987-001", 1, 1501])
+        self.assertEqual(abnormal_sheet.rows[0][0], "12点-13点")
+        self.assertEqual(abnormal_sheet.rows[0][2], "JT1")
+        self.assertEqual(abnormal_sheet.rows[0][-1], "最大循环件")
+        abnormal = ds.abnormal_from_rows([abnormal_sheet.header] + abnormal_sheet.rows, window)
+        self.assertEqual(abnormal.counts, {ds.SORT_SOURCE_ALIASES.get("最大循环件", "最大循环件"): 1})
         self.assertEqual(len(result), 24)
         self.assertEqual(result[13], [["58987-001", 1, 1501]])
         self.assertEqual(result[12], [["58987-001", 1, 1565], ["58987-002", 3, 1771]])
@@ -357,13 +367,37 @@ class WcsDatabaseTests(unittest.TestCase):
         queries = " ".join(str(c.args[0]) for c in cursor.execute.call_args_list)
         self.assertNotIn(ds.WCS_SORT_HIST_TABLE, queries)
 
+    def test_hours_older_than_main_table_count_from_feedinginfo(self) -> None:
+        # ตาราง hist ไม่มี feeder — ช่องที่เก่ากว่าตารางหลักนับจากยอดรายนาทีของ feedinginfo
+        window = ds.scope_window(datetime(2026, 10, 20, 13), datetime(2026, 10, 20, 15))
+        cursor = mock.MagicMock()
+        oldest_main = int(datetime(2026, 11, 1, 20).timestamp() * 1000)
+        cursor.fetchone.side_effect = [(oldest_main,), (100, 200)] + [(1,)] * 40
+        cursor.fetchall.side_effect = [
+            [("58987-001", "1", "2026/10/20 13:00:25", "24"), ("58987-001", "1", "2026/10/20 13:01:25", "26"),
+             ("58987-002", "4", "2026/10/20 14:10:25", "30")],
+            [],  # Abnormal ตารางหลัก
+            [],  # Abnormal ตาราง hist
+        ]
+        conn = mock.MagicMock()
+        conn.cursor.return_value.__enter__.return_value = cursor
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("pymysql.connect", return_value=conn):
+            data = ds.read_autopack_db(self._settings(tmp), window, log=lambda *a, **k: None)
+        self.assertEqual(data.throughput[13], [["58987-001", 1, 50]])
+        self.assertEqual(data.throughput[14], [["58987-002", 4, 30]])
+        queries = [str(c.args[0]) for c in cursor.execute.call_args_list]
+        self.assertTrue(any("FROM feedinginfo" in q for q in queries))
+        # ช่วงนี้ทั้งหมดเก่ากว่าตารางหลัก ไม่ต้องนับจากตารางหลัก
+        self.assertFalse(any("GROUP BY 1, 2, 3" in q for q in queries))
+        self.assertTrue(any("FROM alreadysortinfohist WHERE FInterID >=" in q for q in queries))
+
     def test_manual_build_falls_back_to_files_when_database_fails(self) -> None:
         window = ds.scope_window(datetime(2026, 11, 3, 13), datetime(2026, 11, 3, 15))
         files = {13: [["58987-001", 1, 1_500]], 14: [["58987-001", 1, 1_400]]}
         with tempfile.TemporaryDirectory() as tmp:
             settings = self._settings(tmp)
             settings.options.update({"sections": "autopacking", "send_raw_file": "false"})
-            with mock.patch.object(ds, "read_autopack_throughput_db", side_effect=OSError("offline")) as db, \
+            with mock.patch.object(ds, "read_autopack_db", side_effect=OSError("offline")) as db, \
                     mock.patch.object(ds, "read_autopack_throughput", return_value=files) as read_files, \
                     mock.patch.object(ds, "render_autopack_table", return_value="autopack.png"), \
                     mock.patch.object(ds, "dws_station_paths", return_value={}):
@@ -378,7 +412,7 @@ class WcsDatabaseTests(unittest.TestCase):
             for user, manual in (("", True), ("reader", False)):
                 settings = self._settings(tmp, user)
                 settings.options.update({"sections": "autopacking", "send_raw_file": "false"})
-                with mock.patch.object(ds, "read_autopack_throughput_db") as db, \
+                with mock.patch.object(ds, "read_autopack_db") as db, \
                         mock.patch.object(ds, "read_autopack_throughput", return_value={}), \
                         mock.patch.object(ds, "dws_station_paths", return_value={}):
                     ds.build(settings, window, os.path.join(tmp, "out"), log=lambda *a, **k: None,

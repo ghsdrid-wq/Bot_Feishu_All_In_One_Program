@@ -104,7 +104,7 @@ dws:
       api_url: "http://10.30.32.38:4000"
       path: "//10.30.32.38/users/admin/desktop/report/dws7/realtime/dws7.xlsx"
       fallback_path: "//10.30.32.38/users/admin/desktop/report/realtime/dws7.xlsx"
-      in_service: true
+      in_service: false  # ยังไม่ได้ใช้งาน (พ.ย. 2026)
     DWS_08:
       source: api
       api_url: "http://10.30.32.39:4000"

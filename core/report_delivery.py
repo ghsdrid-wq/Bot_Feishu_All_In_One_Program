@@ -64,6 +64,27 @@ class DeliveryLedger:
             )
             self.save(data)
 
+    def release_overdue(self, now, grace=timedelta(minutes=45), max_age=timedelta(hours=6)):
+        """Release cycles whose final hourly run never completed (Auto stopped, PC off, crash).
+
+        The summary normally follows the final hourly delivery.  If that delivery
+        has not happened ``grace`` after the cycle end, send the summary anyway so
+        a cycle is never silently skipped.  Cycles that ended more than ``max_age``
+        ago are left alone so stale entries never trigger a burst of old summaries.
+        Returns the released cycles.
+        """
+        released = []
+        with _lock:
+            data = self.read()
+            for item in data.values():
+                end = datetime.fromisoformat(item["end"])
+                if item["phase"] == "awaiting_hourly" and end + grace <= now <= end + max_age:
+                    item["phase"] = "ready"
+                    released.append(dict(item))
+            if released:
+                self.save(data)
+        return released
+
     def recover_cycle(self, now):
         for item in sorted(self.read().values(), key=lambda x: x["start"]):
             start, end = (
