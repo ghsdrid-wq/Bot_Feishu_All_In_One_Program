@@ -127,12 +127,17 @@ class FormulaTests(unittest.TestCase):
     def test_missing_file_is_not_a_zero_count(self):
         with tempfile.TemporaryDirectory() as tmp:
             inputs = Inputs(
-                {"DWS1": os.path.join(tmp, "missing.xlsx")},
+                {"REALTIME_DB": os.path.join(tmp, "missing.xlsx")},
                 date(2026, 10, 20),
                 datetime(2026, 10, 21),
             )
             with self.assertRaises(SourceUnavailable):
-                inputs.counter("DWS1")
+                inputs.counter("REALTIME_DB")
+            # เครื่อง DWS1-8 ที่เข้าไม่ได้ถูกข้าม (นับ 0 + แจ้งในหัวตาราง) ไม่ทำให้รายงานหยุด
+            dws = Inputs({"DWS1": os.path.join(tmp, "missing.xlsx")}, date(2026, 10, 20),
+                         datetime(2026, 10, 21), log=lambda *a, **k: None)
+            self.assertEqual(sum(dws.counter("DWS1").values()), 0)
+            self.assertEqual(dws.status["DWS1"], "machine unreachable")
 
     def test_future_hour_does_not_require_a_missing_shared_file(self):
         inputs = Inputs(

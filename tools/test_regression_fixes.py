@@ -1312,6 +1312,19 @@ class ReportHourAlignmentTests(unittest.TestCase):
                 ["DWSREALTIME"], 16)
 
 
+class ReportSourceOfflineTests(unittest.TestCase):
+    def test_unreachable_dws_machine_is_skipped_not_fatal(self) -> None:
+        from datetime import date
+        from core.report_sources import Inputs
+        logs = []
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = Inputs({"DWS1": os.path.join(tmp, "offline", "DWS1.xlsx")},
+                            date(2026, 11, 4), datetime(2026, 11, 5, 1), log=logs.append, start_hour=13)
+            self.assertEqual(sum(inputs.counter("DWS1").values()), 0)
+        self.assertEqual(inputs.status["DWS1"], "machine unreachable")
+        self.assertTrue(any("skipped" in line for line in logs))
+
+
 class DashboardRegressionTests(unittest.TestCase):
     def test_stop_is_honored_before_ingest(self) -> None:
         result = pipeline.run_cycle(should_stop=lambda: True, render=False)
