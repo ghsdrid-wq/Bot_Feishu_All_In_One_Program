@@ -6444,9 +6444,14 @@ class App(ctk.CTk):
                 self.log(f"Prewarm file not ready in time — fallback fresh export: {filename}", "JMS", "WARN")
 
             # เส้นทางปกติ / fallback: fire แล้ว collect เพดานเต็ม (~15 นาที)
+            first_marker = marker
             marker = self._jms_fire_export(session, base, headers, start, end, scanType)
             if marker is None:
                 return
+            if first_marker is not None:
+                # เซิร์ฟเวอร์แค่ช้า ไม่ได้ทิ้งงานแรก — ไฟล์แรกเสร็จก่อนก็รับเลย
+                # (downTime ของไฟล์แรกเก่ากว่า marker ใหม่ ถ้าใช้ marker ใหม่จะมองข้ามไฟล์แรก)
+                marker = min(first_marker, marker)
             # ไม่ต้องรอเปล่า 30 วินาทีก่อน poll อีกแล้ว — รอบแรกห่างแค่ 2 วินาที
             # ถามเร็วไปก็แค่ไม่เจอ record แล้ววนรอต่อ ไม่ได้เสียอะไร
             result = self._jms_collect_export(session, base, headers, scanType, filename, marker, max_rounds=90)
