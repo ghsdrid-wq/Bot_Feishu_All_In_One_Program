@@ -1321,7 +1321,7 @@ class ReportSourceOfflineTests(unittest.TestCase):
             inputs = Inputs({"DWS1": os.path.join(tmp, "offline", "DWS1.xlsx")},
                             date(2026, 11, 4), datetime(2026, 11, 5, 1), log=logs.append, start_hour=13)
             self.assertEqual(sum(inputs.counter("DWS1").values()), 0)
-        self.assertEqual(inputs.status["DWS1"], "machine unreachable")
+        self.assertNotIn("DWS1", inputs.status)  # ไม่ไปแก้หัวตาราง
         self.assertTrue(any("skipped" in line for line in logs))
 
 
