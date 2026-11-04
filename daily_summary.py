@@ -73,12 +73,12 @@ DEFAULTS: Dict[str, str] = {
     "title_end_trim_total": "1000",
     # สรุป Manual: ยอด AutoPacking รายชั่วโมงอ่านจากฐานข้อมูล WCS ของเครื่อง AutoPacking ตามช่วงที่เลือก
     # (ไฟล์ NN.xlsx ถูกเขียนทับได้ เช่นงานรัน 24 ชม. 13.xlsx ของเมื่อวานโดนของวันนี้ทับ) อ่านไม่ได้ = ใช้ไฟล์แทน
-    # user / password กรอกในหน้าสรุปรายวัน (เก็บใน config.ini) — ว่าง = ใช้ไฟล์ NN.xlsx
+    # user / password แก้ได้ในหน้าสรุปรายวัน (เก็บใน config.ini) — ว่าง = ใช้ไฟล์ NN.xlsx
     "autopack_from_db": "true",
     "wcs_db_host": "10.30.32.44",
     "wcs_db_port": "3306",
-    "wcs_db_user": "",
-    "wcs_db_password": "",
+    "wcs_db_user": "wcs",
+    "wcs_db_password": "wcs",
     "wcs_db_name": "db_wcs",
     # หัวข้อ — ใช้ {date} {start} {end} ได้
     "title_post": "สรุปยอดประจำวันที่ {date} เวลา {start}-{end}",
