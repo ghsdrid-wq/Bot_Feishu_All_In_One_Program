@@ -746,5 +746,45 @@ class BuildTests(unittest.TestCase):
             self.assertTrue(fitted.endswith(".zip"))
 
 
+class DwsRawSheetTests(unittest.TestCase):
+    """ชีต DWS1-8 ในไฟล์ดิบต้องเป็นคอลัมน์ไฟล์ export เดิม แม้ตารางจะนับยอดจาก API"""
+
+    def setUp(self):
+        self.window = ds.make_window(datetime(2026, 11, 2, 12), datetime(2026, 11, 3, 12))
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def write_file(self, name, times):
+        path = os.path.join(self.tmp.name, name)
+        rows = [["A1", "T1", "1.0", "1", "1", "1", "1", when, "2", "分拣成功", "Uploaded", ""] for when in times]
+        workbook = openpyxl.Workbook()
+        workbook.active.append(list(ds.DWS_RAW_HEADER))
+        for row in rows:
+            workbook.active.append(row)
+        workbook.save(path)
+        return path
+
+    def test_keeps_export_columns_and_only_rows_in_window(self):
+        path = self.write_file("dws2.xlsx", ["2026/11/2 11:59:59", "2026/11/2 17:07:21", "2026/11/3 12:00:00"])
+        sheet = ds.dws_raw_sheet("DWS2", path, self.window, expected=1)
+        self.assertEqual(sheet.header, list(ds.DWS_RAW_HEADER))
+        self.assertEqual([row[7] for row in sheet.rows], ["2026/11/2 17:07:21"])
+
+    def test_stale_mirror_falls_back_to_share_file(self):
+        stale = self.write_file("mirror.xlsx", ["2026/11/2 11:00:00"])
+        share = self.write_file("share.xlsx", ["2026/11/2 17:07:21", "2026/11/2 18:00:00"])
+        with mock.patch("core.dws_mirror._yaml_source", return_value={}),                 mock.patch("core.dws_mirror._source_file", return_value=share):
+            sheet = ds.dws_raw_sheet("DWS2", stale, self.window, expected=2)
+        self.assertEqual(len(sheet.rows), 2)
+
+    def test_missing_file_keeps_header_and_warns_short_rows(self):
+        messages = []
+        with mock.patch("core.dws_mirror._yaml_source", return_value={}),                 mock.patch("core.dws_mirror._source_file", return_value=None):
+            sheet = ds.dws_raw_sheet("DWS2", "", self.window, expected=5,
+                                     log=lambda message, level="INFO": messages.append(level))
+        self.assertEqual((sheet.header, sheet.rows), (list(ds.DWS_RAW_HEADER), []))
+        self.assertIn("WARN", messages)
+
+
 if __name__ == "__main__":
     unittest.main()

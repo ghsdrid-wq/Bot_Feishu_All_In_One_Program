@@ -1822,6 +1822,9 @@ TABLE_SHEET_NAMES = {name for name, _ in TABLE_SHEETS}
 DATA_SHEETS = (["AUTOPACKING Throughput", "AUTOPACKING Abnormal", "AUTO PDA DATA", "DWS PDA DATA",
                 "PDA BAG DATA"] + [f"DWS{i}" for i in range(1, 9)] + ["DWS9-11"])
 FONT_NAMES = {"yahei": "Microsoft YaHei", "jhenghei": "Microsoft JhengHei", "tahoma": "Tahoma"}
+# คอลัมน์ไฟล์ export ของ DWS1-8 — ใช้เป็นหัวชีตเมื่อวันนั้นไม่มีไฟล์ ชีตจะได้รูปแบบเดิมเสมอ
+DWS_RAW_HEADER = ("单号", "taskNo", "重量(kg)", "长度(cm)", "宽度(cm)", "高度(cm)", "体积(cm³)",
+                  "出秤时间", "分拣口", "分拣状态", "上传状态", "异常详情")
 TABLE_TAB_COLOR = "#ED7D31"  # สีแท็บของชีตตาราง ให้แยกจากชีต data ได้ทันที
 
 
@@ -1848,6 +1851,30 @@ def window_file_sheet(name: str, path: str, time_column: str, window: "Window",
         if moment is not None and window.slot_of(moment) is not None:
             kept.append(list(row))
     return RawSheet(name, header, kept)
+
+
+def dws_raw_sheet(station: str, path: str, window: "Window", expected: int = 0,
+                  log: LogFunc = _noop) -> RawSheet:
+    """ชีตดิบของ DWS1-8: 12 คอลัมน์จากไฟล์ export ของเครื่องเสมอ แม้ตารางจะนับยอดจาก API
+
+    API /hourly ให้แค่ยอดรวม จึงเอารายแถวจากไฟล์ realtime ซึ่งนับตรงกับ API
+    ไฟล์นั้นเก็บแค่ช่วงล่าสุดที่เครื่องตั้ง export ไว้ ถ้าได้ไม่ครบ expected (ยอดจาก API) ลองไฟล์บน share แล้วเตือนใน log
+    """
+    sheet = window_file_sheet(station, path, "出秤时间", window, log)
+    if len(sheet.rows) < expected:
+        try:
+            from core import dws_mirror
+            share = dws_mirror._source_file(dws_mirror._yaml_source(station))
+        except Exception:
+            share = None
+        if share and share != path:
+            other = window_file_sheet(station, share, "出秤时间", window, log)
+            if len(other.rows) > len(sheet.rows):
+                sheet = other
+    if len(sheet.rows) < expected:
+        _say(log, f"Daily summary: ชีต {station} ได้ {len(sheet.rows):,} แถว จากยอด {expected:,} ชิ้น "
+                  f"(ไฟล์ realtime ไม่ครอบคลุมทั้งรอบ)", "WARN")
+    return RawSheet(station, sheet.header or list(DWS_RAW_HEADER), sheet.rows)
 
 
 def _excel_cell_value(text: str) -> Tuple[Any, Optional[str]]:
@@ -2531,12 +2558,8 @@ def _build(settings: Settings, window: Window, work_dir: str, log: LogFunc, is_r
             pass
         for station, path in dws_station_paths(settings).items():
             name = f"DWS_{station[3:].zfill(2)}"
-            if dws_sources.get(name) == "api":
-                # API ให้แค่ยอดรวมรายชั่วโมง (MySQL ของเครื่อง DWS ไม่รับการต่อจากเครื่องอื่น)
-                data[station] = RawSheet(station, ["ชั่วโมงข้อมูล", "จำนวน (DWS API /hourly)"],
-                                         [[hour_label(h), dws_counts[name].get(h, 0)] for h in window.hours])
-                continue
-            data[station] = window_file_sheet(station, path, "出秤时间", window, log)
+            expected = sum(dws_counts.get(name, {}).values()) if dws_sources.get(name) == "api" else 0
+            data[station] = dws_raw_sheet(station, path, window, expected, log)
         data["DWS9-11"] = window_file_sheet("DWS9-11", settings.dws911_file, "扫描时间", window, log)
         for name in DATA_SHEETS:
             sheet = data.get(name) or RawSheet(name, [], [])
