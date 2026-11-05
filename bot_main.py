@@ -2075,6 +2075,19 @@ class App(ctk.CTk):
         self.end_menu.grid(row=1, column=8, padx=(4, 16), pady=10, sticky="w")
         self.start_date.bind("<<DateEntrySelected>>", self.on_date_selected, "+")
         self.end_date.bind("<<DateEntrySelected>>", self.on_date_selected, "+")
+        scheduler_presets = ctk.CTkFrame(command, fg_color="transparent")
+        scheduler_presets.grid(row=0, column=7, columnspan=2, padx=(4, 16), pady=(10, 0), sticky="e")
+        self.btn_today_scheduler = ctk.CTkButton(
+            scheduler_presets, text="วันนี้", width=90, height=30,
+            fg_color="#4c566a", hover_color="#5e6779",
+            command=lambda: self.set_today_range("scheduler"))
+        self.btn_today_scheduler.grid(row=0, column=0, padx=(0, 6))
+        self.btn_yesterday_scheduler = ctk.CTkButton(
+            scheduler_presets, text="เมื่อวาน", width=90, height=30,
+            fg_color="#4c566a", hover_color="#5e6779",
+            command=lambda: self.set_today_range("scheduler", -1))
+        self.btn_yesterday_scheduler.grid(row=0, column=1)
+        self.lockable_buttons += [self.btn_today_scheduler, self.btn_yesterday_scheduler]
 
         self.start_hour = self.start_menu
         self.end_hour = self.end_menu
@@ -3456,10 +3469,23 @@ class App(ctk.CTk):
         btn_scope_reset = ctk.CTkButton(scope, text="↺ รอบล่าสุด", width=100, fg_color="#4c566a",
                                         hover_color="#5e6779", command=self.reset_daily_summary_scope)
         btn_scope_reset.grid(row=0, column=6, padx=(8, 14))
+        summary_presets = ctk.CTkFrame(scope, fg_color="transparent")
+        summary_presets.grid(row=1, column=0, columnspan=7, padx=14, pady=(0, 6), sticky="w")
+        self.btn_today_summary = ctk.CTkButton(
+            summary_presets, text="วันนี้", width=90, height=30,
+            fg_color="#4c566a", hover_color="#5e6779",
+            command=lambda: self.set_today_range("summary"))
+        self.btn_today_summary.grid(row=0, column=0, padx=(0, 6))
+        self.btn_yesterday_summary = ctk.CTkButton(
+            summary_presets, text="เมื่อวาน", width=90, height=30,
+            fg_color="#4c566a", hover_color="#5e6779",
+            command=lambda: self.set_today_range("summary", -1))
+        self.btn_yesterday_summary.grid(row=0, column=1)
+        self.lockable_buttons += [self.btn_today_summary, self.btn_yesterday_summary]
         ctk.CTkLabel(scope, text="ปุ่ม สร้างตัวอย่าง / ส่งสรุปตอนนี้ ใช้ช่วงนี้ — ดึงไฟล์ JMS ของช่วงนี้ใหม่ "
                                  "แล้วหาเองว่า AutoPacking และ DWS ทำงานถึงกี่โมง (ส่งอัตโนมัติไม่ใช้ช่วงนี้)",
                      text_color="#7b8496", anchor="w", justify="left", wraplength=900).grid(
-            row=1, column=0, columnspan=7, padx=14, pady=(0, 10), sticky="w")
+            row=2, column=0, columnspan=7, padx=14, pady=(0, 10), sticky="w")
         self.lockable_buttons.append(btn_scope_reset)
         self.reset_daily_summary_scope()
 
@@ -3866,6 +3892,29 @@ class App(ctk.CTk):
                 self.active_run_generation = None
             self.current_run_source = None
             self.raw_time_source = "manual"
+
+    def set_today_range(self, target: str, day_offset: int = 0):
+        """Fill one page with a calendar-day preset, independently of shift rollover."""
+        if (self.__dict__.get("runtime_locked", False)
+                or self.__dict__.get("running", False)
+                or self.__dict__.get("scheduler_running", False)
+                or self.__dict__.get("ds_busy", False)):
+            return
+        today = datetime.now().date() + timedelta(days=day_offset)
+        tomorrow = today + timedelta(days=1)
+        if target == "scheduler":
+            self.set_locked_date(self.start_date, today)
+            self.set_locked_date(self.end_date, tomorrow)
+            self.start_hour_var.set("12:00")
+            self.end_hour_var.set("12:00")
+            self.on_date_selected()
+        elif target == "summary":
+            self.set_locked_date(self.ds_scope_start_date, today)
+            self.set_locked_date(self.ds_scope_end_date, tomorrow)
+            self.ds_scope_start_hour.set("12:00")
+            self.ds_scope_end_hour.set("12:00")
+        else:
+            raise ValueError(f"Unknown time range target: {target}")
 
     def reset_daily_summary_scope(self):
         """ตั้งช่วงที่สรุปเป็นรอบล่าสุด: ต้นรอบ (ตามเวลาเริ่มของ Auto) ถึงชั่วโมงถัดจากตอนนี้"""

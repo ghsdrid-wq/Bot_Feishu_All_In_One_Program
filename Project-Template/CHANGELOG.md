@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.16
+
+- Rename "To day" to "วันนี้" and add "เมื่อวาน" on BOT REPORT and manual Daily Summary. Today selects today's noon through tomorrow's noon; Yesterday selects yesterday's noon through today's noon. Each affects only its own page, respects runtime locks and never starts a send.
+- Real Tk tests cover all four buttons, before/after noon, year/leap-day boundaries, labels, page isolation, saved scheduler hours and layout bounds. Existing 131 regression tests pass.
+
+## 2.1.15
+
+- Add a "To day" button to BOT REPORT and the manual Daily Summary range. Each fills only that page with today's date at 12:00 through tomorrow at 12:00, independent of shift rollover or current hour. Scheduler selection is remembered as an explicit operator range and saves the hours through the existing config flow. Buttons respect runtime locking and never start a run/send.
+- Verified both real Tk buttons across year-end/leap-day boundaries, page isolation, saved scheduler hours, layout bounds and runtime locking; existing 131 tests pass.
+
 ## 2.1.13
 
 - Daily Summary has two modes. Automatic sends keep the round from Auto's start hour and never send or catch up after 13:00 (`AUTO_SEND_CUTOFF_HOUR`), and the send-time hour list stops at 12. A manual send uses the range picked on the summary page ("ช่วงที่สรุป (กดเอง)": start date + hour to end date + hour). The range may exceed 24 hours, for example 2026-10-28 12:00 to 2026-10-29 13:00, giving 12点-13点 twice. The bot detects when AutoPacking and DWS actually worked and cuts each site's hourly tables to those hours (AutoPacking + PDA 人工建包 by AutoPacking totals, DWS + PDA unloading by the DWS 合计 row).
