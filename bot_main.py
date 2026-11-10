@@ -2042,6 +2042,23 @@ class App(ctk.CTk):
             now.strftime("%Y-%m-%d %H:%M:%S"),
         )
 
+    def get_program_hourly_range(self, moment: Optional[datetime] = None):
+        """Snapshot the data cutoff and display end for the same reporting cycle."""
+        start_text, end_text = self.get_report_time_range(moment)
+        start, now = datetime.fromisoformat(start_text), datetime.fromisoformat(end_text)
+        scheduled_start, scheduled_end = self.get_scheduler_time_range()
+        days = (scheduled_end.date() - scheduled_start.date()).days
+        if days <= 1:
+            span = scheduled_end - scheduled_start
+            # A noon-to-next-day 13:00 cycle is still active after the next noon.
+            if scheduled_start <= start <= scheduled_end:
+                start = scheduled_start
+        else:
+            # Multi-day scheduling controls how long Auto runs, not report width.
+            span = timedelta(hours=(scheduled_end.hour - start.hour) % 24 or 24)
+        cycle_end = start + span
+        return start, min(now, cycle_end), cycle_end
+
     def build_home_page(self, master):
         page = ctk.CTkFrame(master, fg_color="#2e3440")
         page.grid_columnconfigure(0, weight=1)
@@ -3776,12 +3793,13 @@ class App(ctk.CTk):
             settings.chat_id = clean_input_value(active["chat_id"], collapse_internal_spaces=True)
         return settings
 
-    def send_program_hourly_tables(self, report_start, report_end, run_settings, is_running,
+    def send_program_hourly_tables(self, report_start, report_end, cycle_end, is_running,
                                    with_summary=True, with_realtime=False):
         """รายงานรายชั่วโมงแบบไม่ใช้ Excel: ทำตารางเหมือนสรุปรายวันทุกอย่าง (ต้นรอบถึงชั่วโมงที่จบล่าสุด
         คอลัมน์ยาวถึงจบรอบ) แต่ส่งแบบรายงานรายชั่วโมงเดิม — การ์ดเข้ากลุ่มรายชั่วโมง"""
         start = datetime.fromisoformat(str(report_start))
-        end = datetime.fromisoformat(str(report_end)).replace(minute=0, second=0, microsecond=0)
+        cycle_end = datetime.fromisoformat(str(cycle_end))
+        end = min(datetime.fromisoformat(str(report_end)), cycle_end).replace(minute=0, second=0, microsecond=0)
         if end <= start:
             self.write_log("ตารางรายชั่วโมง: ยังไม่มีชั่วโมงที่จบในรอบนี้ ข้ามการส่ง", level="WARN")
             return None
@@ -3794,14 +3812,6 @@ class App(ctk.CTk):
         options["sections"] = ",".join(HOURLY_PROGRAM_TABLES)
         options["autopack_error_table"] = "true"  # ตาราง Error + ยอดเฉลี่ยกะ A/B ใต้ตาราง AutoPacking
         settings.options = options
-        # คอลัมน์ยาวจนจบรอบงาน (เช่นถึง 11点-12点) ชั่วโมงที่ยังมาไม่ถึงเว้นว่างไว้
-        cycle_end = end
-        try:
-            scheduled_end = self.get_scheduler_time_range()[1]
-            if end < scheduled_end <= start + timedelta(days=2):
-                cycle_end = scheduled_end
-        except Exception:
-            pass
         work_dir = os.path.join(settings.output_dir or settings.raw_dir or ".", "HourlyTables")
         self.write_log(f"ตารางรายชั่วโมง (คำนวณด้วยโปรแกรม): {start:%Y-%m-%d %H:%M} -> {end:%Y-%m-%d %H:%M} "
                        f"(ตารางถึง {cycle_end:%H:%M})", level="START")
@@ -4282,20 +4292,16 @@ class App(ctk.CTk):
         self.save_config()
 
     def shift_date_range(self):
-        """วันเริ่ม/วันจบของรอบงานที่กำลังเดินอยู่ตอนนี้
-
-        รอบงานเริ่มบ่าย 2 และจบก่อนเที่ยงของวันถัดไป ช่วง 12:00-13:00 จึงเป็น
-        ตอนที่งานเก่าจบแล้วและงานใหม่ยังไม่เริ่ม — ใช้ 13:00 เป็นจุดตัดวัน
-
-        ก่อน 13:00 = ยังเป็นรอบของเมื่อวาน  /  ตั้งแต่ 13:00 = รอบของวันนี้
-        ปรับจุดตัดได้ที่ [TIME] date_roll_hour ถ้าเวลาทำงานเปลี่ยน
-        """
+        """Roll the automatic dates after the configured roll hour and final send minute."""
         try:
             roll = int(self.config["TIME"].get("date_roll_hour", "13"))
         except Exception:
             roll = 13
         now = datetime.now()
-        start = now.date() if now.hour >= roll else now.date() - timedelta(days=1)
+        minute, _, end_hour = self.refresh_scheduler_snapshot()
+        # Keep yesterday's schedule eligible through its final delayed send.
+        roll_minute = max(roll * 60, end_hour * 60 + minute + 1)
+        start = now.date() if now.hour * 60 + now.minute >= roll_minute else now.date() - timedelta(days=1)
         return start, start + timedelta(days=1)
 
     def apply_shift_dates(self, reason=""):
@@ -6793,8 +6799,14 @@ class App(ctk.CTk):
             # execution time. Manual DATA EXPORT keeps its explicitly selected
             # range from prepare_dws_jms_settings().
             run_settings = dict(run_settings)
+            cycle_end = None
             if self.current_run_source in ("auto", "manual"):
-                run_settings["time_range"] = self.get_report_time_range()
+                if (run_settings.get("steps") or {}).get("program"):
+                    hourly_range = run_settings.get("program_hourly_range")
+                    start, data_end, cycle_end = hourly_range or self.get_program_hourly_range()
+                    run_settings["time_range"] = (start, data_end)
+                else:
+                    run_settings["time_range"] = self.get_report_time_range()
             self.active_run_settings = run_settings
             if run_generation is None:
                 run_generation = self.begin_run_request()
@@ -6930,7 +6942,7 @@ class App(ctk.CTk):
                     if wanted("program") and still_running():
                         self.set_pipeline_state("program", "run")
                         try:
-                            self.send_program_hourly_tables(report_start, report_end, run_settings, still_running,
+                            self.send_program_hourly_tables(report_start, report_end, cycle_end or report_end, still_running,
                                                             with_summary=self.summary_header_enabled(),
                                                             with_realtime=wanted("realtime"))
                             self.set_pipeline_state("program", "ok")
@@ -7237,6 +7249,8 @@ class App(ctk.CTk):
 
                     self.write_log(f"Trigger auto run at {now.strftime('%H:%M')}")
                     settings = dict(self.auto_run_settings or {})
+                    if (settings.get("steps") or {}).get("program"):
+                        settings["program_hourly_range"] = self.get_program_hourly_range(now)
                     run_generation = self.begin_run_request()
                     self.set_next_run_display(self.get_next_scheduler_run_time(now + timedelta(minutes=1)))
                     self.task_queue.put(lambda settings=settings, g=run_generation: self.run_process(settings, g))

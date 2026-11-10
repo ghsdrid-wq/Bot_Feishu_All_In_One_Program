@@ -1348,6 +1348,7 @@ def read_autopack_db(settings: "Settings", window: Window, log: LogFunc = _noop)
         sorted_at = datetime.fromtimestamp(int(sorted_ms) / 1000)
         abnormal_sheet.rows.append([hour_label(started[slot]), WCS_SOURCE_LABEL, bill, pipeline, feeder, tray,
                                     sorted_at, port, weight, dest, source])
+        abnormal_sheet.row_hours.append(started[slot])
     return AutopackDbData(throughput, [through_sheet, abnormal_sheet])
 
 
@@ -1421,15 +1422,16 @@ def autopack_error_counts(sheets: Sequence["RawSheet"], window: Window) -> Dict[
     if "billcode" not in names or "pipeline" not in names:
         return counts
     i_bill, i_line = names.index("billcode"), names.index("pipeline")
-    hour_of = {hour_label(h): h for h in window.hours}
+    started = {h for h in window.hours if window.slot_started(h)}
+    hour_of = {hour_label(h): h for h in reversed(window.hours) if h in started}
     seen: Dict[Tuple[str, int], set] = {}
-    for row in sheet.rows:
+    for i, row in enumerate(sheet.rows):
         if len(row) <= max(i_bill, i_line):
             continue
-        hour = hour_of.get(str(row[0] or "").strip())
+        hour = sheet.row_hours[i] if sheet.row_hours else hour_of.get(str(row[0] or "").strip())
         pipeline = str(row[i_line] or "").strip()
         bill = str(row[i_bill] or "").strip()
-        if hour is None or pipeline not in counts or not bill:
+        if hour not in started or pipeline not in counts or not bill:
             continue
         seen.setdefault((pipeline, hour), set()).add(bill)
     for (pipeline, hour), bills in seen.items():
@@ -1811,6 +1813,7 @@ class RawSheet:
     header: List[Any]
     rows: List[list]
     grids: List["Grid"] = field(default_factory=list)  # มีค่า = ชีตตารางสรุป (สี/ตัวเลขเหมือนรูปที่ส่ง)
+    row_hours: List[int] = field(default_factory=list)  # Internal slot keys for Abnormal rows.
 
 
 # ลำดับชีตในไฟล์ดิบ: ตารางสรุปก่อน แล้วตามด้วย data ทุกไฟล์ (ไม่มีข้อมูล = ชีตว่าง)
@@ -2051,6 +2054,8 @@ def autopacking_sheets(raw_dir: str, window: Window, file_hour_offset: int = -1,
             for row in data[1:]:
                 if row and row[0] not in (None, ""):
                     target.rows.append([hour_label(hour), os.path.basename(path)] + list(row))
+                    if target is abnormal:
+                        target.row_hours.append(hour)
     return [sheet for sheet in (throughput, abnormal) if sheet.header]
 
 

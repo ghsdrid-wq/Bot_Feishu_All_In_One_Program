@@ -13,7 +13,7 @@ import unittest
 import zipfile
 from collections import deque
 from unittest import mock
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -516,6 +516,44 @@ class SchedulerRegressionTests(unittest.TestCase):
             app.get_report_time_range(datetime(2026, 9, 28, 23, 0, 4)),
             ("2026-09-28 16:00:00", "2026-09-28 23:00:04"),
         )
+
+    def test_pillow_range_stays_with_report_start_after_scheduler_rolls(self) -> None:
+        app = self.make_app()
+        app.config["TIME"]["end_hour"] = "13"
+        app._dates_user_selected = False
+        app.shift_date_range = lambda: (datetime(2026, 11, 10).date(), datetime(2026, 11, 11).date())
+        start = datetime(2026, 11, 9, 16)
+        end = datetime(2026, 11, 10, 13)
+        self.assertEqual(app.get_program_hourly_range(datetime(2026, 11, 10, 14, 5)), (start, end, end))
+
+    def test_pillow_noon_cycle_can_extend_by_one_or_two_hours(self) -> None:
+        app = self.make_app()
+        app.config["TIME"]["start_hour"] = "12"
+        start = datetime(2026, 9, 27, 12)
+        for hour in (12, 13, 14):
+            with self.subTest(hour=hour):
+                app.config["TIME"]["end_hour"] = str(hour)
+                end = datetime(2026, 9, 28, hour)
+                self.assertEqual(app.get_program_hourly_range(end + timedelta(minutes=1)), (start, end, end))
+
+    def test_auto_dates_stay_on_old_cycle_through_final_send_minute(self) -> None:
+        app = self.make_app()
+        app.config["TIME"]["end_hour"] = "13"
+        app._dates_user_selected = False
+        old_start = datetime(2026, 11, 9, 16)
+        new_start = datetime(2026, 11, 10, 16)
+
+        class FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now
+
+        with mock.patch.object(bot_main, "datetime", FrozenDatetime):
+            now = datetime(2026, 11, 10, 13, 1, 59)
+            self.assertEqual(app.get_scheduler_time_range()[0], old_start)
+            self.assertTrue(app.scheduler_slot_in_range(now))
+            now = datetime(2026, 11, 10, 13, 2)
+            self.assertEqual(app.get_scheduler_time_range()[0], new_start)
 
     def test_jms_payload_never_contains_datetime_objects(self) -> None:
         app = self.make_app()
@@ -1309,13 +1347,13 @@ class ProgramHourlyTablesTests(unittest.TestCase):
                                options={"autopacking_image": "AP.png"})
         fake = mock.MagicMock()
         fake.daily_summary_settings.return_value = settings
-        fake.get_scheduler_time_range.return_value = (datetime(2026, 11, 4, 13), datetime(2026, 11, 5, 12))
         sections = [ds.Section("autopacking", "AutoPacking 13.00-2.00", image="ap.png"),
                     ds.Section("dws", "DWS", image="dws.png"),
                     ds.Section("auto_pda", "PDA", note="no file")]
         with mock.patch.object(ds, "run", return_value={"sections": sections, "warnings": []}) as run,                 mock.patch.object(bot_main.Botmessage, "run_send_images") as send:
             bot_main.App.send_program_hourly_tables(
-                fake, "2026-11-04 13:00:00", "2026-11-05 02:01:09", {}, lambda: True, with_summary=False)
+                fake, "2026-11-04 13:00:00", "2026-11-05 02:01:09", datetime(2026, 11, 5, 12),
+                lambda: True, with_summary=False)
         args, kwargs = run.call_args
         # ตารางยาวถึงจบรอบ 12:00 ยอดจริงถึงชั่วโมงที่จบล่าสุด (02:00) ที่เหลือเว้นว่าง
         self.assertEqual(args[1:3], (datetime(2026, 11, 4, 13), datetime(2026, 11, 5, 12)))
@@ -1329,6 +1367,25 @@ class ProgramHourlyTablesTests(unittest.TestCase):
         self.assertEqual(send.call_args.args[0], [("ยอดพัสดุ AutoPacking", "ap.png"),
                                                   ("ยอดพัสดุ DWS และ ยอด PDA แสกนพัสดุลงรถ", "dws.png")])
         self.assertFalse(send.call_args.kwargs["with_summary"])
+
+    def test_late_hourly_table_stops_after_the_selected_last_column(self) -> None:
+        import daily_summary as ds
+        fake = mock.MagicMock()
+        start = datetime(2026, 11, 9, 16)
+        end = datetime(2026, 11, 10, 13)
+        sections = [ds.Section("autopacking", "AutoPacking", image="ap.png")]
+        with mock.patch.object(ds, "run", return_value={"sections": sections, "warnings": []}) as run, \
+                mock.patch.object(bot_main.Botmessage, "run_send_images"):
+            bot_main.App.send_program_hourly_tables(fake, start, end + timedelta(hours=1, minutes=5), end,
+                                                   lambda: True)
+        args, kwargs = run.call_args
+        window = ds.scope_window(*args[1:3])
+        self.assertEqual(len(window.hours), 21)
+        self.assertEqual(ds.hour_label(window.hours[-1]), "12点-13点")
+        self.assertIsNotNone(window.slot_of(end - timedelta(seconds=1)))
+        self.assertIsNone(window.slot_of(end))
+        self.assertEqual(kwargs["data_until"], end)
+        fake.get_scheduler_time_range.assert_not_called()
 
     def test_program_tables_go_out_as_one_hourly_card(self) -> None:
         import Botmessage
@@ -1373,7 +1430,8 @@ class ProgramHourlyTablesTests(unittest.TestCase):
         import daily_summary as ds
         with mock.patch.object(ds, "run") as run:
             self.assertIsNone(bot_main.App.send_program_hourly_tables(
-                fake, "2026-11-04 13:00:00", "2026-11-04 13:01:00", {}, lambda: True))
+                fake, "2026-11-04 13:00:00", "2026-11-04 13:01:00", datetime(2026, 11, 5, 12),
+                lambda: True))
         run.assert_not_called()
 
 

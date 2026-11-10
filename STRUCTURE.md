@@ -5,6 +5,7 @@
 
 ## ภาพรวม
 
+- Pillow hourly reports (2.1.17): `App.get_program_hourly_range()` snapshots the business start, data cutoff and display end for the same cycle. Auto captures the range before queuing the job. `send_program_hourly_tables()` keeps the selected final column and aggregates only completed hours. Automatic date rollover waits until the final send minute passes. AutoPacking Abnormal rows keep an internal slot key so repeated clock labels on different days stay separate.
 - Calendar presets (2.1.16): `App.set_today_range(target, day_offset=0)` handles วันนี้ (0) and เมื่อวาน (-1) on both BOT REPORT and manual Daily Summary. Both produce a noon-to-next-noon range based on the current calendar date, independent of shift rollover. The two buttons share a compact frame per page and existing runtime locking; `tools/test_today_range_ui.py` exercises all four widgets with isolated config.
 - `App.set_today_range(target)` backs the "To day" buttons on BOT REPORT and Daily Summary. It fills today's 12:00 to tomorrow's 12:00 on only the selected page, using `set_locked_date`; scheduler presets go through `on_date_selected` so automatic date rollover does not replace the operator's choice. Active/locked jobs block the callback. `tools/test_today_range_ui.py` clicks real widgets with isolated config and no bot/listener startup.
 GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวมทุกระบบของฝั่ง controller/report เข้าด้วยกันเป็น **"All-In-One"**:

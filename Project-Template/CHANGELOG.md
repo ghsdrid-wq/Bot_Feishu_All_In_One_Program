@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.17
+
+- Keep Pillow hourly columns and totals within the same reporting cycle when the scheduler advances its dates. A 13:00 end stops at the 12–13 column, including when the report runs late. Automatic date rollover preserves the final send minute.
+- Keep AutoPacking Error counts in their original dated slots when a cycle includes two hours with the same clock label.
+
 ## 2.1.16
 
 - Rename "To day" to "วันนี้" and add "เมื่อวาน" on BOT REPORT and manual Daily Summary. Today selects today's noon through tomorrow's noon; Yesterday selects yesterday's noon through today's noon. Each affects only its own page, respects runtime locks and never starts a send.

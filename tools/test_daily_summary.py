@@ -421,6 +421,20 @@ class WcsDatabaseTests(unittest.TestCase):
 
 
 class AutopackErrorTableTests(unittest.TestCase):
+    def test_repeated_hour_errors_stay_in_their_own_slots(self) -> None:
+        start = datetime(2026, 11, 9, 12)
+        full = ds.scope_window(start, datetime(2026, 11, 10, 13))
+        partial = ds.Window(start, datetime(2026, 11, 10, 12), full.hours, full.shift_b_start)
+        header = ["Hour", "File", "billCode", "pipeline"]
+        rows = [["12点-13点", "WCS DB", bill, "58987-001"] for bill in ("JT1", "JT2", "JT3")]
+        sheet = ds.RawSheet("AUTOPACKING Abnormal", header, rows, row_hours=[12, 36, 36])
+
+        for window, expected in ((full, 2), (partial, 0)):
+            with self.subTest(end=window.end):
+                counts = ds.autopack_error_counts([sheet], window)["58987-001"]
+                self.assertEqual(counts[12], 1)
+                self.assertEqual(counts[36], expected)
+
     def test_error_counts_are_unique_bills_per_line_per_hour(self) -> None:
         window = ds.scope_window(datetime(2026, 11, 4, 13), datetime(2026, 11, 4, 15))
         header = ["ชั่วโมงข้อมูล", "ไฟล์"] + ds.AUTOPACK_ABNORMAL_DB_HEADER
