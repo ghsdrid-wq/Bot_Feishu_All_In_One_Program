@@ -88,6 +88,23 @@ python tools/bump_version.py patch
 ใช้ `minor` เมื่อเพิ่มความสามารถชุดใหญ่ และ `major` เมื่อมีการเปลี่ยนที่เข้ากันกับ
 เวอร์ชันเดิมไม่ได้ เช่น `python tools/bump_version.py minor`
 
+## Deploy ไปเครื่องรัน (ผ่าน SSH)
+
+เครื่องรันเก็บแต่ละเวอร์ชันไว้ที่ `C:\0Niphonk\Programs\AutoReportFeishuV<เวอร์ชัน>`
+ใช้ SSH key (Host `runpc` ใน `%USERPROFILE%\.ssh\config`) ไม่ต้องใช้รหัสผ่าน
+
+```powershell
+.\deploy-ssh.ps1 -Build      # build แล้ววางเวอร์ชันใหม่ไว้ข้างตัวเก่า (ไม่แตะตัวที่รันอยู่)
+.\deploy-ssh.ps1 -Switch     # ปิดตัวเก่า แล้วเปิดตัวใหม่บนหน้าจอผู้ใช้
+```
+
+- ไม่ส่ง `config.ini`, `metrics_config.yaml`, `jms_user_policy.json`, `store.db`, `sent_messages.json`
+  จากเครื่องนี้ แต่คัดลอกจากโฟลเดอร์ที่รันอยู่บนเครื่องรัน ตอน `-Switch` จะคัดลอกซ้ำหลังปิดตัวเก่า
+- `-Switch` ไม่ยอมปิดโปรแกรมช่วง `[TIME] run_minute` ถึง +15 นาที (รอบรายงานรายชั่วโมง) ใช้ `-Force` ข้ามได้
+- **หลัง `-Switch` โหมด Auto ไม่เปิดเอง** ต้องกด Start Auto ที่หน้า BOT REPORT
+  (Feishu Bot / JMS bot เปิดเองตาม `bot_autostart` / `jms_autostart`)
+- ถ้าเวอร์ชันเดียวกับที่รันอยู่ ต้องใช้ `-Switch` จะเปลี่ยนเฉพาะไฟล์โปรแกรม และเก็บของเดิมไว้ใน `_previous\`
+
 ## โครงสร้างโค้ด
 ดูรายละเอียดโครงสร้างไฟล์ ฟังก์ชันสำคัญ และ config key ทั้งหมดได้ที่ [STRUCTURE.md](STRUCTURE.md)
 
