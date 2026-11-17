@@ -101,8 +101,9 @@ python tools/bump_version.py patch
 .\deploy-ssh.ps1 -Switch     # ปิดตัวเก่า แล้วเปิดตัวใหม่บนหน้าจอผู้ใช้
 ```
 
-- ไม่ส่ง `config.ini`, `metrics_config.yaml`, `jms_user_policy.json`, `store.db`, `sent_messages.json`
+- ไม่ส่ง `config.ini`, `metrics_config.yaml`, `jms_user_policy.json`, `store.db`, `sent_messages.json`, `vip_awb.db`
   จากเครื่องนี้ แต่คัดลอกจากโฟลเดอร์ที่รันอยู่บนเครื่องรัน ตอน `-Switch` จะคัดลอกซ้ำหลังปิดตัวเก่า
+  (ฐานข้อมูล SQLite ไปพร้อม `-wal`/`-shm` — `vip_awb.db` ไม่ติดไป = รอบแรกของเวอร์ชันใหม่ดึงย้อนหลังใหม่ ~30 นาที)
 - `-Switch` ไม่ยอมปิดโปรแกรมช่วง `[TIME] run_minute` ถึง +15 นาที (รอบรายงานรายชั่วโมง) ใช้ `-Force` ข้ามได้
 - **หลัง `-Switch` โหมด Auto ไม่เปิดเอง** ต้องกด Start Auto ที่หน้า BOT REPORT
 - เปิดตัวใหม่ด้วยบัญชีเจ้าของโปรแกรมที่รันอยู่ (หรือผู้ใช้ที่ล็อกอินหน้าจอ) ถ้าหาไม่ได้จะหยุดก่อนปิดตัวเก่า

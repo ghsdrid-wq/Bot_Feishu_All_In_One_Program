@@ -5,7 +5,8 @@
 #   powershell -ExecutionPolicy Bypass -File deploy-ssh.ps1 -Switch          วาง + ปิดตัวเก่า + เปิดตัวใหม่บนหน้าจอผู้ใช้
 #
 # - วางที่ C:\0Niphonk\Programs\AutoReportFeishuV<เวอร์ชัน> (โฟลเดอร์ละเวอร์ชัน เหมือนที่ทำมือ)
-# - ไฟล์ของผู้ใช้ (config.ini, metrics_config.yaml, jms_user_policy.json, store.db, sent_messages.json)
+# - ไฟล์ของผู้ใช้ (config.ini, metrics_config.yaml, jms_user_policy.json, store.db, sent_messages.json,
+#   vip_awb.db = ข้อมูลสะสมของ VIP AWB ถ้าไม่ติดไป รอบแรกของเวอร์ชันใหม่ต้องดึงย้อนหลังใหม่ ~30 นาที)
 #   ไม่ส่งจากเครื่องนี้ แต่คัดลอกจากโฟลเดอร์ที่รันอยู่บนเครื่องรัน ตอน -Switch คัดลอกซ้ำหลังปิดตัวเก่า ให้ได้ข้อมูลล่าสุด
 # - -Switch ไม่ยอมปิดโปรแกรมช่วงนาทีที่รอบรายงานรายชั่วโมงกำลังทำงาน ([TIME] run_minute ถึง +15 นาที) ใช้ -Force ข้ามได้
 # - หลัง -Switch โหมด Auto ไม่เปิดเอง (โปรแกรมไม่จำสถานะ Auto) ต้องมีคนกด Start Auto ที่หน้า BOT REPORT
@@ -40,7 +41,9 @@ if (-not (Test-Path (Join-Path $local 'AutoReportFeishu.exe'))) {
 }
 
 # ---------- แพ็กเฉพาะไฟล์โปรแกรม ----------
-$operatorFiles = @('config.ini', 'metrics_config.yaml', 'jms_user_policy.json', 'store.db', 'sent_messages.json')
+# SQLite (store.db, vip_awb.db) ต้องไปพร้อม -wal/-shm: ปิดโปรแกรมด้วย Stop-Process ข้อมูลล่าสุดยังค้างใน -wal
+$operatorFiles = @('config.ini', 'metrics_config.yaml', 'jms_user_policy.json', 'sent_messages.json',
+                   'store.db', 'store.db-wal', 'store.db-shm', 'vip_awb.db', 'vip_awb.db-wal', 'vip_awb.db-shm')
 $pkg = Join-Path $env:TEMP "feishu-deploy-$([guid]::NewGuid().ToString('N')).tar"
 $excludes = @($operatorFiles + 'logs' | ForEach-Object { "--exclude=./$_" })
 Write-Host "แพ็ก $folder ..."
@@ -134,6 +137,15 @@ if (-not (Test-Path (Join-Path $work 'AutoReportFeishu.exe'))) { throw 'Package 
 
 function Copy-Operator([string]$from, [string]$to, [bool]$overwrite) {
     if (-not $from -or ($from.TrimEnd('\') -ieq $to.TrimEnd('\'))) { return }
+    # SQLite: before a .db is (re)copied, drop the target's -wal/-shm. A -wal left from an earlier copy
+    # (staged while the old version was still writing) would otherwise be replayed onto the newer .db.
+    foreach ($db in ($operator | Where-Object { $_ -like '*.db' })) {
+        if ((Test-Path (Join-Path $from $db)) -and ($overwrite -or -not (Test-Path (Join-Path $to $db)))) {
+            foreach ($sfx in '-wal', '-shm') {
+                Remove-Item -LiteralPath (Join-Path $to "$db$sfx") -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
     foreach ($n in $operator) {
         $s = Join-Path $from $n; $d = Join-Path $to $n
         if ((Test-Path $s) -and ($overwrite -or -not (Test-Path $d))) {
@@ -179,7 +191,7 @@ if ($same) {
     Copy-Operator $cur $dest $false
     if ($Switch) {
         Stop-App
-        Copy-Operator $cur $dest $true   # latest config / store.db / sent_messages after the old one stopped
+        Copy-Operator $cur $dest $true   # latest config / store.db / vip_awb.db / sent_messages after the old one stopped
     }
 }
 

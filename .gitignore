@@ -28,3 +28,8 @@ logs/
 metrics/store.db
 metrics/store.db-wal
 metrics/store.db-shm
+# VIP AWB: ข้อมูลสะสมและไฟล์รายงาน (สร้างข้าง config.ini)
+vip_awb.db
+vip_awb.db-wal
+vip_awb.db-shm
+VipAwb/
