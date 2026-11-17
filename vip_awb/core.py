@@ -502,16 +502,14 @@ def build_card(d: ReportData, image_key: str | None, has_excel: bool) -> dict:
         elements += [{"tag": "hr"},
                      {"tag": "img", "img_key": image_key, "mode": "fit_horizontal", "preview": True,
                       "alt": {"tag": "plain_text", "content": "ตารางยอดรายชั่วโมง"}}]
-    notes = ["+n = เข้าคลังในชั่วโมงล่าสุด · คงค้าง = ยังไม่มีสแกนส่งออกจาก KKN_GW"]
-    if has_excel:
-        notes.append("📎 ไฟล์ Excel (สรุป + รายการ AWB + เลขที่ค้าง) ส่งแยกด้านล่าง")
+    # ไม่มีหมายเหตุท้ายการ์ด (ผู้ใช้ให้เอาออก 18/11/2026) — เหลือเฉพาะคำเตือนตอนมีเลขที่ค้นแหล่งที่มาไม่ได้
     if d.pending:
-        notes.append(f"⚠️ ยังค้นแหล่งที่มาไม่ได้ {d.pending:,} เลข จะลองใหม่รอบหน้า")
-    elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": "\n".join(notes)}]})
+        elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content":
+                         f"⚠️ ยังค้นแหล่งที่มาไม่ได้ {d.pending:,} เลข จะลองใหม่รอบหน้า"}]})
     return {
         "config": {"wide_screen_mode": True},
         "header": {"template": "green" if d.closing else "red",
-                   "title": {"tag": "plain_text", "content": ("✅ สรุปปิดรอบ · " if d.closing else "👑 ") + d.title}},
+                   "title": {"tag": "plain_text", "content": ("✅ สรุปปิดรอบ · " if d.closing else "") + d.title}},
         "elements": elements,
     }
 
