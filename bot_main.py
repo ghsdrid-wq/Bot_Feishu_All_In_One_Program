@@ -2,6 +2,7 @@
 import re
 import sys
 import json
+import logging
 import time
 import contextlib
 import queue
@@ -5331,10 +5332,15 @@ class App(ctk.CTk):
         )
 
     def schedule_pipeline_reset(self, run_generation=None):
-        self.after(
-            1500,
-            lambda g=run_generation: self.set_pipeline_state() if self.is_run_generation_active(g) else None,
-        )
+        def reset(g=run_generation):
+            if not self.is_run_generation_active(g):
+                return
+            self.set_pipeline_state()
+            # VIP AWB ทำงานเบื้องหลังต่อหลัง pipeline จบ — การ์ดต้องยังขึ้นว่ากำลังทำงาน ไม่ใช่ READY
+            if self.__dict__.get("vip_busy"):
+                self.set_pipeline_state("vip_awb", "run")
+
+        self.after(1500, reset)
 
     def prepare_dws_jms_settings(self):
         if not self.is_ui_thread():
@@ -7067,6 +7073,7 @@ class App(ctk.CTk):
         page = SmoothScrollableFrame(master, fg_color="#2e3440", corner_radius=0)
         page.grid_columnconfigure(0, weight=1)
         self.vip_busy = False
+        self.attach_vip_awb_log()
         sec = self.config[vip_awb.core.SECTION]
         self.header(page, "VIP AWB",
                     "ยอดพัสดุแบรนด์ VIP ที่เข้า KKN_GW รายชั่วโมง + สถานะ ออกแล้ว / คงค้าง").grid(
@@ -7159,6 +7166,30 @@ class App(ctk.CTk):
                      text_color="#7b8496", anchor="w").grid(row=4, column=0, columnspan=3, padx=16, pady=(4, 16), sticky="w")
         return page
 
+    def attach_vip_awb_log(self):
+        """ส่งข้อความความคืบหน้าของ vip_awb (logger "vip_awb") ขึ้น Live Log
+
+        รอบแรกของรอบวันใช้ 10–30 นาที ถ้าจอเงียบคนเฝ้าจะนึกว่าค้างแล้วกดหยุด (เกิดจริง 18/11/2026)
+        """
+        app = self
+        levels = {logging.WARNING: "WARN", logging.ERROR: "ERROR", logging.CRITICAL: "ERROR"}
+
+        class LiveLogHandler(logging.Handler):
+            def emit(self, record):
+                try:
+                    app.write_log(record.getMessage(), level=levels.get(record.levelno, "INFO"),
+                                  touch_activity=False)
+                except Exception:
+                    pass
+
+        vip_log = logging.getLogger("vip_awb")
+        if not any(getattr(h, "_vip_live_log", False) for h in vip_log.handlers):
+            handler = LiveLogHandler(level=logging.INFO)
+            handler._vip_live_log = True
+            vip_log.addHandler(handler)
+        vip_log.setLevel(logging.INFO)
+        vip_log.propagate = False
+
     def collect_vip_awb_settings(self):
         """เก็บค่าจากหน้า VIP AWB ลง self.config (เรียกจาก save_config)"""
         if "vip_entries" not in self.__dict__:
@@ -7215,7 +7246,8 @@ class App(ctk.CTk):
         except ValueError:
             end = datetime.now()
         self.set_pipeline_state("vip_awb", "run")
-        self.write_log("VIP AWB started (background)", level="START")
+        self.write_log("VIP AWB started (background) — ความคืบหน้าขึ้นใน Live Log ระหว่างทำงาน "
+                       "ปิด Auto ไม่ได้หยุดงานนี้", level="START")
         self.run_vip_awb_in_background(
             send=True, force=getattr(self, "mode", "") != "auto", now=min(datetime.now(), end),
             on_done=lambda ok: self.set_pipeline_state("vip_awb", "ok" if ok else "error"))

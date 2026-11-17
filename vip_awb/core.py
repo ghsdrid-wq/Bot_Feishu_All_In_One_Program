@@ -310,8 +310,12 @@ def fetch_scans(con: sqlite3.Connection, jms: Jms, cfg: Config, p_start: datetim
 
     added = 0
     # ดึงทีละชั่วโมง ให้แต่ละคำขอเล็กและเร็ว
-    chunk = begin
+    total = max(1, int((until - begin).total_seconds() + 3599) // 3600)
+    log.info("VIP AWB ดึงการสแกนเข้า KKN_GW %s ถึง %s (%d ชั่วโมง)%s", f"{begin:%d/%m %H:%M}", f"{until:%d/%m %H:%M}",
+             total, " — ดึงย้อนหลังหลายชั่วโมง อาจใช้เวลาหลายนาที" if total > 3 else "")
+    chunk, step = begin, 0
     while chunk < until:
+        step += 1
         chunk_end = min(chunk + timedelta(hours=1), until)
         rows: dict[str, str] = {}
         for st in cfg.scan_types:
@@ -331,8 +335,8 @@ def fetch_scans(con: sqlite3.Connection, jms: Jms, cfg: Config, p_start: datetim
                     "ON CONFLICT(period_start) DO UPDATE SET fetched_until=excluded.fetched_until",
                     (key, chunk_end.strftime(FMT)))
         con.commit()
-        log.info("scan %s -> %s : %d เลขที่ต้องค้น", chunk.strftime("%m-%d %H:%M"), chunk_end.strftime("%H:%M"),
-                 len(rows))
+        log.info("VIP AWB ดึงการสแกน %s–%s (%d/%d) ได้เลขที่ต้องค้น %s เลข", f"{chunk:%H:%M}", f"{chunk_end:%H:%M}",
+                 step, total, f"{len(rows):,}")
         chunk = chunk_end
     return added
 
@@ -344,8 +348,13 @@ def lookup_sources(con: sqlite3.Connection, jms: Jms, cfg: Config, p_start: date
         "WHERE s.period_start=? AND (o.awb IS NULL OR o.status='error')", (key,))]
     if not todo:
         return 0, 0
-    log.info("ค้นแหล่งที่มาคำสั่งซื้อ %d เลข", len(todo))
+    # ค้นได้ราว 6 เลข/วินาทีต่อเธรด — บอกเวลาโดยประมาณให้คนเฝ้าจอรู้ว่ายังทำงานอยู่
+    eta = len(todo) / (6.0 * cfg.lookup_workers)
+    log.info("VIP AWB ค้นแหล่งที่มาคำสั่งซื้อ %s เลข (ประมาณ %s)", f"{len(todo):,}",
+             f"{eta / 60:.0f} นาที" if eta >= 90 else f"{eta:.0f} วินาที")
     errors = 0
+    done = 0
+    started = last_report = time.time()
     lock = threading.Lock()
     token_error: list[TokenError] = []
 
@@ -359,13 +368,24 @@ def lookup_sources(con: sqlite3.Connection, jms: Jms, cfg: Config, p_start: date
             token_error.append(e)
             return
         except Exception as e:
-            log.warning("ค้น %s ไม่สำเร็จ: %s", awb, e)
+            log.debug("ค้น %s ไม่สำเร็จ: %s", awb, e)  # สรุปจำนวนตอนจบ ไม่ขึ้นทีละเลข
             res = ("error", "", "", "")
             with lock:
                 errors += 1
+        nonlocal done, last_report
         with lock:
             con.execute("INSERT OR REPLACE INTO orders VALUES(?,?,?,?,?,?)",
                         (awb, res[1], res[2], res[3], res[0], datetime.now().strftime(FMT)))
+            done += 1
+            now = time.time()
+            # รายงานทุก 30 วินาที และบันทึกลงดิสก์ไปด้วย (หยุดกลางทาง เลขที่ค้นแล้วไม่หาย)
+            if now - last_report >= 30 and done < len(todo):
+                last_report = now
+                con.commit()
+                left = (len(todo) - done) * (now - started) / done
+                log.info("VIP AWB ค้นแหล่งที่มาแล้ว %s/%s เลข (%d%%) เหลืออีกประมาณ %s", f"{done:,}",
+                         f"{len(todo):,}", done * 100 // len(todo),
+                         f"{left / 60:.0f} นาที" if left >= 90 else f"{left:.0f} วินาที")
 
     with ThreadPoolExecutor(cfg.lookup_workers) as ex:
         list(ex.map(work, todo))
@@ -453,7 +473,7 @@ def attach_status(jms: "Jms", cfg: Config, d: ReportData) -> None:
                      stuck_hours=round((now - first).total_seconds() / 3600, 1)
                      if group == hub_status.STUCK else None)
     d.status_checked_at = now
-    log.info("ตรวจสถานะ %d เลข: %s", len(d.awbs),
+    log.info("VIP AWB ตรวจสถานะ %d เลข: %s", len(d.awbs),
              ", ".join(f"{g} {d.group_total(g)}" for g in hub_status.GROUPS))
 
 
@@ -601,16 +621,20 @@ def run(cfg: Config, jms_token: str, base_dir: str, now: datetime | None = None,
         os.makedirs(out_dir, exist_ok=True)
         con = open_db(os.path.join(base_dir, "vip_awb.db"))
         try:
-            log.info("VIP AWB รอบ %s ข้อมูลถึง %s", f"{p_start:%d/%m %H:%M}", f"{until:%d/%m %H:%M}")
+            log.info("VIP AWB เริ่ม — รอบ %s ข้อมูลถึง %s", f"{p_start:%d/%m %H:%M}", f"{until:%d/%m %H:%M}")
             jms = Jms(jms_token)
             t0 = time.time()
             fetch_scans(con, jms, cfg, p_start, until)
             looked, errors = lookup_sources(con, jms, cfg, p_start)
-            log.info("VIP AWB ค้นแหล่งที่มา %d เลข (ผิดพลาด %d) %.0f วินาที", looked, errors, time.time() - t0)
+            if looked:
+                log.info("VIP AWB ค้นแหล่งที่มาเสร็จ %s เลข%s (ดึง + ค้นรวม %.0f วินาที)", f"{looked:,}",
+                         f" ค้นไม่สำเร็จ {errors:,} เลข จะลองใหม่รอบหน้า" if errors else "", time.time() - t0)
+            log.info("VIP AWB ตรวจสถานะที่คลังของเลขแบรนด์ VIP")
             data = build_report(con, cfg, p_start, p_end, until)
             attach_status(jms, cfg, data)
             text = build_message(data)
             stem = os.path.join(out_dir, f"VIP_KKN_{p_start:%Y%m%d_%H%M}_ถึง_{until:%Y%m%d_%H%M}")
+            log.info("VIP AWB สร้างการ์ด / รูปตาราง / Excel%s", " แล้วส่ง Feishu" if send else "")
             png = render_png(data, stem + ".png") if cfg.send_image else None
             xlsx = write_excel(data, stem + ".xlsx") if cfg.send_excel else None
             result = {"data": data, "text": text, "png": png, "xlsx": xlsx, "sent": False, "skipped": ""}

@@ -5,6 +5,7 @@ Uses an isolated config and a fake vip_awb.run: nothing is sent to JMS or Feishu
 """
 
 import configparser
+import logging
 import sys
 import tempfile
 import time
@@ -45,6 +46,8 @@ def main():
 
     def fake_run(cfg, token, base_dir, now=None, **kw):
         calls.append((now, kw))
+        logging.getLogger("vip_awb").info("VIP AWB ค้นแหล่งที่มาแล้ว 1/2 เลข (50%) — test progress")
+        time.sleep(1.0)  # long enough for a pipeline reset to happen while the job is still running
         return {"data": FakeData(), "text": "", "png": None, "xlsx": None, "sent": kw.get("send", False),
                 "skipped": ""}
 
@@ -61,6 +64,9 @@ def main():
         app = ProfileApp()
         app.geometry("1280x900+0+0")
         try:
+            logged = []
+            real_write_log = app.write_log
+            app.write_log = lambda msg, *a, **k: (logged.append(str(msg)), real_write_log(msg, *a, **k))
             # page + defaults
             assert "vip_awb" in app.get_nav_order(), app.get_nav_order()
             app.show_page("vip_awb")
@@ -121,6 +127,18 @@ def main():
                 assert now == datetime(2026, 11, 17, 12) and kw["force"] is True, calls
             status = app.vip_status.cget("text")
             assert status.startswith("ส่งแล้ว"), status
+            # progress lines of the vip_awb logger reach Live Log
+            assert any("test progress" in m for m in logged), logged[-5:]
+            # a pipeline reset while the background job runs keeps the stage on "run"
+            app.vip_busy = True
+            app.active_run_generation = None
+            with mock.patch.object(app, "is_run_generation_active", return_value=True):
+                app.schedule_pipeline_reset()
+                app.after(1800, app.quit)
+                app.mainloop()
+            running = app.pipeline_widgets["vip_awb"]["status"].cget("text")
+            app.vip_busy = False
+            assert running not in ("READY", ""), running
             assert app.pipeline_widgets["vip_awb"]["status"].cget("text") != "", "stage state missing"
             print("VIP AWB UI test OK:", status, "| stage:", app.pipeline_widgets["vip_awb"]["status"].cget("text"))
         finally:
