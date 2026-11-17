@@ -11,6 +11,8 @@
 # - หลัง -Switch โหมด Auto ไม่เปิดเอง (โปรแกรมไม่จำสถานะ Auto) ต้องมีคนกด Start Auto ที่หน้า BOT REPORT
 #   ส่วน Feishu Bot / JMS bot เปิดเองตาม [FEISHU] bot_autostart / jms_autostart
 # - เวอร์ชันเดียวกับที่รันอยู่: ต้องใช้ -Switch (ปิดก่อน แล้วเปลี่ยนเฉพาะไฟล์โปรแกรม เก็บของเดิมไว้ใน _previous\)
+# - -Switch เปิดตัวใหม่ด้วยบัญชีเจ้าของโปรแกรมที่รันอยู่ (หรือผู้ใช้หน้าจอ) หาไม่ได้ = หยุดก่อนปิดตัวเก่า
+# - ทุกครั้งรีเซ็ตสิทธิ์โฟลเดอร์ปลายทางให้รับจาก Programs (icacls /reset) ไม่งั้นโปรแกรมเซฟ config.ini ไม่ได้
 param(
     [string]$SshHost = 'runpc',
     [string]$RemoteRoot = 'C:\0Niphonk\Programs',
@@ -89,6 +91,40 @@ if ($Switch -and $cur -and -not $Force) {
     }
 }
 
+# ---------- desktop user (resolve BEFORE stopping anything) ----------
+# The SSH session's $env:USERDOMAIN\$env:USERNAME is not a mappable account here (deploy 18/11/2026:
+# "No mapping between account names and security IDs" after the old version was already stopped).
+# Use the owner of the running app, else the console user, and check it maps to a SID first.
+function Get-DesktopUser {
+    $candidates = @()
+    if ($proc) {
+        $o = Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.Id)" | Invoke-CimMethod -MethodName GetOwner
+        if ($o.User) { $candidates += "$($o.Domain)\$($o.User)" }
+    }
+    $console = (Get-CimInstance Win32_ComputerSystem).UserName
+    if ($console) { $candidates += $console }
+    foreach ($e in Get-CimInstance Win32_Process -Filter "Name='explorer.exe'") {
+        $o = $e | Invoke-CimMethod -MethodName GetOwner
+        if ($o.User) { $candidates += "$($o.Domain)\$($o.User)" }
+    }
+    foreach ($c in $candidates) {
+        try {
+            ([Security.Principal.NTAccount]$c).Translate([Security.Principal.SecurityIdentifier]) | Out-Null
+            return $c
+        } catch {}
+    }
+    return $null
+}
+$desktopUser = $null
+if ($Switch) {
+    $desktopUser = Get-DesktopUser
+    if (-not $desktopUser) {
+        Write-Host 'Cannot find the logged-on desktop user to start the new version. Nothing was stopped.' -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "Desktop user: $desktopUser"
+}
+
 # ---------- unpack ----------
 $work = Join-Path (Split-Path $Pkg) 'x'
 New-Item -ItemType Directory -Force -Path $work | Out-Null
@@ -147,6 +183,12 @@ if ($same) {
     }
 }
 
+# The package is unpacked under C:\ProgramData and moved here, so it keeps that ACL (Users: read only)
+# and the app could not save config.ini ("Access is denied", deploy 18/11/2026).
+# Reset to inherit from the Programs folder like the older versions (Authenticated Users: Modify).
+icacls $dest /reset /T /Q | Out-Null
+if ($LASTEXITCODE) { Write-Host "Warning: could not reset permissions of $dest (icacls exit $LASTEXITCODE)" -ForegroundColor Yellow }
+
 if (-not $Switch) {
     Write-Host ''
     Write-Host "Staged. The running version was not touched. Open $dest\AutoReportFeishu.exe to switch, or run deploy-ssh.ps1 -Switch." -ForegroundColor Green
@@ -155,7 +197,7 @@ if (-not $Switch) {
 
 # ---------- start on the logged-on user's desktop ----------
 $exe = Join-Path $dest 'AutoReportFeishu.exe'
-$user = "$env:USERDOMAIN\$env:USERNAME"
+$user = $desktopUser
 $taskName = 'AutoReportFeishu-deploy-start'
 $action = New-ScheduledTaskAction -Execute $exe -WorkingDirectory $dest
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
