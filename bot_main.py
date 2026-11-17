@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import sys
 import json
@@ -48,6 +48,7 @@ import feishu_client
 import realtime_report
 import sent_messages
 import daily_summary
+import vip_awb
 from Botmessage import run_send
 
 # Skip stale Feishu redelivery after the app comes back online.
@@ -254,7 +255,7 @@ DEFAULT_TIME = {
 }
 
 DEFAULT_UI = {
-    "nav_order": "home,workbooks,dws_plan,jms_user,code_policy,daily_summary,settings",
+    "nav_order": "home,workbooks,dws_plan,jms_user,code_policy,daily_summary,vip_awb,settings",
 }
 
 DEFAULT_DWS_JMS = {
@@ -314,6 +315,8 @@ PIPELINE_STEPS = [
     # ช่องเดียวสำหรับทำตาราง เลือกแบบได้ 1 ใน 3 (REPORT_MODES) — แทนช่อง Excel Image + Dashboard เดิม
     ("report", "ตาราง", "\U0001F5BC", True),
     ("feishu", "Feishu", "\U0001F680", True),
+    # ยอดพัสดุ 8 แบรนด์ VIP (vip_awb/) — ทำงานเบื้องหลังหลังส่ง Feishu ค่าเริ่มต้นไม่ติ๊ก
+    ("vip_awb", "VIP AWB", "\U0001F451", False),
 ]
 
 # แบบของตารางในช่อง "ตาราง" (key ภายใน, ชื่อใน Combobox) — key ใช้เป็นชื่อขั้นตอนใน steps
@@ -1470,6 +1473,7 @@ class App(ctk.CTk):
             self.config["EXPORTS"] = {"items": ""}
         migrate_old_export_config(self.config)
         daily_summary.ensure_defaults(self.config)
+        vip_awb.ensure_defaults(self.config)
         self.normalize_export_names_to_numbers()
         self.save_config()
 
@@ -1510,6 +1514,7 @@ class App(ctk.CTk):
         self.config["EXPORTS"]["items"] = ",".join(new_names)
 
     def save_config(self):
+        self.collect_vip_awb_settings()
         if hasattr(self, "out_entry"):
             self.config["PATH"]["output_dir"] = entry_value(self.out_entry)
             if hasattr(self, "autopack_dir_entry"):
@@ -1879,6 +1884,7 @@ class App(ctk.CTk):
             "jms_user": ("👤  BOT JMS USER", "nav_jms_user"),
             "code_policy": ("🔐  สิทธิ์รหัส", "nav_code_policy"),
             "daily_summary": ("📋  สรุปรายวัน", "nav_daily_summary"),
+            "vip_awb": ("★  VIP AWB", "nav_vip_awb"),
             "settings": ("⚙  ตั้งค่า", "nav_settings"),
         }
         self.render_nav_menu()
@@ -1903,6 +1909,7 @@ class App(ctk.CTk):
             "jms_user": self.build_jms_user_page(self.content),
             "code_policy": self.build_code_policy_page(self.content),
             "daily_summary": self.build_daily_summary_page(self.content),
+            "vip_awb": self.build_vip_awb_page(self.content),
             "settings": self.build_settings_page(self.content),
         }
         self.show_page("home")
@@ -4219,7 +4226,9 @@ class App(ctk.CTk):
             legacy_chat = as_bool(dws.get("bot_chat_enabled", "true"), True)
             legacy_dash = as_bool(dws.get("dashboard_enabled", "false"), False)
             for key, _, _, default_on in PIPELINE_STEPS:
-                if key in RAW_STEP_KEYS:
+                if key == "vip_awb":
+                    fallback = default_on  # ขั้นตอนใหม่ ไม่เดาจากสวิตช์แบบเก่า
+                elif key in RAW_STEP_KEYS:
                     fallback = legacy_export and default_on
                 else:
                     fallback = legacy_chat
@@ -7010,6 +7019,12 @@ class App(ctk.CTk):
                 if wanted("program"):
                     self.set_pipeline_state("program", "skip")  # ตารางโปรแกรมส่งพร้อมขั้นตอน Feishu
 
+            # ---------- VIP AWB (เบื้องหลัง — รอบแรกของรอบวันใช้เวลานาน ไม่ให้รอบรายชั่วโมงรอ) ----------
+            if wanted("vip_awb"):
+                self.start_vip_awb_from_pipeline(report_end)
+            else:
+                self.set_pipeline_state("vip_awb", "skip")
+
             self.set_progress(100)
             if pipeline_had_warning:
                 self.write_log(
@@ -7045,6 +7060,214 @@ class App(ctk.CTk):
                 self.restore_ui_after_run()
 
             self.schedule_pipeline_reset(run_generation)
+
+    # ------------------------------------------------------------------ VIP AWB
+    def build_vip_awb_page(self, master):
+        """หน้า 👑 VIP AWB — ยอดพัสดุ 8 แบรนด์ VIP ที่เข้า KKN_GW รายชั่วโมง (vip_awb/)"""
+        page = SmoothScrollableFrame(master, fg_color="#2e3440", corner_radius=0)
+        page.grid_columnconfigure(0, weight=1)
+        self.vip_busy = False
+        sec = self.config[vip_awb.core.SECTION]
+        self.header(page, "VIP AWB",
+                    "ยอดพัสดุแบรนด์ VIP ที่เข้า KKN_GW รายชั่วโมง + สถานะ ออกแล้ว / คงค้าง").grid(
+            row=0, column=0, padx=24, pady=(18, 8), sticky="ew")
+
+        actions = ctk.CTkFrame(page, fg_color="transparent")
+        actions.grid(row=1, column=0, padx=24, pady=(0, 8), sticky="ew")
+        actions.grid_columnconfigure(0, weight=1)
+        self.vip_status = ctk.CTkLabel(actions, text="", text_color="#aeb8cc", anchor="w", justify="left",
+                                       wraplength=360)
+        self.vip_status.grid(row=0, column=0, sticky="w")
+        self.btn_vip_preview = ctk.CTkButton(
+            actions, text="👁 สร้างตัวอย่าง (ไม่ส่ง)", height=40, width=190,
+            fg_color="#5e81ac", hover_color="#4c6e93", command=lambda: self.start_vip_awb_now(False))
+        self.btn_vip_preview.grid(row=0, column=1, padx=(8, 0), sticky="e")
+        self.btn_vip_send = ctk.CTkButton(
+            actions, text="🚀 ส่งตอนนี้", height=40, width=130,
+            fg_color="#a3be8c", hover_color="#8ca876", text_color="#2e3440",
+            command=lambda: self.start_vip_awb_now(True))
+        self.btn_vip_send.grid(row=0, column=2, padx=(8, 0), sticky="e")
+        ctk.CTkButton(actions, text="💾 บันทึก", height=40, width=110, fg_color="#4c566a", hover_color="#5e6779",
+                      command=self.save_config).grid(row=0, column=3, padx=(8, 0), sticky="e")
+
+        send = self.make_card(page, "#3b4252", 22)
+        send.grid(row=2, column=0, padx=24, pady=8, sticky="ew")
+        send.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(send, text="การส่ง", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(
+            row=0, column=0, columnspan=3, padx=16, pady=(16, 2), sticky="w")
+        ctk.CTkLabel(send, text="ใช้ App ID / App Secret และ JMS Token เดียวกับหน้า ตั้งค่า", text_color="#aeb8cc").grid(
+            row=1, column=0, columnspan=3, padx=16, pady=(0, 6), sticky="w")
+        ctk.CTkLabel(send, text="ส่งอัตโนมัติ: ติ๊กช่อง VIP AWB ในลำดับการทำงานของหน้า BOT REPORT แล้วเปิด Auto "
+                                "(ส่งหลังขั้นตอน Feishu ของทุกรอบ ชั่วโมงละครั้ง)",
+                     text_color="#88c0d0", anchor="w").grid(row=2, column=0, columnspan=3, padx=16, pady=(6, 4), sticky="w")
+        self.vip_entries: Dict[str, Any] = {}
+
+        def entry(parent, row, label, key, hint=""):
+            ctk.CTkLabel(parent, text=label, text_color="#d8dee9", width=150, anchor="w").grid(
+                row=row, column=0, padx=(16, 8), pady=6, sticky="w")
+            ent = ctk.CTkEntry(parent, height=34)
+            ent.grid(row=row, column=1, padx=8, pady=6, sticky="ew")
+            ent.insert(0, sec.get(key, vip_awb.core.DEFAULTS[key]))
+            self.bind_clean_entry(ent, collapse_internal_spaces=(key == "chat_id"))
+            self.vip_entries[key] = ent
+            if hint:
+                ctk.CTkLabel(parent, text=hint, text_color="#7b8496", anchor="w").grid(
+                    row=row, column=2, padx=(4, 16), pady=6, sticky="w")
+            return ent
+
+        entry(send, 3, "Chat ID", "chat_id", "ว่าง = ใช้ของหน้า ตั้งค่า")
+        time_row = ctk.CTkFrame(send, fg_color="transparent")
+        time_row.grid(row=4, column=0, columnspan=3, padx=16, pady=6, sticky="w")
+        ctk.CTkLabel(time_row, text="รอบวันเริ่ม", text_color="#d8dee9").grid(row=0, column=2, padx=(0, 8))
+        self.vip_day_start_var = ctk.StringVar(
+            value=f"{int(vip_awb.core._int(sec.get('day_start_hour', '12'), 12)) % 24:02d}:00")
+        ctk.CTkComboBox(time_row, values=[f"{h:02d}:00" for h in range(24)], width=86,
+                        variable=self.vip_day_start_var, state="readonly",
+                        command=lambda _v: self.save_config()).grid(row=0, column=3)
+        self.vip_image_var = ctk.BooleanVar(value=as_bool(sec.get("send_image", "true"), True))
+        self.vip_excel_var = ctk.BooleanVar(value=as_bool(sec.get("send_excel", "true"), True))
+        opts = ctk.CTkFrame(send, fg_color="transparent")
+        opts.grid(row=5, column=0, columnspan=3, padx=16, pady=(2, 16), sticky="w")
+        ctk.CTkCheckBox(opts, text="แนบรูปตารางรายชั่วโมง", variable=self.vip_image_var,
+                        command=self.save_config).grid(row=0, column=0, padx=(0, 16))
+        ctk.CTkCheckBox(opts, text="ส่งไฟล์ Excel (สรุป + รายการ AWB + เลขที่ค้าง)", variable=self.vip_excel_var,
+                        command=self.save_config).grid(row=0, column=1)
+
+        brands = self.make_card(page, "#3b4252", 22)
+        brands.grid(row=3, column=0, padx=24, pady=8, sticky="ew")
+        brands.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(brands, text="แบรนด์", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(
+            row=0, column=0, padx=16, pady=(16, 2), sticky="w")
+        ctk.CTkLabel(brands, text="บรรทัดละแบรนด์: ชื่อที่แสดง = คำค้น, คำค้น — เทียบเป็นคำเต็มกับ แหล่งที่มาคำสั่งซื้อ / "
+                                  "รหัสลูกค้า / ชื่อลูกค้า (รหัสลูกค้าแบรนด์ดูได้จาก JMS ติดตามพัสดุ เช่น VIP111111383) "
+                                  "ตารางเรียงตามลำดับบรรทัด",
+                     text_color="#aeb8cc", anchor="w", justify="left", wraplength=900).grid(
+            row=1, column=0, padx=16, pady=(0, 6), sticky="w")
+        self.vip_brands_box = ctk.CTkTextbox(brands, height=210, font=ctk.CTkFont(family="Consolas", size=13))
+        self.vip_brands_box.grid(row=2, column=0, padx=16, pady=(0, 16), sticky="ew")
+        self.vip_brands_box.insert("1.0", sec.get("brands", vip_awb.core.DEFAULT_BRANDS))
+
+        adv = self.make_card(page, "#3b4252", 22)
+        adv.grid(row=4, column=0, padx=24, pady=(8, 24), sticky="ew")
+        adv.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(adv, text="ขั้นสูง", text_color="#eceff4", font=ctk.CTkFont(size=17, weight="bold")).grid(
+            row=0, column=0, columnspan=3, padx=16, pady=(16, 6), sticky="w")
+        entry(adv, 1, "ประเภทสแกนเข้าคลัง", "scan_types", "ลงรถ / ส่งออก / บรรจุกระสอบ")
+        entry(adv, 2, "ค้นเฉพาะเลขขึ้นต้น", "lookup_prefixes", "JTTH = TikTok ไม่ต้องค้น")
+        entry(adv, 3, "นับ VIP ทุกรหัสขึ้นต้น", "customer_code_prefix", "ว่าง = เฉพาะแบรนด์")
+        ctk.CTkLabel(adv, text="ข้อมูลสะสมใน vip_awb.db และไฟล์รายงานในโฟลเดอร์ VipAwb ข้าง config.ini (ลบเองเมื่อเกิน 3 วัน)",
+                     text_color="#7b8496", anchor="w").grid(row=4, column=0, columnspan=3, padx=16, pady=(4, 16), sticky="w")
+        return page
+
+    def collect_vip_awb_settings(self):
+        """เก็บค่าจากหน้า VIP AWB ลง self.config (เรียกจาก save_config)"""
+        if "vip_entries" not in self.__dict__:
+            return
+        vip_awb.ensure_defaults(self.config)
+        sec = self.config[vip_awb.core.SECTION]
+        sec["day_start_hour"] = clean_input_value(self.vip_day_start_var.get()).replace(":00", "") or "12"
+        sec["send_image"] = str(bool(self.vip_image_var.get())).lower()
+        sec["send_excel"] = str(bool(self.vip_excel_var.get())).lower()
+        for key, ent in self.vip_entries.items():
+            sec[key] = entry_value(ent, collapse_internal_spaces=(key == "chat_id"))
+        brands = "\n".join(line.strip() for line in self.vip_brands_box.get("1.0", "end").splitlines() if line.strip())
+        sec["brands"] = brands or vip_awb.core.DEFAULT_BRANDS
+
+    def set_vip_awb_status(self, text, color="#aeb8cc"):
+        if not self.is_ui_thread():
+            self.run_on_ui_thread(self.set_vip_awb_status, text, color)
+            return
+        if "vip_status" in self.__dict__:
+            self.vip_status.configure(text=text, text_color=color)
+
+    def vip_awb_job_args(self) -> Dict[str, Any]:
+        """ค่าที่ worker ต้องใช้ — อ่านบน UI thread (token จากช่องในหน้า ตั้งค่า)"""
+        feishu = self.config["FEISHU"] if "FEISHU" in self.config else {}
+        cfg = vip_awb.load_settings(self.config)
+        return {
+            "cfg": cfg,
+            "token": self.get_jms_auth_token(),
+            "app_id": clean_input_value(feishu.get("APP_ID", ""), collapse_internal_spaces=True),
+            "app_secret": clean_input_value(feishu.get("APP_SECRET", ""), collapse_internal_spaces=True),
+            "chat_id": cfg.chat_id or clean_input_value(feishu.get("CHAT_ID", ""), collapse_internal_spaces=True),
+            "base_dir": os.path.dirname(os.path.abspath(CONFIG_FILE)),
+        }
+
+    def start_vip_awb_now(self, send: bool):
+        if self.vip_busy:
+            self.set_vip_awb_status("กำลังทำงานอยู่ รอให้เสร็จก่อน", "#ebcb8b")
+            return
+        self.save_config()
+        self.run_vip_awb_in_background(send=send, force=True)
+
+    def start_vip_awb_from_pipeline(self, report_end):
+        """ขั้นตอน VIP AWB ของ Auto / Run Now — สั่งงานเบื้องหลังแล้วให้ pipeline จบไปก่อน
+
+        ข้อมูลถึงต้นชั่วโมงของ min(ตอนนี้, ปลายช่วงที่เลือก): Auto = ชั่วโมงปัจจุบัน, Run Now ช่วงของเมื่อวาน = ยอดปิดรอบ
+        Auto ส่งรอบละครั้ง (จำใน vip_awb.db) ส่วน Run Now ส่งซ้ำได้
+        """
+        if self.__dict__.get("vip_busy"):
+            self.write_log("VIP AWB — รอบก่อนหน้ายังทำงานอยู่ ข้ามรอบนี้", level="WARN")
+            self.set_pipeline_state("vip_awb", "warning")
+            return
+        try:
+            end = report_end if isinstance(report_end, datetime) else datetime.fromisoformat(str(report_end))
+        except ValueError:
+            end = datetime.now()
+        self.set_pipeline_state("vip_awb", "run")
+        self.write_log("VIP AWB started (background)", level="START")
+        self.run_vip_awb_in_background(
+            send=True, force=getattr(self, "mode", "") != "auto", now=min(datetime.now(), end),
+            on_done=lambda ok: self.set_pipeline_state("vip_awb", "ok" if ok else "error"))
+
+    def run_vip_awb_in_background(self, send: bool, force: bool = False, now: Optional[datetime] = None,
+                                  on_done=None):
+        args = self.vip_awb_job_args()
+        self.vip_busy = True
+        self.set_vip_awb_status("กำลังส่ง... (รอบแรกของรอบวันใช้เวลานาน ~10-20 นาที)" if send
+                                else "กำลังสร้างตัวอย่าง...", "#88c0d0")
+
+        def worker():
+            ok = False
+            try:
+                with contextlib.ExitStack() as record:
+                    if send:
+                        record.enter_context(sent_messages.recording(
+                            self.sent_messages_path(), "vip_awb",
+                            f"VIP AWB {datetime.now():%Y-%m-%d %H}:00", log=self.write_log))
+                    res = vip_awb.run(args["cfg"], args["token"], args["base_dir"], now, send=send, force=force,
+                                      app_id=args["app_id"], app_secret=args["app_secret"],
+                                      chat_id=args["chat_id"])
+                d = res["data"]
+                summary = (f"รอบ {d.period_label} ข้อมูลถึง {d.until:%H:%M} — เข้าคลัง {d.grand_total:,} · "
+                           f"ออกแล้ว {d.group_total(vip_awb.core.hub_status.SENT):,} · "
+                           f"คงค้าง {d.group_total(vip_awb.core.hub_status.STUCK):,}")
+                if res["sent"]:
+                    self.write_log(f"VIP AWB sent — {summary}", level="SUCCESS")
+                    self.set_vip_awb_status(f"ส่งแล้ว {datetime.now():%H:%M} · {summary}", "#a3be8c")
+                elif send:
+                    self.set_vip_awb_status(f"ไม่ได้ส่ง: {res['skipped']} · {summary}", "#ebcb8b")
+                else:
+                    self.set_vip_awb_status(f"สร้างตัวอย่างแล้ว · {summary}", "#a3be8c")
+                    folder = os.path.dirname(res["xlsx"] or res["png"] or "")
+                    if folder and os.path.isdir(folder):
+                        os.startfile(folder)
+                ok = True
+            except vip_awb.TokenError as exc:
+                self.write_log(f"VIP AWB — JMS token ใช้ไม่ได้: {exc}", level="ERROR")
+                self.set_vip_awb_status(f"JMS token ใช้ไม่ได้ — อัปเดตที่หน้า ตั้งค่า ({exc})", "#d3868e")
+                self.notify_it_alert("vip_awb_token", "VIP AWB: JMS token ใช้ไม่ได้",
+                                     f"ส่งยอด VIP ไม่ได้ กรุณาอัปเดต JMS token ที่หน้า ตั้งค่า\nรายละเอียด: {exc}",
+                                     cooldown_seconds=3 * 3600)
+            except Exception as exc:
+                self.write_log(f"VIP AWB failed — {exc}", level="ERROR")
+                self.set_vip_awb_status(f"ไม่สำเร็จ: {exc}", "#d3868e")
+            finally:
+                self.vip_busy = False
+                if on_done:
+                    on_done(ok)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def daily_summary_tick(self):
         """ตัวตั้งเวลาของสรุปรายวัน — เช็กทุก 30 วินาที ส่งวันละครั้งเมื่อถึงเวลาที่ตั้ง

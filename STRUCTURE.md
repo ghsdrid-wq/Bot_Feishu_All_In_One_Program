@@ -37,6 +37,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 | `core/jms_policy.py` | นโยบาย JMS แบบ JSON: normalize, bulk parse, atomic save, exact exemption, prefix block และ fail-closed decision |
 | `core/config.py` | โหลด/เซฟ config (`get_config`, `save_config`) รองรับ frozen exe |
 | `core/logger.py` | `write_log(...)` เขียน log รายวันที่โฟลเดอร์ `logs/` |
+| `vip_awb/` | **VIP AWB** ยอดพัสดุ 8 แบรนด์ VIP ที่เข้า KKN_GW รายชั่วโมง — `core.py` (ดึงสแกน/ค้นแหล่งที่มา/นับ/การ์ด/ส่ง, `run`, `ensure_defaults`, `load_settings`, `already_sent`), `hub_status.py` (สถานะที่คลัง กติกาเดียวกับ Worker Server `portal/tools/missing_status/logic.py` `classify` — แก้ที่นั่นต้องแก้ที่นี่), `report.py` (รูป PNG Pillow + Excel 3 ชีต), `__main__.py` (`python -m vip_awb --dry-run`) |
 | `metrics/core.py` | โหลด metrics config/SQLite schema; ถ้า `metrics_config.yaml` ข้าง EXE หายจะกู้จากสำเนา read-only ใน `_internal` แบบ atomic และ `schema.sql` มีสำเนาสำรองอีกตำแหน่งใน onedir |
 
 ## ฟังก์ชัน/ส่วนสำคัญใน bot_main.py
@@ -76,6 +77,15 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - ส่งอัตโนมัติใช้รอบตามเวลาเริ่มของ Auto และไม่ส่ง/ไม่ส่งย้อนหลังหลัง 13:00 (`AUTO_SEND_CUTOFF_HOUR`), กดเองใช้ช่วงที่เลือกในหน้า (`daily_summary_scope` -> `run(scope=True)` -> `scope_window` เกิน 24 ชม. ได้ และ `build(trim_to_activity=True)` ตัดตารางตามชั่วโมงที่ทำงานจริง `Window.active_span` / `Window.sub`), `fresh_raw_export` (true = ดึง JMS AUTO/PDA/DWS9-11 ของช่วงสรุปใหม่ลง `DailySummaryRaw` ก่อนสรุป — `export_raw_for_daily_summary`), `backup_dir` (หน้าเว็บเรียก "โฟลเดอร์บันทึกไฟล์ Excel"): ทุกครั้งที่ส่งจะ `save_excel_copy` บันทึกไฟล์ Excel ที่ใช้ส่งลงโฟลเดอร์นี้ตรง ๆ ก่อนส่ง (ไม่มีโฟลเดอร์ย่อย ไม่มีรูป) ชีตตารางมีสีแท็บ `TABLE_TAB_COLOR`
 - ทดสอบนอกโปรแกรม: `python daily_summary.py --start "2026-10-18 15:00" --end "2026-10-19 10:00" --no-send`
 
+### VIP AWB (`vip_awb/`, หน้า ★ VIP AWB)
+- **ส่งอัตโนมัติ = ขั้นตอน `vip_awb` (การ์ด VIP AWB ต่อท้าย Feishu) ใน `PIPELINE_STEPS` ของหน้า BOT REPORT** ค่าเริ่มต้นไม่ติ๊ก (บันทึกเป็น `[DWS_JMS] step_vip_awb`; เครื่องเดิมไม่เดาจากสวิตช์แบบเก่า) — ท้าย `run_process` หลังขั้นตอน Feishu เรียก `start_vip_awb_from_pipeline(report_end)` ซึ่งสั่งงานเบื้องหลังแล้วให้ pipeline จบเลย (รอบแรกของรอบวันใช้ 10–20 นาที ไม่ให้รอบรายชั่วโมงรอ/โดน watchdog) ข้อมูลถึงต้นชั่วโมงของ `min(ตอนนี้, ปลายช่วง)`: Auto = ชั่วโมงปัจจุบัน (ช่วงของ scheduler จบ 12:00 วันถัดไป), Run Now ช่วงอดีต = ยอดปิดรอบนั้น; Auto ส่งรอบละครั้ง (`sent` ใน `vip_awb.db`) Run Now ส่งซ้ำได้ (`force`); รอบก่อนยังไม่เสร็จ -> ข้ามพร้อม WARN; สถานะการ์ดตั้งตอนงานเสร็จผ่าน `on_done`
+- หน้า `build_vip_awb_page`: Chat ID (ว่าง = `[FEISHU] CHAT_ID`), ชั่วโมงเริ่มรอบวัน, แนบรูป/Excel, กล่องแบรนด์ และค่าขั้นสูง; ปุ่ม สร้างตัวอย่าง (ไม่ส่ง) / ส่งตอนนี้ (`start_vip_awb_now`, ส่งซ้ำได้) — ค่าเก็บลง `self.config` ผ่าน `collect_vip_awb_settings` ที่ต้น `save_config`
+- งานจริงรันในเธรด `run_vip_awb_in_background(send, force, now, on_done)` (บันทึกข้อความที่ส่งไว้ถอนได้ด้วย `sent_messages.recording` ชนิด `vip_awb`); token JMS ใช้ไม่ได้ -> `notify_it_alert('vip_awb_token')` ไม่เกินทุก 3 ชม.
+- ขั้นตอน `vip_awb.run`: (1) `scanningContrast/queryOrder` แบบแบ่งหน้า (ไม่ใช้ศูนย์ดาวน์โหลด จึงไม่ชนกับ export AUTO/PDA/Realtime) ประเภท `scan_types` = สแกนลงรถ + ส่งออก + บรรจุกระสอบ (ใช้แค่สแกนลงรถขาด ~27% ตรวจ 17/11/2026) ทีละชั่วโมง ทับย้อน `overlap_minutes` (2) เก็บเฉพาะเลขขึ้นต้น `lookup_prefixes` (864/829; JTTH = TikTok) (3) `order/getOrderDetail` ทีละเลขเฉพาะเลขใหม่ (4 เธรด) เก็บ แหล่งที่มา/รหัส/ชื่อลูกค้า (4) จับแบรนด์จาก `brands` เป็นคำเต็มเทียบ `แหล่งที่มา | รหัสลูกค้า | ชื่อลูกค้า` (5) สถานะด้วย `podTracking/inner/query/keywordList` ทีละ 100 เลข (6) การ์ด + รูป + Excel ผ่าน `feishu_client`
+- รอบวัน `day_start_hour` (12:00–11:59) ข้อมูลถึงต้นชั่วโมง รันตอน 12:xx = ยอดปิดรอบ (หัวการ์ดสีเขียว); ไฟล์ใน `VipAwb/` และ `vip_awb.db` ข้าง `config.ini` ลบเองเมื่อเกิน 3 วัน (รอบแรกของรอบวันบนเครื่องใหม่ต้องดึงย้อนหลัง ~10–20 นาที)
+- รูปวาดด้วย Pillow ที่ไม่มี raqm: วรรณยุกต์ซ้อนสระบน (ที่/ชั่ว/ครั้ง) ทับกัน ข้อความในรูปจึงเลี่ยงคำแบบนั้น
+- ทดสอบ: `tools/test_vip_awb_ui.py` (config แยก + `vip_awb.run` ปลอม: หน้า, บันทึกค่า, การ์ดขั้นตอน + `step_vip_awb`, `start_vip_awb_from_pipeline` แบบ Auto / Run Now) และ `python -m vip_awb --dry-run [--config สำเนา config.ini] [--base-dir โฟลเดอร์ทดสอบ]`
+
 ### Scheduler / runtime
 - `start_scheduler` / `scheduler_loop` / `stop_scheduler` — Auto รันตามรอบ (`run_minute`, `start_hour`/`end_hour`) โดยเทียบเป็นช่องนาที จึงไม่พลาดรอบสุดท้ายจาก loop ที่ตื่นหลังวินาที 00; ถ้าวันที่ตั้งตามรอบงานอัตโนมัติ (`scheduler_follows_shift_dates`) เลยเวลาสิ้นสุดแล้ว Auto **ไม่หยุด** แต่รอวันที่เลื่อน (`date_roll_hour` 13:00) แล้วเริ่มรอบใหม่เอง ช่วงวันที่ที่ผู้ใช้เลือกเองยังจบตามเดิม; เหตุการณ์ Auto บันทึกลง runtime log ระดับ NOTICE (`log_scheduler_event`); `set_locked_date` เลื่อนวันที่ได้แม้ช่องถูกล็อกระหว่าง Auto
 - `run_once` / `run_process` / `worker_loop` / `watchdog` — คุมการรัน manual + กันค้าง; `run_generation` กันงานเก่ากลับมาเขียนผลหลังผู้ใช้หยุดแล้วเริ่มรอบใหม่
@@ -107,6 +117,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 - `[DWS_JMS]`: `dws_url`, `dws_token`, `jms_token`, ชื่อไฟล์ export (`name_dws`, `name_auto`, `name_dwspda`, `name_realtime_db`), ช่วงเวลา (`start_hour`, `end_hour`; `start_date` / `end_date` ไม่บันทึกแล้ว — วันที่ตามรอบงานเสมอ เลือกเองได้เฉพาะตอนโปรแกรมเปิดอยู่), `raw_path`, `download_size`, flags `enabled` / `send_*_file`
 - `[DWS1]..[DWS9-11]`: `ip`, `port` ของเครื่อง agent (default subnet `10.30.32.x`, พอร์ต 4000/4001)
 - `[WORKBOOKS]` / `[EXPORTS]`: `items` — รายการไฟล์ Excel/ชีต ที่จัดการในหน้า Workbooks
+- `[VIP_AWB]` (สร้างให้อัตโนมัติ `vip_awb.ensure_defaults`): `chat_id`, `day_start_hour` (12), `title`, `brands` (หลายบรรทัด `ชื่อ = คำค้น, คำค้น` เช่น `ADIDAS = ADIDAS, VIP111111383`), `customer_code_prefix` (ว่าง = เฉพาะแบรนด์; `VIP111111` = นับ VIP ทุกระดับ — ทางคลังต้องการแค่ 8 แบรนด์), `send_image`, `send_excel`, `scan_network_code` (999004), `hub_site` (KKN_GW), `scan_types`, `lookup_prefixes`, `lookup_workers`, `page_size`, `overlap_minutes`
 - หมายเหตุ: `core/config.ini` เป็นไฟล์แยกของ `core/*` (มี `[FEISHU]`, `[NGROK]`)
 - Build เก็บ `metrics_config.yaml` สองตำแหน่ง: สำเนาที่ผู้ใช้แก้ได้ข้าง EXE และสำเนากู้คืน read-only ใน `_internal`; ไฟล์เดิมของผู้ใช้มีสิทธิ์สูงสุดและไม่ถูกเขียนทับ
 

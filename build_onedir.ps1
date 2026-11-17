@@ -105,6 +105,8 @@ $Args = @(
     "--collect-submodules", "metrics",
     "--collect-submodules", "core",
     "--hidden-import", "card_report",
+    # VIP AWB (vip_awb/) import feishu_client ตอนส่ง — บอกให้เก็บทั้งแพ็กเกจ
+    "--collect-submodules", "vip_awb",
 
     # ---- เว็บ dashboard ----
     # uvicorn โหลดโมดูลด้วยชื่อเป็นสตริง การไล่ import จึงไม่เจอ
