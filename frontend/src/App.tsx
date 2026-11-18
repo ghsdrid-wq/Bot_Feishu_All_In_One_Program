@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Bot, CalendarCheck, Crown, FileSpreadsheet, Loader2, Menu, Monitor, Moon, Radio, Settings as SettingsIcon,
+  Activity, Bot, CalendarCheck, Crown, FileSpreadsheet, Loader2, Menu, Monitor, Moon, Radio, Settings as SettingsIcon,
   ShieldCheck, Sun, Table2, WifiOff, X,
 } from 'lucide-react'
 import { get, type EngineState } from './api'
@@ -12,10 +12,12 @@ import { JmsUser } from './pages/JmsUser'
 import { Policy } from './pages/Policy'
 import { Daily } from './pages/Daily'
 import { Vip } from './pages/Vip'
+import { CogyLive } from './pages/CogyLive'
 import { Settings } from './pages/Settings'
 
 const pages = [
   { key: 'report', label: 'รายงานรายชั่วโมง', icon: Table2 },
+  { key: 'cogy', label: 'CoGY Live (KKN2)', icon: Activity },
   { key: 'workbooks', label: 'ไฟล์ Excel', icon: FileSpreadsheet },
   { key: 'daily', label: 'สรุปรายวัน', icon: CalendarCheck },
   { key: 'vip', label: 'VIP AWB', icon: Crown },
@@ -167,6 +169,7 @@ export default function App() {
         <main id="main" className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl space-y-4 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-6 lg:px-8 lg:py-7">
             {page === 'report' && <Report st={st} refresh={refresh} go={go} />}
+            {page === 'cogy' && <CogyLive />}
             {page === 'workbooks' && <Workbooks />}
             {page === 'daily' && <Daily st={st} />}
             {page === 'vip' && <Vip st={st} go={go} />}

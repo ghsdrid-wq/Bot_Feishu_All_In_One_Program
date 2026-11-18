@@ -1,5 +1,9 @@
 # Local configuration and runtime output
 config.ini
+cogy_config.json
+sent_feishu_history.json
+cache/
+reports/
 jms_user_policy.json
 sent_messages.json
 *.log
@@ -28,7 +32,11 @@ logs/
 metrics/store.db
 metrics/store.db-wal
 metrics/store.db-shm
-# VIP AWB: ข้อมูลสะสมและไฟล์รายงาน (สร้างข้าง config.ini)
+# VIP AWB: ข้อมูลสะสมและไฟล์รายงาน (สร้างข้าง config.ini
+cogy_config.json
+sent_feishu_history.json
+cache/
+reports/)
 vip_awb.db
 vip_awb.db-wal
 vip_awb.db-shm

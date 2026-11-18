@@ -16,6 +16,8 @@ import feishu_client
 import sent_messages
 import vip_awb
 from core import jms_policy
+from cogy.service import CogyService
+from cogy import dashboard_server as cogy_dash
 from vip_awb import core as vip_core
 
 from . import schema
@@ -32,8 +34,10 @@ class Body(BaseModel):
 def create_app(picker=None, autostart: bool = True) -> FastAPI:
     install_vip_capture()
     eng = Engine(autostart=autostart)
+    cogy_svc = CogyService(autostart=autostart)
     app = FastAPI(title="Auto Report Web UI", version=legacy.APP_VERSION)
     app.state.engine = eng
+    app.state.cogy = cogy_svc
 
     def lines(items):
         return [x.strip() for x in str(items or "").split(",") if x.strip()]
@@ -416,6 +420,74 @@ def create_app(picker=None, autostart: bool = True) -> FastAPI:
         kind = body.model_dump().get("kind", "folder")
         need(picker is not None, "เลือกไฟล์ได้เฉพาะในหน้าต่างโปรแกรม — พิมพ์ที่อยู่เองแทน")
         return {"path": picker(kind) or ""}
+
+    # ================================================================ CoGY Real-Time (WCS + DWS)
+    @app.get("/api/cogy/state")
+    def cogy_state(cat: str = "ALL"):
+        return cogy_svc.get_state(log_category=cat)
+
+    @app.post("/api/cogy/server/start")
+    def cogy_server_start():
+        return cogy_svc.start_server()
+
+    @app.post("/api/cogy/send")
+    def cogy_send(body: Body):
+        d = body.model_dump()
+        res = cogy_svc.send_report(mode=d.get("mode", "auto"), start_str=d.get("start", ""), end_str=d.get("end", ""))
+        need(res.get("ok"), res.get("error", "ส่งรายงานไม่สำเร็จ"), 409)
+        return res
+
+    @app.post("/api/cogy/recall")
+    def cogy_recall(body: Body):
+        d = body.model_dump()
+        res = cogy_svc.recall(scope=d.get("scope", "last"))
+        need(res.get("ok"), res.get("error", "เรียกคืนไม่สำเร็จ"), 409)
+        return res
+
+    @app.post("/api/cogy/job/reset")
+    def cogy_job_reset():
+        cogy_dash.reset_job_to_standby()
+        return {"ok": True}
+
+    @app.put("/api/cogy/modes")
+    def cogy_modes(body: Body):
+        res = cogy_svc.set_modes(body.model_dump())
+        need(res.get("ok"), res.get("error", "บันทึกโหมดไม่สำเร็จ"))
+        return res
+
+    @app.put("/api/cogy/rooms/toggle")
+    def cogy_room_toggle(body: Body):
+        d = body.model_dump()
+        return cogy_svc.toggle_room(d.get("chat_id", ""), bool(d.get("enabled", True)))
+
+    @app.post("/api/cogy/rooms/add")
+    def cogy_room_add(body: Body):
+        d = body.model_dump()
+        res = cogy_svc.add_room(d.get("chat_id", ""), d.get("name", ""), True)
+        need(res.get("ok"), res.get("error", "เพิ่มห้องไม่สำเร็จ"))
+        return res
+
+    @app.delete("/api/cogy/rooms/{chat_id}")
+    def cogy_room_remove(chat_id: str):
+        return cogy_svc.remove_room(chat_id)
+
+    @app.get("/api/cogy/chats")
+    def cogy_list_chats():
+        try:
+            return {"chats": cogy_svc.list_chats()}
+        except Exception as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.get("/api/cogy/chats/{chat_id}")
+    def cogy_lookup_chat(chat_id: str):
+        try:
+            return {"chat": cogy_svc.lookup_chat(chat_id)}
+        except Exception as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.put("/api/cogy/settings")
+    def cogy_save_settings(body: Body):
+        return cogy_svc.save_settings(body.model_dump())
 
     # ================================================================ หน้าเว็บ
     if os.path.isdir(STATIC_DIR):
