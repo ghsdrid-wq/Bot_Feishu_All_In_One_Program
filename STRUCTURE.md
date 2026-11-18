@@ -18,7 +18,11 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 
 รับ event จาก Feishu ผ่าน Flask webhook, คุย LAN กับเครื่อง DWS agent, และต่อ MySQL DB ของ DWS โดยตรง
 
-## วิธีรัน / Entry point
+## Web UI (ตั้งแต่ 2.1.18 บน main)
+- `webui_main.py` -> `webui/api.py` (FastAPI) -> `webui/engine.py` (`Engine`: เมธอดของ `App` ที่ไม่แตะหน้าจอ + เขียนใหม่เฉพาะส่วนหน้าจอ), หน้าเว็บ `frontend/` build ลง `webui/static` — รายละเอียดใน WEBUI.md
+- `[WEBUI] auto_on` จำสถานะ Auto, `logs/webui_startup.log` บันทึกตอนเริ่ม (exe ไม่มี console ต้องส่ง stdout/stderr ลงไฟล์ ไม่งั้น uvicorn ล้มเงียบ)
+
+## วิธีรัน / Entry point (หน้าจอ Tk เดิม — ยังรันได้ด้วย `python bot_main.py`)
 - รัน: `python bot_main.py` → เปิดคลาส `App(ctk.CTk)` (customtkinter, ธีม Nord, หลายหน้าเลื่อนสลับด้วย nav menu ลากจัดลำดับได้)
 - มี **single-instance lock** (`acquire_single_instance_lock`) — เปิดซ้ำจะเตือนแล้วปิด
 - ตอนเปิด: โหลด/สร้าง `config.ini` (`ensure_config`), start `controller_api` (Flask) พอร์ต **6100** เป็น daemon thread

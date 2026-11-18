@@ -1,0 +1,20 @@
+@import "@fontsource/noto-sans-thai/400.css";
+@import "@fontsource/noto-sans-thai/500.css";
+@import "@fontsource/noto-sans-thai/600.css";
+@import "@fontsource/noto-sans-thai/700.css";
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Noto Sans Thai", "Segoe UI", system-ui, sans-serif;
+  --color-brand-50: #fdf2f3;
+  --color-brand-100: #fbe3e6;
+  --color-brand-500: #d81e3c;
+  --color-brand-600: #c8102e;
+  --color-brand-700: #a50d26;
+  --color-ink: #1f2430;
+}
+
+html, body, #root { height: 100%; }
+body { @apply bg-slate-100 text-ink antialiased; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { @apply bg-slate-300 rounded-full; border: 2px solid transparent; background-clip: content-box; }

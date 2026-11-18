@@ -1,5 +1,10 @@
 ﻿# Bot_Feishu_All_In_One_Program: ข้อมูลสำหรับ Claude
 
+**ตั้งแต่ 18/11/2026 main คือ Web UI** (FastAPI + React/Vite/Tailwind + pywebview, ดู [WEBUI.md](WEBUI.md)) — หน้าจอ Tk เดิมเก็บไว้ที่ branch `Old-Version`
+ตรรกะงานยังอยู่ใน `bot_main.py` (Engine ของ Web UI ใช้เมธอดชุดเดิม) แก้ตรรกะที่นั่นได้ แต่ห้ามให้พึ่งช่องกรอกของ Tk
+เครื่องรันใช้ `C:\0Niphonk\Programs\AutoReportWebUIV<x-y-z>\AutoReportWebUI.exe` (shortcut "Auto Report Web UI" บนเดสก์ท็อป) build ด้วย `build_webui.ps1`
+`deploy-ssh.ps1` ยังเป็นของโปรแกรมเดิม (AutoReportFeishu.exe) — ยังไม่ได้ปรับให้ Web UI
+
 อ่านก่อนแก้โค้ด: [README.md](README.md) (ใช้งาน, เวอร์ชัน, build, deploy) และ [STRUCTURE.md](STRUCTURE.md) (โครงสร้าง, config key)
 **แก้โค้ดแล้วต้องอัปเดต STRUCTURE.md ให้ตรงเสมอ** (กฎที่หัวไฟล์ STRUCTURE.md)
 

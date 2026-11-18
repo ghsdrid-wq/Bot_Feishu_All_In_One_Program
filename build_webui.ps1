@@ -1,0 +1,226 @@
+﻿# build_webui.ps1 — สร้าง exe ของ Web UI (webui_main.py) แบบ onedir / windowed
+# คัดลอกมาจาก build_onedir.ps1 เปลี่ยนชื่อ exe/โฟลเดอร์ จุดเริ่ม และเพิ่มหน้าเว็บ + pywebview
+# ต้อง build หน้าเว็บก่อน: cd frontend; npm run build  (สคริปต์นี้สั่งให้เองถ้ามี npm)
+#
+# ผลลัพธ์คือโฟลเดอร์เดียวที่ก๊อปไปวางเครื่องไหนก็รันได้ ไม่ต้องลง Python
+# ไฟล์ที่ผู้ใช้ต้องแก้เอง (config.ini, metrics_config.yaml) และฐานข้อมูล
+# store.db อยู่ข้าง ๆ exe ไม่ได้อยู่ใน _internal ซึ่งถูกเขียนทับตอนลงใหม่
+#
+# เครื่องที่ build ต้องมี Python 3.14 + PyInstaller + pip install -r requirements.txt
+
+$ErrorActionPreference = "Stop"
+
+$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $ProjectDir
+function Assert-ChildPath([string]$Path, [string]$Root) {
+    $ResolvedPath = [System.IO.Path]::GetFullPath($Path)
+    $ResolvedRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $ResolvedPath.StartsWith($ResolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing filesystem operation outside expected root: $ResolvedPath"
+    }
+}
+$AppVersion = (& python -c "from app_version import APP_VERSION; print(APP_VERSION)").Trim()
+if ($LASTEXITCODE -ne 0 -or $AppVersion -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Invalid APP_VERSION in app_version.py: '$AppVersion'"
+}
+$ReleaseFolderName = "AutoReportWebUIV" + $AppVersion.Replace(".", "-")
+$Npm = Get-Command npm -ErrorAction SilentlyContinue
+if ($Npm) { Push-Location (Join-Path $ProjectDir "frontend"); $ErrorActionPreference = "Continue"; npm run build; $code = $LASTEXITCODE; $ErrorActionPreference = "Stop"; Pop-Location; if ($code) { throw "npm run build failed" } }
+if (-not (Test-Path (Join-Path $ProjectDir "webui\static\index.html"))) { throw "ยังไม่ได้ build หน้าเว็บ (webui/static)" }
+
+# PyInstaller --noconfirm replaces the existing onedir folder. Preserve the
+# operator-owned configuration before that happens so rebuilding an installed
+# folder never resets production paths, credentials, dates, or switches.
+$ExistingDistDir = Join-Path $ProjectDir ("dist\" + $ReleaseFolderName)
+$DistRoot = Join-Path $ProjectDir "dist"
+if (-not (Test-Path $ExistingDistDir) -and (Test-Path $DistRoot)) {
+    # First build of a new version: carry operator-owned config forward from
+    # the newest previous version instead of falling back to repository defaults.
+    $PreviousRelease = Get-ChildItem -LiteralPath $DistRoot -Directory |
+        Where-Object { $_.Name -like "AutoReportWebUIV*" } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($PreviousRelease) {
+        $ExistingDistDir = $PreviousRelease.FullName
+    }
+}
+$ConfigBackupDir = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "AutoReportFeishu-config-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $ConfigBackupDir | Out-Null
+foreach ($Name in @("config.ini", "metrics_config.yaml", "jms_user_policy.json", "store.db")) {
+    $Existing = Join-Path $ExistingDistDir $Name
+    if (Test-Path $Existing) {
+        Copy-Item -LiteralPath $Existing -Destination (Join-Path $ConfigBackupDir $Name) -Force
+    }
+}
+
+$PythonExe = (Get-Command python).Source
+$PythonBase = Split-Path -Parent $PythonExe
+$DllDir = Join-Path $PythonBase "DLLs"
+$TclDir = Join-Path $PythonBase "tcl"
+$TclDataDir = Join-Path $TclDir "tcl8.6"
+$TkDataDir = Join-Path $TclDir "tk8.6"
+
+$TkinterPyd = Join-Path $DllDir "_tkinter.pyd"
+$TclDll = Join-Path $DllDir "tcl86t.dll"
+$TkDll = Join-Path $DllDir "tk86t.dll"
+
+foreach ($RequiredPath in @($TkinterPyd, $TclDll, $TkDll, $TclDataDir, $TkDataDir)) {
+    if (-not (Test-Path $RequiredPath)) {
+        throw "Missing required Tk/Tcl file: $RequiredPath"
+    }
+}
+
+python -c "import tkinter, _tkinter; print('tkinter ok')"
+python -m PyInstaller --version
+
+$Args = @(
+    "--noconfirm",
+    "--clean",
+    "--onedir",
+    "--windowed",
+    "--name", "AutoReportWebUI",
+
+    # ---- Web UI ----
+    "--add-data", "webui/static;webui/static",
+    "--collect-submodules", "webui",
+    "--collect-all", "webview",
+    "--hidden-import", "clr",
+    "--hidden-import", "bot_main",
+    "--collect-submodules", "vip_awb",
+    "--collect-submodules", "controller",
+
+    # ---- Tk/Tcl (customtkinter ใช้) ----
+    "--add-data", "$TclDataDir;_tcl_data",
+    "--add-data", "$TkDataDir;_tk_data",
+    "--add-binary", "$TkinterPyd;.",
+    "--add-binary", "$TclDll;.",
+    "--add-binary", "$TkDll;.",
+    "--hidden-import", "_tkinter",
+    "--collect-data", "customtkinter",
+    "--collect-data", "tkcalendar",
+    "--hidden-import", "babel.numbers",
+
+    # ---- Excel COM ----
+    "--collect-submodules", "win32com",
+    "--hidden-import", "pythoncom",
+    "--hidden-import", "pywintypes",
+
+    # ---- ชั้น dashboard / metrics ----
+    # เทมเพลต Jinja กับ schema.sql ถูกอ่านจากดิสก์ตอนรัน การไล่ import
+    # มองไม่เห็น ต้องบอกเอง
+    "--add-data", "dashboard/templates;dashboard/templates",
+    "--add-data", "metrics/schema.sql;metrics",
+    # Independent fallback if the normal metrics resource is omitted/damaged.
+    "--add-data", "metrics/schema.sql;.",
+    # Recovery copy used only when the editable file beside the EXE is absent.
+    "--add-data", "metrics_config.yaml;.",
+    "--collect-submodules", "dashboard",
+    "--collect-submodules", "metrics",
+    "--collect-submodules", "core",
+    "--hidden-import", "card_report",
+    # VIP AWB (vip_awb/) import feishu_client ตอนส่ง — บอกให้เก็บทั้งแพ็กเกจ
+    "--collect-submodules", "vip_awb",
+
+    # ---- เว็บ dashboard ----
+    # uvicorn โหลดโมดูลด้วยชื่อเป็นสตริง การไล่ import จึงไม่เจอ
+    "--collect-submodules", "uvicorn",
+    "--hidden-import", "uvicorn.loops.auto",
+    "--hidden-import", "uvicorn.protocols.http.auto",
+    "--hidden-import", "uvicorn.lifespan.on",
+
+    # ---- แคปรูป ----
+    # playwright มี node driver ติดมาด้วย ต้อง collect-all ไม่ใช่แค่ submodules
+    "--collect-all", "playwright",
+
+    # ---- ตัดของที่ไม่มีโค้ดเราเรียก ----
+    # scipy ~69MB ติดมาเพราะ pandas มี optional import (sparse.scipy_sparse)
+    # ไม่มีบรรทัดไหนในโปรเจกต์เรียกใช้ ตัดออกได้
+    "--exclude-module", "scipy",
+    "--exclude-module", "tkinter.test",
+    "--exclude-module", "test",
+
+    "webui_main.py"
+)
+
+# PyInstaller เขียน progress ลง stderr ซึ่ง PowerShell ถือว่าเป็น error
+# ถ้าปล่อยให้ ErrorActionPreference=Stop ทำงาน จะหยุดตั้งแต่บรรทัดแรก
+# ทั้งที่ build ยังไม่ได้เริ่ม จึงดูผลจาก exit code แทน
+$ErrorActionPreference = "Continue"
+python -m PyInstaller @Args
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
+$ErrorActionPreference = "Stop"
+
+$PyInstallerDistDir = Join-Path $ProjectDir "dist\AutoReportWebUI"
+$DistDir = Join-Path $ProjectDir ("dist\" + $ReleaseFolderName)
+Assert-ChildPath $DistDir $DistRoot
+Assert-ChildPath $PyInstallerDistDir $DistRoot
+if (Test-Path $DistDir) {
+    Remove-Item -LiteralPath $DistDir -Recurse -Force
+}
+Move-Item -LiteralPath $PyInstallerDistDir -Destination $DistDir
+
+# ---- ไฟล์ที่ผู้ใช้แก้เอง วางข้าง exe ----
+# ไม่ใส่เข้า _internal เพราะจะถูกเขียนทับทุกครั้งที่ลงใหม่ และผู้ใช้หาไม่เจอ
+foreach ($Name in @("config.ini", "metrics_config.yaml")) {
+    $Saved = Join-Path $ConfigBackupDir $Name
+    $Src = if (Test-Path $Saved) { $Saved } else { Join-Path $ProjectDir $Name }
+    if (Test-Path $Src) {
+        Copy-Item -LiteralPath $Src -Destination (Join-Path $DistDir $Name) -Force
+    }
+}
+
+# Refuse to publish an incomplete onedir folder.  These checks cover the two
+# runtime files required by metrics ingestion and its automatic recovery path.
+$RequiredReleaseFiles = @(
+    (Join-Path $DistDir "metrics_config.yaml"),
+    (Join-Path $DistDir "_internal\metrics_config.yaml"),
+    (Join-Path $DistDir "_internal\metrics\schema.sql"),
+    (Join-Path $DistDir "_internal\schema.sql")
+)
+foreach ($RequiredFile in $RequiredReleaseFiles) {
+    if (-not (Test-Path -LiteralPath $RequiredFile -PathType Leaf)) {
+        throw "Incomplete release: missing required file $RequiredFile"
+    }
+}
+$SavedPolicy = Join-Path $ConfigBackupDir "jms_user_policy.json"
+if (Test-Path $SavedPolicy) {
+    Copy-Item -LiteralPath $SavedPolicy -Destination (Join-Path $DistDir "jms_user_policy.json") -Force
+}
+$SavedDb = Join-Path $ConfigBackupDir "store.db"
+if (Test-Path $SavedDb) {
+    Copy-Item -LiteralPath $SavedDb -Destination (Join-Path $DistDir "store.db") -Force
+}
+Assert-ChildPath $ConfigBackupDir ([System.IO.Path]::GetTempPath())
+Remove-Item -LiteralPath $ConfigBackupDir -Recurse -Force
+
+# ---- browser ของ Playwright ----
+# เครื่องปลายทางไม่ได้ลง playwright ไว้ ถ้าไม่ก๊อปไปด้วยจะแคปรูป dashboard ไม่ได้
+# render.py จะเห็นโฟลเดอร์นี้แล้วชี้ PLAYWRIGHT_BROWSERS_PATH มาที่นี่เอง
+# render.py เรียก pw.chromium.launch() แบบ headless ซึ่ง playwright จะไปเปิด
+# chrome-headless-shell ไม่ใช่ chromium ตัวเต็ม จึงก๊อปเฉพาะตัวนั้นกับ winldd
+# (ตัวตรวจ DLL ที่ต้องใช้บน Windows) ส่วน chromium ตัวเต็ม (~394MB) กับ ffmpeg
+# (อัดวิดีโอ) ไม่มีใครเรียก
+#
+# ถ้าวันไหนเปลี่ยนไปเรียก launch(headless=False) ต้องกลับมาก๊อป chromium-* ด้วย
+$BrowserSrc = Join-Path $env:LOCALAPPDATA "ms-playwright"
+if (Test-Path $BrowserSrc) {
+    Write-Host "Copying Playwright chromium (ใช้เวลาสักครู่)..."
+    $BrowserDst = Join-Path $DistDir "ms-playwright"
+    New-Item -ItemType Directory -Force -Path $BrowserDst | Out-Null
+    $Wanted = Get-ChildItem -LiteralPath $BrowserSrc -Directory |
+        Where-Object { $_.Name -like "chromium_headless_shell-*" -or $_.Name -like "winldd-*" }
+    if (-not $Wanted) { throw "ไม่พบโฟลเดอร์ chromium_headless_shell-* ใน $BrowserSrc" }
+    foreach ($Dir in $Wanted) {
+        Copy-Item -LiteralPath $Dir.FullName -Destination $BrowserDst -Recurse -Force
+    }
+    Write-Host "  copied: $($Wanted.Name -join ', ')"
+} else {
+    Write-Warning "ไม่พบ $BrowserSrc - เครื่องปลายทางจะแคปรูป dashboard ไม่ได้"
+    Write-Warning "แก้โดยรัน: python -m playwright install chromium แล้ว build ใหม่"
+}
+
+Write-Host ""
+Write-Host "Build complete."
+Write-Host "Folder: $DistDir"
+Write-Host "EXE:    $(Join-Path $DistDir 'AutoReportWebUI.exe')"

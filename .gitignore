@@ -33,3 +33,5 @@ vip_awb.db
 vip_awb.db-wal
 vip_awb.db-shm
 VipAwb/
+# Web UI: หน้าเว็บที่ build แล้ว (build_webui.ps1 สั่ง npm run build ให้เอง)
+webui/static/
