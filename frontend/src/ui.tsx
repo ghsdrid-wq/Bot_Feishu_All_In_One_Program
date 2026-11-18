@@ -8,14 +8,14 @@ export function Card({ title, action, children, className = '' }: {
   className?: string
 }) {
   return (
-    <section className={`rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 ${className}`}>
+    <section className={`rounded-2xl bg-surface shadow-sm ring-1 ring-slate-200 ${className}`}>
       {(title || action) && (
-        <header className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
+        <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-slate-100 px-4 py-3 sm:px-5 sm:py-3.5">
           <h2 className="text-[15px] font-semibold text-ink">{title}</h2>
           {action}
         </header>
       )}
-      <div className="p-5">{children}</div>
+      <div className="p-4 sm:p-5">{children}</div>
     </section>
   )
 }
@@ -31,10 +31,10 @@ type ButtonProps = {
 
 export function Button({ children, onClick, variant = 'secondary', disabled, icon, type = 'button' }: ButtonProps) {
   const styles = {
-    primary: 'bg-brand-600 text-white hover:bg-brand-700 shadow-sm',
-    secondary: 'bg-white text-ink ring-1 ring-slate-300 hover:bg-slate-50',
+    primary: 'bg-brand-600 text-white hover:bg-brand-800 shadow-sm',
+    secondary: 'bg-surface text-ink ring-1 ring-slate-300 hover:bg-slate-50',
     ghost: 'text-slate-600 hover:bg-slate-100',
-    danger: 'bg-white text-brand-700 ring-1 ring-brand-100 hover:bg-brand-50',
+    danger: 'bg-surface text-brand-700 ring-1 ring-brand-100 hover:bg-brand-50',
   }[variant]
   return (
     <button
@@ -89,7 +89,7 @@ export function Field({ label, hint, children }: { label: ReactNode; hint?: Reac
 
 export const inputClass =
   'w-full rounded-xl border-0 bg-slate-50 px-3.5 py-2.5 text-sm text-ink ring-1 ring-slate-200 placeholder:text-slate-400 ' +
-  'focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none'
+  'focus:bg-surface focus:ring-2 focus:ring-brand-500 focus:outline-none'
 
 export function Stat({ label, value, tone = 'default', sub }: {
   label: string
@@ -99,7 +99,7 @@ export function Stat({ label, value, tone = 'default', sub }: {
 }) {
   const color = { default: 'text-ink', good: 'text-emerald-600', bad: 'text-brand-600', warn: 'text-amber-600' }[tone]
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+    <div className="rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200">
       <div className="text-sm text-slate-500">{label}</div>
       <div className={`mt-1 text-3xl font-semibold tabular-nums ${color}`}>{value}</div>
       {sub && <div className="mt-1 text-xs text-slate-500">{sub}</div>}
@@ -124,7 +124,7 @@ export function PageHeader({ title, sub, actions }: { title: string; sub?: React
   return (
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 className="text-2xl font-semibold">{title}</h1>
+        <h1 className="text-xl font-semibold sm:text-2xl">{title}</h1>
         {sub && <p className="text-sm text-slate-500">{sub}</p>}
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
@@ -139,18 +139,18 @@ export function Notice({ tone = 'info', children }: { tone?: 'info' | 'ok' | 'wa
     warn: 'bg-amber-50 text-amber-800 ring-amber-200',
     err: 'bg-brand-50 text-brand-700 ring-brand-100',
   }[tone]
-  return <div className={`rounded-2xl px-5 py-3 text-sm ring-1 ${styles}`}>{children}</div>
+  return <div className={`rounded-2xl px-4 py-3 text-sm ring-1 sm:px-5 ${styles}`}>{children}</div>
 }
 
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-6" onClick={onClose}>
-      <div className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-6" onClick={onClose}>
+      <div className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-2xl bg-surface shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3.5">
           <h2 className="font-semibold">{title}</h2>
           <button className="rounded-lg px-2 text-slate-400 hover:bg-slate-100" onClick={onClose}>✕</button>
         </div>
-        <div className="max-h-[70vh] overflow-y-auto p-5">{children}</div>
+        <div className="max-h-[70vh] overflow-y-auto p-4 sm:p-5">{children}</div>
       </div>
     </div>
   )

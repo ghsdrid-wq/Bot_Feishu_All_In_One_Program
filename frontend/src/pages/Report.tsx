@@ -68,7 +68,7 @@ export function Report({ st, refresh, go }: { st: EngineState | null; refresh: (
       {flash.node}
 
       {/* ---- สถานะ + ปุ่มหลัก */}
-      <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+      <section className="rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-slate-200">
         <div className="flex flex-wrap items-center gap-5">
           <div className="flex-1">
             <div className="text-sm text-slate-500">สถานะ</div>
@@ -97,9 +97,9 @@ export function Report({ st, refresh, go }: { st: EngineState | null; refresh: (
 
       {/* ---- รอบเวลา */}
       <Card title="รอบเวลา" action={locked && <Badge tone="amber">แก้ได้ แต่มีผลรอบถัดไป</Badge>}>
-        <div className="grid gap-5 md:grid-cols-[repeat(3,minmax(0,1fr))_2fr]">
+        <div className="grid grid-cols-3 gap-3 sm:gap-5 md:grid-cols-[repeat(3,minmax(0,1fr))_2fr]">
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-slate-700">รันทุกชั่วโมงที่นาที</span>
+            <span className="mb-1.5 block truncate text-sm font-medium text-slate-700" title="รันทุกชั่วโมงที่นาที">รันทุก ชม. ที่นาที</span>
             <select className={inputClass} value={st?.time.run_minute ?? 5} onChange={(e) => setSchedule({ run_minute: +e.target.value })}>
               {Array.from({ length: 60 }, (_, m) => <option key={m} value={m}>{pad(m)}</option>)}
             </select>
@@ -116,13 +116,13 @@ export function Report({ st, refresh, go }: { st: EngineState | null; refresh: (
               {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{pad(h)}:00</option>)}
             </select>
           </label>
-          <div>
+          <div className="col-span-3 md:col-span-1">
             <span className="mb-1.5 block text-sm font-medium text-slate-700">ช่วงวันที่ {st?.dates.manual ? <Badge tone="amber">เลือกเอง</Badge> : <Badge tone="slate">ตามรอบงาน</Badge>}</span>
             <div className="flex items-center gap-2">
-              <input type="date" className={inputClass} value={st?.dates.start ?? ''}
+              <input type="date" className={`${inputClass} min-w-0`} value={st?.dates.start ?? ''}
                 onChange={(e) => st && setSchedule({ start_date: e.target.value, end_date: st.dates.end })} />
               <span className="text-slate-400">→</span>
-              <input type="date" className={inputClass} value={st?.dates.end ?? ''}
+              <input type="date" className={`${inputClass} min-w-0`} value={st?.dates.end ?? ''}
                 onChange={(e) => st && setSchedule({ start_date: st.dates.start, end_date: e.target.value })} />
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -153,7 +153,7 @@ export function Report({ st, refresh, go }: { st: EngineState | null; refresh: (
               const state = st?.pipeline[s.key] ?? 'ready'
               const sty = stateStyle[state] ?? stateStyle.ready
               return (
-                <div key={s.key} className={`rounded-2xl p-4 ring-1 transition ${s.on ? 'bg-white ring-slate-200' : 'bg-slate-50 ring-slate-200'}`}>
+                <div key={s.key} className={`rounded-2xl p-4 ring-1 transition ${s.on ? 'bg-surface ring-slate-200' : 'bg-slate-50 ring-slate-200'}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="text-xs text-slate-400">ขั้นที่ {i + 1}</div>

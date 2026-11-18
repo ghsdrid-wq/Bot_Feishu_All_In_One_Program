@@ -51,7 +51,7 @@ export function Vip({ st, go }: { st: EngineState | null; go: Go }) {
           <Button variant="primary" icon={<Send size={16} />} onClick={() => run(true)} disabled={st?.vip_busy}>ส่งเข้า Feishu ตอนนี้</Button>
         </>} />
 
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm shadow-sm ring-1 ring-slate-200">
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-surface px-5 py-4 text-sm shadow-sm ring-1 ring-slate-200">
         <span className="font-medium">ส่งอัตโนมัติ</span>
         {v?.stage_on ? <Badge tone="green">เปิดในรอบรายงานรายชั่วโมง</Badge> : <Badge tone="slate">ปิดอยู่</Badge>}
         <span className="text-slate-500">ส่งหลังขั้นตอน Feishu ของทุกรอบ ขณะเปิด Auto</span>
@@ -134,7 +134,7 @@ function ResultView({ r }: { r: Result }) {
         <Card title={`เลขที่ยังค้าง / หลุดสแกน (${r.stuck_list.length})`}>
           <div className="max-h-72 overflow-y-auto">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-white"><tr className="text-left text-slate-500">
+              <thead className="sticky top-0 bg-surface"><tr className="text-left text-slate-500">
                 <th className="py-2 pr-4 font-medium">หมายเลขพัสดุ</th><th className="py-2 pr-4 font-medium">แบรนด์</th>
                 <th className="py-2 pr-4 font-medium">เข้าคลัง</th><th className="py-2 pr-4 text-right font-medium">ค้างมา (ชม.)</th>
                 <th className="py-2 font-medium">สถานะล่าสุด</th></tr></thead>

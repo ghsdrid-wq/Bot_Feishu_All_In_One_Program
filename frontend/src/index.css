@@ -4,6 +4,9 @@
 @import "@fontsource/noto-sans-thai/700.css";
 @import "tailwindcss";
 
+/* dark: ใช้ได้ถ้าต้องการสีเฉพาะโหมดมืด (ส่วนใหญ่ไม่ต้อง เพราะสลับสีทั้งชุดด้านล่าง) */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Noto Sans Thai", "Segoe UI", system-ui, sans-serif;
   --color-brand-50: #fdf2f3;
@@ -11,8 +14,56 @@
   --color-brand-500: #d81e3c;
   --color-brand-600: #c8102e;
   --color-brand-700: #a50d26;
+  --color-brand-800: #a50d26; /* hover ปุ่มหลัก: คงเดิมทั้งสองโหมด */
   --color-ink: #1f2430;
+  --color-surface: #ffffff;   /* พื้นการ์ด/ปุ่ม/ช่องกรอก (โหมดมืดเปลี่ยนเป็นสีเข้ม) */
+  /* Live Log มืดเสมอทั้งสองโหมด */
+  --color-console: #0f172a;
+  --color-console-fg: #e2e8f0;
+  --color-console-dim: #64748b;
 }
+
+/*
+ * โหมดมืด: <html class="dark"> (ตั้งใน index.html / theme.ts)
+ * แทนที่จะใส่ dark: ทุกจุด ใช้วิธีสลับค่าสีชุดที่หน้าเว็บใช้ — slate กลับด้าน (พื้นเข้ม ตัวอักษรอ่อน)
+ * สีอ่อน (-50..-200) ของ brand/emerald/amber/sky เป็นพื้นเข้มอมสี สีเข้ม (-600..-800) เป็นตัวอักษรสว่าง
+ * สีที่ใช้เป็นพื้นทึบ (brand-500/600, emerald-500, sky-500, amber-500) และ -300 ใน Live Log ไม่เปลี่ยน
+ */
+.dark {
+  color-scheme: dark;
+  --color-surface: #1a2130;
+  --color-ink: #e6e9ef;
+  --color-slate-50: #212a3a;
+  --color-slate-100: #121722;
+  --color-slate-200: #2b3446;
+  --color-slate-300: #3d4759;
+  --color-slate-400: #6c768a;
+  --color-slate-500: #8e98aa;
+  --color-slate-600: #a9b2c1;
+  --color-slate-700: #c5ccd8;
+  --color-brand-50: #3a1a22;
+  --color-brand-100: #5b2431;
+  --color-brand-700: #ff8095;
+  --color-emerald-50: #0f2a20;
+  --color-emerald-100: #133a2a;
+  --color-emerald-200: #1c5039;
+  --color-emerald-600: #34d399;
+  --color-emerald-700: #6ee7b7;
+  --color-emerald-800: #a7f3d0;
+  --color-amber-50: #2d230d;
+  --color-amber-100: #3e2f10;
+  --color-amber-200: #5e4615;
+  --color-amber-600: #fbbf24;
+  --color-amber-700: #fcd34d;
+  --color-amber-800: #fde68a;
+  --color-sky-50: #0d2434;
+  --color-sky-100: #113247;
+  --color-sky-200: #174a66;
+  --color-sky-700: #7dd3fc;
+  --color-sky-800: #bae6fd;
+}
+/* ตัวอักษรแดง brand-600 บนพื้นเข้มอ่านยาก (พื้นปุ่มแดงยังใช้ค่าเดิม) */
+.dark .text-brand-600, .dark .hover\:text-brand-600:hover { color: #ff6b81; }
 
 html, body, #root { height: 100%; }
 body { @apply bg-slate-100 text-ink antialiased; }

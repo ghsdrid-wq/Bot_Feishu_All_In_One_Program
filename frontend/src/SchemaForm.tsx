@@ -50,7 +50,7 @@ function GroupCard({ group, values, set }: { group: Group; values: Values; set: 
                               else next.add(o.value)
                               change(f.options.map((x) => x.value).filter((x) => next.has(x)).join(','))
                             }}
-                            className={`rounded-full px-3 py-1 text-sm ring-1 transition ${on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-white text-slate-600 ring-slate-300 hover:bg-slate-50'}`}>
+                            className={`rounded-full px-3 py-1 text-sm ring-1 transition ${on ? 'bg-brand-600 text-white ring-brand-600' : 'bg-surface text-slate-600 ring-slate-300 hover:bg-slate-50'}`}>
                             {o.label}
                           </button>
                         )

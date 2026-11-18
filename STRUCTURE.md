@@ -21,6 +21,7 @@ GUI (customtkinter, ธีม Nord) ตัวเดียวที่รวม�
 ## Web UI (ตั้งแต่ 2.1.18 บน main)
 - `webui_main.py` -> `webui/api.py` (FastAPI) -> `webui/engine.py` (`Engine`: เมธอดของ `App` ที่ไม่แตะหน้าจอ + เขียนใหม่เฉพาะส่วนหน้าจอ), หน้าเว็บ `frontend/` build ลง `webui/static` — รายละเอียดใน WEBUI.md
 - `[WEBUI] auto_on` จำสถานะ Auto, `logs/webui_startup.log` บันทึกตอนเริ่ม (exe ไม่มี console ต้องส่ง stdout/stderr ลงไฟล์ ไม่งั้น uvicorn ล้มเงียบ)
+- หน้าเว็บ: `frontend/src/App.tsx` (เมนู + แถบบนมือถือ), `theme.ts` (ธีมสว่าง/มืด/ตามเครื่อง), `index.css` (สีทั้งชุดของโหมดมืด `.dark`, token `surface`/`console`), `ui.tsx` (ชิ้นส่วนที่ใช้ซ้ำ)
 - build: `build_webui.ps1` (npm ci ถ้ายังไม่มี node_modules -> npm run build -> PyInstaller `AutoReportWebUI.exe`), deploy: `deploy-ssh.ps1` (วาง `AutoReportWebUIV<x-y-z>` บนเครื่องรัน, `-Switch` สลับจาก Web UI หรือ AutoReportFeishu.exe เดิม เช็คพอร์ต 6300 ล้ม = เปิดตัวเดิมกลับ)
 
 ## วิธีรัน / Entry point (หน้าจอ Tk เดิม — ยังรันได้ด้วย `python bot_main.py`)

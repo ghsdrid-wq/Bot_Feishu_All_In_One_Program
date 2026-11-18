@@ -22,16 +22,16 @@ export function JmsUser({ st, refresh, go }: { st: EngineState | null; refresh: 
           : <Button variant="primary" icon={<Power size={16} />} onClick={() => bot(true)}>เริ่มบอท JMS</Button>} />
 
       <div className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200">
           <div className="text-sm text-slate-500">บอท JMS USER</div>
           <div className="mt-1 text-xl font-semibold">{st?.jms_running ? <span className="text-emerald-600">ONLINE</span> : <span className="text-slate-400">OFFLINE</span>}</div>
         </div>
-        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200">
           <div className="text-sm text-slate-500">รับข้อความจาก Feishu (webhook)</div>
           <div className="mt-1 text-xl font-semibold">{st?.bot_running ? <span className="text-emerald-600">ONLINE</span> : <span className="text-slate-400">OFFLINE</span>}</div>
           {!st?.bot_running && <div className="mt-1 text-xs text-slate-500">ต้องเปิดบอท Feishu ที่หน้า DWS PLAN ด้วย</div>}
         </div>
-        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200">
           <div className="text-sm text-slate-500">JMS Token</div>
           <div className="mt-1 text-xl font-semibold">{st?.jms_token_set ? <span className="text-emerald-600">พร้อม</span> : <button className="text-brand-700 hover:underline" onClick={() => go('settings')}>ยังไม่ใส่</button>}</div>
         </div>

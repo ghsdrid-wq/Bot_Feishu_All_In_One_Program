@@ -50,12 +50,12 @@ export function LiveLog({ lines, filter, height = 'h-80' }: { lines: LogLine[]; 
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight
   }, [shown.length])
   return (
-    <div ref={box} className={`${height} overflow-y-auto rounded-xl bg-slate-900 p-4 font-mono text-[13px] leading-6`}>
-      {shown.length === 0 && <div className="text-slate-500">ยังไม่มีข้อความ</div>}
+    <div ref={box} className={`${height} overflow-y-auto rounded-xl bg-console p-3 sm:p-4 font-mono text-xs sm:text-[13px] leading-5 sm:leading-6`}>
+      {shown.length === 0 && <div className="text-console-dim">ยังไม่มีข้อความ</div>}
       {shown.map((l) => (
-        <div key={l.id} className="flex gap-3">
-          <span className="shrink-0 text-slate-500">{l.time}</span>
-          <span className={`whitespace-pre-wrap break-all ${levelStyle[l.level] ?? 'text-slate-200'}`}>{l.text}</span>
+        <div key={l.id} className="flex gap-2 sm:gap-3">
+          <span className="shrink-0 text-console-dim">{l.time}</span>
+          <span className={`whitespace-pre-wrap break-all ${levelStyle[l.level] ?? 'text-console-fg'}`}>{l.text}</span>
         </div>
       ))}
     </div>

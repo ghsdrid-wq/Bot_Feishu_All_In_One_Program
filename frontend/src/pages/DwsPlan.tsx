@@ -46,15 +46,15 @@ export function DwsPlan({ st, refresh }: { st: EngineState | null; refresh: () =
           : <Button variant="primary" icon={<Power size={16} />} onClick={() => bot(true)}>เริ่มบอท Feishu</Button>} />
       {flash.node}
       <div className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200">
           <div className="text-sm text-slate-500">บอท Feishu (webhook)</div>
           <div className="mt-1 text-xl font-semibold">{st?.bot_running ? <span className="text-emerald-600">ONLINE</span> : <span className="text-slate-400">OFFLINE</span>}</div>
         </div>
-        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200">
           <div className="text-sm text-slate-500">เครื่องที่ติดต่อได้</div>
           <div className="mt-1 text-xl font-semibold tabular-nums">{online} / {d?.rows.length ?? 0}</div>
         </div>
-        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200">
           <div className="text-sm text-slate-500">ชื่อแพลน กลางวัน / กลางคืน</div>
           <div className="mt-1 text-xl font-semibold">{d?.aliases.day || '–'} / {d?.aliases.night || '–'}</div>
         </div>
@@ -64,7 +64,7 @@ export function DwsPlan({ st, refresh }: { st: EngineState | null; refresh: () =
         <div className="flex flex-wrap gap-2">
           {d?.plans.map((p) => (
             <button key={p} onClick={() => switchPlan(p)}
-              className="rounded-xl bg-white px-5 py-3 font-semibold ring-1 ring-slate-300 transition hover:bg-brand-50 hover:text-brand-700 hover:ring-brand-500">{p}</button>
+              className="rounded-xl bg-surface px-5 py-3 font-semibold ring-1 ring-slate-300 transition hover:bg-brand-50 hover:text-brand-700 hover:ring-brand-500">{p}</button>
           ))}
         </div>
       </Card>
@@ -75,7 +75,7 @@ export function DwsPlan({ st, refresh }: { st: EngineState | null; refresh: () =
           <Button variant="ghost" icon={<RefreshCw size={15} />} onClick={async () => { await post('/api/dws/refresh'); setTimeout(load, 4000) }}>รีเฟรช</Button>
         </div>
       }>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto"><table className="w-full text-sm">
           <thead><tr className="text-left text-slate-500">
             <th className="py-2 pr-4 font-medium">เครื่อง</th><th className="py-2 pr-4 font-medium">IP</th>
             <th className="py-2 pr-4 font-medium">สถานะ</th><th className="py-2 pr-4 font-medium">แพลนปัจจุบัน</th><th className="py-2 font-medium">ข้อความ</th></tr></thead>
@@ -90,7 +90,7 @@ export function DwsPlan({ st, refresh }: { st: EngineState | null; refresh: () =
             ))}
             {d && d.rows.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">กำลังตรวจสถานะ…</td></tr>}
           </tbody>
-        </table>
+        </table></div>
       </Card>
 
       <Card title="Log" action={<Button variant="ghost" icon={<Trash2 size={15} />} onClick={clear}>ล้าง</Button>}>

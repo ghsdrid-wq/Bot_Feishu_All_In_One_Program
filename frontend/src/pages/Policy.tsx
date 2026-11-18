@@ -80,7 +80,7 @@ function PolicyList({ kind, items, onChange }: { kind: Kind; items: string[]; on
         {shown.map((x) => (
           <span key={x} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 py-1 pr-1 pl-2.5 font-mono text-sm">
             {x}
-            <button className="rounded p-0.5 text-slate-400 hover:bg-white hover:text-brand-600" onClick={() => onChange(items.filter((y) => y !== x))}><X size={14} /></button>
+            <button className="rounded p-0.5 text-slate-400 hover:bg-surface hover:text-brand-600" onClick={() => onChange(items.filter((y) => y !== x))}><X size={14} /></button>
           </span>
         ))}
         {shown.length === 0 && <span className="text-sm text-slate-400">ไม่มีรายการ</span>}
