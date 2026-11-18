@@ -25,7 +25,15 @@ if ($LASTEXITCODE -ne 0 -or $AppVersion -notmatch '^\d+\.\d+\.\d+$') {
 }
 $ReleaseFolderName = "AutoReportWebUIV" + $AppVersion.Replace(".", "-")
 $Npm = Get-Command npm -ErrorAction SilentlyContinue
-if ($Npm) { Push-Location (Join-Path $ProjectDir "frontend"); $ErrorActionPreference = "Continue"; npm run build; $code = $LASTEXITCODE; $ErrorActionPreference = "Stop"; Pop-Location; if ($code) { throw "npm run build failed" } }
+if ($Npm) {
+    Push-Location (Join-Path $ProjectDir "frontend"); $ErrorActionPreference = "Continue"
+    # node_modules ไม่อยู่ใน git: clone ใหม่ต้องติดตั้งก่อน (npm ci ตาม package-lock.json)
+    $code = 0
+    if (-not (Test-Path "node_modules\.bin\tsc.cmd")) { npm ci; $code = $LASTEXITCODE }
+    if (-not $code) { npm run build; $code = $LASTEXITCODE }
+    $ErrorActionPreference = "Stop"; Pop-Location
+    if ($code) { throw "npm run build failed" }
+}
 if (-not (Test-Path (Join-Path $ProjectDir "webui\static\index.html"))) { throw "ยังไม่ได้ build หน้าเว็บ (webui/static)" }
 
 # PyInstaller --noconfirm replaces the existing onedir folder. Preserve the

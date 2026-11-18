@@ -1,4 +1,4 @@
-# Bot_Feishu_All_In_One_Program
+﻿# Bot_Feishu_All_In_One_Program
 
 โปรแกรม GUI (customtkinter ธีม Nord) ตัวเดียวที่รวมงานฝั่ง controller / report ของ DWS + JMS J&T เข้าด้วยกันเป็น **"All-In-One"** ทำงานร่วมกับ Feishu (Lark)
 
@@ -93,11 +93,11 @@ python tools/bump_version.py patch
 
 ## Deploy ไปเครื่องรัน (ผ่าน SSH)
 
-เครื่องรันเก็บแต่ละเวอร์ชันไว้ที่ `C:\0Niphonk\Programs\AutoReportFeishuV<เวอร์ชัน>`
+เครื่องรันเก็บแต่ละเวอร์ชันไว้ที่ `C:\0Niphonk\Programs\AutoReportWebUIV<เวอร์ชัน>` (Web UI, build ด้วย `build_webui.ps1`)
 ใช้ SSH key (Host `runpc` ใน `%USERPROFILE%\.ssh\config`) ไม่ต้องใช้รหัสผ่าน
 
 ```powershell
-.\deploy-ssh.ps1 -Build      # build แล้ววางเวอร์ชันใหม่ไว้ข้างตัวเก่า (ไม่แตะตัวที่รันอยู่)
+.\deploy-ssh.ps1 -Build      # build Web UI แล้ววางเวอร์ชันใหม่ไว้ข้างตัวเก่า (ไม่แตะตัวที่รันอยู่)
 .\deploy-ssh.ps1 -Switch     # ปิดตัวเก่า แล้วเปิดตัวใหม่บนหน้าจอผู้ใช้
 ```
 
@@ -105,7 +105,7 @@ python tools/bump_version.py patch
   จากเครื่องนี้ แต่คัดลอกจากโฟลเดอร์ที่รันอยู่บนเครื่องรัน ตอน `-Switch` จะคัดลอกซ้ำหลังปิดตัวเก่า
   (ฐานข้อมูล SQLite ไปพร้อม `-wal`/`-shm` — `vip_awb.db` ไม่ติดไป = รอบแรกของเวอร์ชันใหม่ดึงย้อนหลังใหม่ ~30 นาที)
 - `-Switch` ไม่ยอมปิดโปรแกรมช่วง `[TIME] run_minute` ถึง +15 นาที (รอบรายงานรายชั่วโมง) ใช้ `-Force` ข้ามได้
-- **หลัง `-Switch` โหมด Auto ไม่เปิดเอง** ต้องกด Start Auto ที่หน้า BOT REPORT
+- Web UI จำสถานะ Auto (`[WEBUI] auto_on`) หลัง `-Switch` Auto เปิดต่อเอง — สลับจากโปรแกรม Tk เดิมจะใส่ `auto_on = true` ให้ (`-NoAuto` = ไม่ใส่)
 - เปิดตัวใหม่ด้วยบัญชีเจ้าของโปรแกรมที่รันอยู่ (หรือผู้ใช้ที่ล็อกอินหน้าจอ) ถ้าหาไม่ได้จะหยุดก่อนปิดตัวเก่า
 - ทุกครั้งที่วางไฟล์จะรีเซ็ตสิทธิ์โฟลเดอร์ให้รับจาก `C:\0Niphonk\Programs` (ไม่งั้นโปรแกรมเซฟ `config.ini` ไม่ได้)
 - exe อยู่โฟลเดอร์ใหม่ทุกเวอร์ชัน Windows Firewall จะถามสิทธิ์บนจอเครื่องรัน ต้องกดอนุญาตที่เครื่องรันเอง
